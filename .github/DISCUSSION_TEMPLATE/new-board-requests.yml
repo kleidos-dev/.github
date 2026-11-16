@@ -3,22 +3,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for proposing a board. One request per board, please: search
-        [New board requests](https://github.com/orgs/kleidos-dev/discussions/categories/new-board-requests)
-        first, and if it is already there, upvote it and add what you know.
+        Thanks for proposing a board. One request per board, please: search [New board requests](https://github.com/orgs/kleidos-dev/discussions/categories/new-board-requests) first, and if it is already there, upvote it and add what you know.
 
-        Kleidos runs today on nine boards, four on the ESP32-S3 and five on the
-        classic ESP32. A board needs Bluetooth, a screen, and a way to enter a
-        PIN or passphrase on the board itself (buttons, a wheel, touch, or a
-        keyboard).
+        Kleidos runs today on nine boards, four on the ESP32-S3 and five on the classic ESP32. A board needs Bluetooth, a screen, and a way to enter a PIN or passphrase on the board itself (buttons, a wheel, touch, or a keyboard).
 
-        **What "supported" means.** A board is called *supported* only after
-        the maintainer has run the full bench test on the device itself: its
-        builds flashed onto it and the hardware test suites passing on it
-        ([the full definition](https://github.com/kleidos-dev/.github/blob/main/CONTRIBUTING.md#how-a-new-board-gets-added)).
-        Before that, a board on which someone has run Kleidos, on their own
-        unit, is *community-tested*. A request is neither: it is a proposal, and it
-        carries no date.
+        **What "supported" means.** A board is called *supported* only after the maintainer has run the full bench test on the device itself: its builds flashed onto it and the hardware test suites passing on it ([the full definition](https://github.com/kleidos-dev/.github/blob/main/CONTRIBUTING.md#how-a-new-board-gets-added)). Before that, a board on which someone has run Kleidos, on their own unit, is *community-tested*. A request is neither: it is a proposal, and it carries no date.
   - type: input
     id: board
     attributes:
@@ -105,23 +94,8 @@ body:
 
         Everything below is optional, and none of it is needed to make a request.
 
-        - **Donate a device.** Devices are accepted only as donations: a donated
-          board stays on the test bench for future testing and is not sent back.
-          Never post an address here. Write to mail@kleidos.dev, and the
-          shipping is arranged privately by email.
-        - **Donate money.** Through [GitHub Sponsors](https://github.com/sponsors/jmrplens)
-          or [Ko-fi](https://ko-fi.com/jmrplens). A donation is a gift to the
-          project and gets you nothing in return: no reward, no priority, no date,
-          and no name on any list the project keeps (GitHub Sponsors and Ko-fi
-          let you stay private). To give toward this board, name it in the
-          Ko-fi message, public or private as you prefer, or in an email to
-          mail@kleidos.dev; please do not post amounts or receipts here. That
-          money goes to buying this board, up to its price: if the board is
-          bought and the money falls short, the project pays the rest. Anything
-          beyond the price, and all of it if
-          the board is never bought (discontinued, or the port declined), goes
-          to a general fund for the project's other costs, such as more boards
-          and bench parts.
+        - **Donate a device.** Devices are accepted only as donations: a donated board stays on the test bench for future testing and is not sent back. Never post an address here. Write to mail@kleidos.dev, and the shipping is arranged privately by email.
+        - **Donate money.** Through [GitHub Sponsors](https://github.com/sponsors/jmrplens) or [Ko-fi](https://ko-fi.com/jmrplens). A donation is a gift to the project and gets you nothing in return: no reward, no priority, no date, and no name on any list the project keeps (GitHub Sponsors and Ko-fi let you stay private). To give toward this board, name it in the Ko-fi message, public or private as you prefer, or in an email to mail@kleidos.dev; please do not post amounts or receipts here. That money goes to buying this board, up to its price: if the board is bought and the money falls short, the project pays the rest. Anything beyond the price, and all of it if the board is never bought (discontinued, or the port declined), goes to a general fund for the project's other costs, such as more boards and bench parts.
         - **Test builds** on your own board, when there are builds to test.
   - type: checkboxes
     id: help
