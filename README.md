@@ -1,7 +1,6 @@
 # kleidos-dev/.github
 
-This repository holds the kleidos-dev organization's profile, its community
-defaults, and its Discussions. It contains no firmware and no code.
+This repository holds the kleidos-dev organization's profile, its community defaults, and its Discussions. It contains no firmware and no code.
 
 | Path | What it is |
 | --- | --- |
@@ -21,9 +20,4 @@ Kleidos itself is described at <https://kleidos.dev>.
 
 ## License
 
-The text in this repository is licensed under the
-[GNU General Public License, version 3 or later](https://www.gnu.org/licenses/gpl-3.0.html)
-(GPL-3.0-or-later), except [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), which is
-adapted from the [Contributor Covenant](https://www.contributor-covenant.org/)
-2.1 (CC BY 4.0). The full text of the GPL is in [`LICENSE`](LICENSE). Every
-other Kleidos repository states its own license in its `LICENSE` file.
+The text in this repository is licensed under the [GNU General Public License, version 3 or later](https://www.gnu.org/licenses/gpl-3.0.html) (GPL-3.0-or-later), except [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), which is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/) 2.1 (CC BY 4.0). The full text of the GPL is in [`LICENSE`](LICENSE). Every other Kleidos repository states its own license in its `LICENSE` file.
