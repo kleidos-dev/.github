@@ -1,0 +1,146 @@
+title: "[Board] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a board. One request per board, please: search
+        [New board requests](https://github.com/orgs/kleidos-dev/discussions/categories/new-board-requests)
+        first, and if it is already there, upvote it and add what you know.
+
+        Kleidos runs today on nine boards, four on the ESP32-S3 and five on the
+        classic ESP32. A board needs Bluetooth, a screen, and a way to enter a
+        PIN or passphrase on the board itself (buttons, a wheel, touch, or a
+        keyboard).
+
+        **What "supported" means.** A board is called *supported* only after
+        the maintainer has run the full bench test on the device itself: its
+        builds flashed onto it and the hardware test suites passing on it
+        ([the full definition](https://github.com/kleidos-dev/.github/blob/main/CONTRIBUTING.md#how-a-new-board-gets-added)).
+        Before that, a board on which someone has run Kleidos, on their own
+        unit, is *community-tested*. A request is neither: it is a proposal, and it
+        carries no date.
+  - type: input
+    id: board
+    attributes:
+      label: Board name
+      description: Maker and model, as the maker names it.
+      placeholder: "Maker, model, and revision"
+    validations:
+      required: true
+  - type: input
+    id: product-link
+    attributes:
+      label: Maker's product page
+      description: A link to the maker's own page or documentation for the board, not a shop listing if it can be avoided.
+      placeholder: "https://"
+    validations:
+      required: true
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Chip
+      description: Kleidos runs on the ESP32-S3 and the classic ESP32 today. Any other chip means a much larger port.
+      options:
+        - ESP32-S3
+        - Classic ESP32
+        - Other (say which below)
+        - I don't know
+    validations:
+      required: true
+  - type: input
+    id: memory
+    attributes:
+      label: Flash and PSRAM
+      description: Flash size, PSRAM size (or none), and the chip or module name if you know it.
+      placeholder: "e.g. 8 MB flash, 8 MB PSRAM, ESP32-S3-PICO-1-N8R8"
+    validations:
+      required: true
+  - type: input
+    id: display
+    attributes:
+      label: Display
+      description: Type, size, resolution, and the controller if you know it.
+      placeholder: "e.g. LCD, 135 x 240, ST7789"
+    validations:
+      required: true
+  - type: dropdown
+    id: input
+    attributes:
+      label: Input
+      description: How you operate the board. Choose all that apply.
+      multiple: true
+      options:
+        - Buttons
+        - Touchscreen
+        - Keyboard
+        - Wheel or dial
+        - Other (say which below)
+    validations:
+      required: true
+  - type: textarea
+    id: power
+    attributes:
+      label: Battery and power
+      description: Battery capacity, the power or charging chip if you know it, and whether the board can switch itself off.
+    validations:
+      required: false
+  - type: textarea
+    id: hardware-notes
+    attributes:
+      label: Anything else about the hardware
+      description: A clock chip, a card slot, other chips on the board, links to schematics. Say here if you chose "Other" above.
+    validations:
+      required: false
+  - type: textarea
+    id: why
+    attributes:
+      label: Why you want Kleidos on it
+      description: What you would use it for, and what this board offers that the nine it runs on today do not.
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        ### Helping with this board
+
+        Everything below is optional, and none of it is needed to make a request.
+
+        - **Donate a device.** Devices are accepted only as donations: a donated
+          board stays on the test bench for future testing and is not sent back.
+          Never post an address here. Write to mail@kleidos.dev, and the
+          shipping is arranged privately by email.
+        - **Donate money.** Through [GitHub Sponsors](https://github.com/sponsors/jmrplens)
+          or [Ko-fi](https://ko-fi.com/jmrplens). A donation is a gift to the
+          project and gets you nothing in return: no reward, no priority, no date,
+          and no name on any list the project keeps (GitHub Sponsors and Ko-fi
+          let you stay private). To give toward this board, name it in the
+          Ko-fi message, public or private as you prefer, or in an email to
+          mail@kleidos.dev; please do not post amounts or receipts here. That
+          money goes to buying this board, up to its price: if the board is
+          bought and the money falls short, the project pays the rest. Anything
+          beyond the price, and all of it if
+          the board is never bought (discontinued, or the port declined), goes
+          to a general fund for the project's other costs, such as more boards
+          and bench parts.
+        - **Test builds** on your own board, when there are builds to test.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: What you could do
+      description: Optional. Tick what you could do.
+      options:
+        - label: I could donate a unit of this board (arranged privately by email, never by posting an address here).
+          required: false
+        - label: I may donate toward this board (I will say which board privately, in the Ko-fi message or by email).
+          required: false
+        - label: I could test builds on my own board.
+          required: false
+  - type: checkboxes
+    id: acknowledgment
+    attributes:
+      label: Before you post
+      options:
+        - label: I understand that neither a donation nor a donated device guarantees support for this board, or a date for it.
+          required: true
+        - label: I have not posted a postal address, a phone number, or anyone's personal details in this request.
+          required: true

@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/orgs/kleidos-dev/discussions/categories/q-a
+    about: Questions about how Kleidos works go to Q&A in Discussions.
+  - name: Propose an idea
+    url: https://github.com/orgs/kleidos-dev/discussions/categories/ideas
+    about: Features and changes go to Ideas in Discussions, before any code.
+  - name: Request a new board
+    url: https://github.com/orgs/kleidos-dev/discussions/categories/new-board-requests
+    about: One request per board, through the form in Discussions.
+  - name: Report a vulnerability
+    url: https://github.com/kleidos-dev/.github/blob/main/SECURITY.md
+    about: Never in an issue. Report it privately, as the security policy explains.

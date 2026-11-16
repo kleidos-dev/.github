@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in this repository is wrong or does not work.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A vulnerability never goes in an issue: follow the
+        [security policy](https://github.com/kleidos-dev/.github/blob/main/SECURITY.md).
+        Questions go to [Q&A](https://github.com/orgs/kleidos-dev/discussions/categories/q-a).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps that shows it.
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: Board
+      description: The board it concerns, if any.
+      placeholder: "e.g. M5StickS3"
+    validations:
+      required: false
+  - type: input
+    id: build
+    attributes:
+      label: Version or build
+      description: The version, commit, or file it concerns.
+    validations:
+      required: false
+  - type: textarea
+    id: tested
+    attributes:
+      label: What you tried
+      description: What you already checked, and on what hardware, if any.
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before you post
+      options:
+        - label: This issue holds no password, PIN, postal address, or other personal data.
+          required: true
