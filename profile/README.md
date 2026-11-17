@@ -1,38 +1,17 @@
-# Kleidos
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg">
+  <img src="assets/banner-light.svg" width="100%" alt="Kleidos, hardware password manager: Your passwords, on a board you already own. Nine boards stand on one shelf at one scale, each showing its real Kleidos screen, first the PIN screen and then the password list: M5StickS3, M5StickC Plus2, M5StickC Plus 1.1 and M5StickC Plus SE (two buttons), M5Stack CoreInk (a wheel, e-paper screen), M5Stack CoreS3 SE and M5Stack Core2 v1.3 (touchscreen), M5Cardputer ADV (keyboard) and LilyGO T-Deck Plus (keyboard, trackball and touchscreen).">
+</picture>
 
-Kleidos is free firmware that turns a small ESP32 board from M5Stack or LilyGO into a hardware password manager. Your passwords stay encrypted on the board, which types the one you pick into your computer or phone over Bluetooth, and only after you have unlocked it on the board itself. No app, no cloud.
+**Free firmware that turns one of nine small ESP32 boards from M5Stack and LilyGO into a hardware password manager.** It keeps your passwords encrypted on the board and types the one you pick into your computer or phone over Bluetooth, only after you unlock the board itself. No app, no cloud.
 
-It is not released yet. Read more at **<https://kleidos.dev>**.
+**[Not released yet](https://kleidos.dev/roadmap/).** The firmware's source is private while the first release is prepared.
 
-## Boards
+<sub>**ESP32-S3:** [M5StickS3](https://kleidos.dev/overview/sticks3/) · [M5Cardputer&nbsp;ADV](https://kleidos.dev/overview/cardputer/) · [LilyGO&nbsp;T&#8209;Deck&nbsp;Plus](https://kleidos.dev/overview/tdeck-plus/) · [M5Stack&nbsp;CoreS3&nbsp;SE](https://kleidos.dev/overview/cores3-se/)<br>**ESP32:** [M5StickC&nbsp;Plus2](https://kleidos.dev/overview/m5stickc-plus2/) · [M5StickC&nbsp;Plus&nbsp;1.1](https://kleidos.dev/overview/m5stickc-plus1/) · [M5StickC&nbsp;Plus&nbsp;SE](https://kleidos.dev/overview/m5stickc-plus-se/) · [M5Stack&nbsp;CoreInk](https://kleidos.dev/overview/coreink/) · [M5Stack&nbsp;Core2&nbsp;v1.3](https://kleidos.dev/overview/m5stack-core2-v13/)<br>Want another board? Ask in [New board requests](https://github.com/orgs/kleidos-dev/discussions/categories/new-board-requests).</sub>
 
-Kleidos runs on nine boards: four on the ESP32-S3 and five on the classic ESP32.
+**[kleidos.dev](https://kleidos.dev)** · [Discussions](https://github.com/orgs/kleidos-dev/discussions) · [Contributing](https://github.com/kleidos-dev/.github/blob/main/CONTRIBUTING.md) · [Code of conduct](https://github.com/kleidos-dev/.github/blob/main/CODE_OF_CONDUCT.md) · [Donate](https://github.com/kleidos-dev/.github/blob/main/CONTRIBUTING.md#helping-with-a-board)
 
-| Board | Chip | You operate it with |
-| --- | --- | --- |
-| M5StickS3 | ESP32-S3 | Two buttons |
-| M5Cardputer ADV | ESP32-S3 | A keyboard |
-| LilyGO T-Deck Plus | ESP32-S3 | A keyboard, a trackball, and a touchscreen |
-| M5Stack CoreS3 SE | ESP32-S3 | A touchscreen |
-| M5StickC Plus2 | ESP32 | Two buttons |
-| M5StickC Plus 1.1 | ESP32 | Two buttons |
-| M5StickC Plus SE | ESP32 | Two buttons |
-| M5Stack CoreInk | ESP32 | A wheel |
-| M5Stack Core2 v1.3 | ESP32 | A touchscreen |
+> **Found a vulnerability?** Never report it in Discussions, in an issue, or in a pull request. Report it privately, as the [security policy](https://github.com/kleidos-dev/.github/blob/main/SECURITY.md) describes.
 
-The CoreInk's screen is e-paper; the other eight have an LCD.
-
-Want it on another board? Open a request in [New board requests](https://github.com/orgs/kleidos-dev/discussions/categories/new-board-requests).
-
-## Take part
-
-- Ask a question, share an idea, or show your build in [Discussions](https://github.com/orgs/kleidos-dev/discussions).
-- Read [how to contribute](https://github.com/kleidos-dev/.github/blob/main/CONTRIBUTING.md) and the [code of conduct](https://github.com/kleidos-dev/.github/blob/main/CODE_OF_CONDUCT.md).
-
-## Security
-
-Do not report a vulnerability in Discussions or in an issue. Report it privately, as described in the [security policy](https://github.com/kleidos-dev/.github/blob/main/SECURITY.md).
-
-## License
-
-Kleidos is licensed under the [GNU General Public License, version 3 or later](https://www.gnu.org/licenses/gpl-3.0.html) (GPL-3.0-or-later). Each repository states its own license in its `LICENSE` file.
+<sub>Kleidos is licensed under [GPL-3.0-or-later](https://www.gnu.org/licenses/gpl-3.0.html); each repository states its own license in its `LICENSE` file.</sub>
