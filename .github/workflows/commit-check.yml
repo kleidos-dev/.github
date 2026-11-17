@@ -6,11 +6,15 @@
 #
 # This job runs with a read-only token, also for pull requests from forks.
 # It checks the pull request's commits (base..head, merges skipped) with
-# the checker as the base branch has it, so a pull request cannot loosen
-# its own gate, writes the result to the job summary and to an artifact,
-# and fails on any error. The comment on the pull request is posted by
-# commit-check-comment.yml, which reads that artifact and never runs code
-# from the pull request.
+# the checker as the base branch has it, so a change to the checker does
+# not judge its own pull request, writes the result to the job summary and
+# to an artifact, and fails on any error. pull_request runs this workflow
+# file as the pull request has it, so review any change to this file.
+# A pull request opened by Dependabot or Renovate is not checked: they
+# author their own messages, which nobody can reword, and GitHub gives the
+# comment workflow a read-only token on their runs. The comment on the
+# pull request is posted by commit-check-comment.yml, which reads that
+# artifact and never runs code from the pull request.
 name: commit-check
 
 on:
@@ -40,7 +44,15 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
+          case "$PR_AUTHOR" in
+            'dependabot[bot]' | 'renovate[bot]')
+              echo "Opened by $PR_AUTHOR, which authors its own commit messages: not checked." | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "status=0" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
           checker=.github/commit-check/check_commit_msg.py
           out="$RUNNER_TEMP/commit-check"
           mkdir -p "$out"

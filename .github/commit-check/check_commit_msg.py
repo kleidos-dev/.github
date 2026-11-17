@@ -68,7 +68,7 @@ WARNING = "warning"
 
 ATTRIBUTION = [
     re.compile(r"^co-authored-by:.*\b(claude|anthropic|copilot|chatgpt|openai|gemini|cursor|assistant|bot)\b", re.I | re.M),
-    re.compile(r"generated (with|by) .*(claude|copilot|chatgpt|ai\b|assistant)", re.I),
+    re.compile(r"generated (with|by) .*\b(claude|copilot|chatgpt|ai|assistant)\b", re.I),
     re.compile("\U0001F916"),
     re.compile(r"https?://(claude\.ai|chatgpt\.com|chat\.openai\.com)/\S*(chat|session|share)", re.I),
 ]
@@ -168,7 +168,7 @@ def check_message(text):
     if MERGE_SUBJECT.match(subject):
         return []
     core = AUTOSQUASH.sub("", subject)
-    width = len(subject)
+    width = len(core)  # autosquash folds a fixup! commit into its target
     if not REVERT_SUBJECT.match(core):
         if width > SUBJECT_MAX:
             out.append(problem(1, "subject-max-length", ERROR, "the subject is %d columns; the limit is %d" % (width, SUBJECT_MAX)))
@@ -257,12 +257,13 @@ def check_range(rev, cwd=None):
 # --- the pull request comment -----------------------------------------------
 def plain(text, limit=160):
     """Untrusted text made safe for one Markdown table cell: no HTML, no
-    mentions, no table breaks, no line breaks."""
+    mentions, no links, no table breaks, no line breaks."""
     text = " ".join(str(text).split())
     if len(text) > limit:
         text = text[: limit - 1] + "…"
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "'")
+    text = text.replace("[", "\\[").replace("]", "\\]").replace("://", ":\\/\\/")
     text = text.replace("@", "@​")
     return text
 
@@ -303,7 +304,7 @@ def render_failure(result):
         for p in c["problems"]:
             if p["severity"] != ERROR:
                 continue  # warnings stay in the job log
-            fix = HINTS.get(p["rule"], p.get("hint", ""))
+            fix = HINTS.get(p["rule"], "see the job log")  # never the artifact's own text
             rows.append("| `%s` | %s | %d | `%s` | %s. %s. |" % (
                 c["sha"][:7], code_cell(c.get("subject", "")), p["line"], p["rule"], sentence(plain(p.get("message", ""))), sentence(plain(fix))))
     shown = rows[:MAX_ROWS]
