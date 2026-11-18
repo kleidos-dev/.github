@@ -1,0 +1,12 @@
+# Keeps the GitHub Actions this repository pins by commit current: at most
+# one grouped pull request a week. Dependabot authors its own commit
+# messages, so the commit-message gate skips its pull requests.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

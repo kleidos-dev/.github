@@ -1,4 +1,4 @@
-# Install once per clone: pre-commit install --hook-type commit-msg
+# Install once per clone: pre-commit install (both hook types below)
 default_install_hook_types: [pre-commit, commit-msg]
 
 repos:
@@ -9,3 +9,17 @@ repos:
         entry: python3 .github/commit-check/check_commit_msg.py
         language: system
         stages: [commit-msg]
+      - id: kleidos-media-stamp
+        name: media metadata written from the records
+        entry: python3 scripts/stamp_media_meta.py --check
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        files: '\.svg$|^profile/assets/assets\.json$|^REUSE\.toml$|^scripts/(media_meta|stamp_media_meta)\.py$'
+      - id: kleidos-media-metadata
+        name: media metadata profile and privacy deny-list
+        entry: python3 scripts/check_metadata.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        files: '\.(svg|png|jpe?g|webp|avif|gif|pdf|mp4|webm|mkv|glb|gltf|obj|mtl|ico|ttf|otf|woff2?|stl|ksm|wav|mp3|vtt|srt)$|^profile/assets/assets\.json$|^REUSE\.toml$|^scripts/(media_meta|check_metadata)\.py$'

@@ -1,0 +1,3 @@
+__pycache__/
+# Identity patterns for the media metadata checker; never committed.
+scripts/deny-local.txt

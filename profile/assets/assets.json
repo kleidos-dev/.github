@@ -1,0 +1,57 @@
+{
+  "profile": "kleidos-media-meta/1",
+  "about": "The media this repository publishes, one record per file: what scripts/stamp_media_meta.py writes into it and the digest it leaves. The license and holders come from REUSE.toml.",
+  "files": {
+    "profile/assets/banner-dark.svg": {
+      "id": "kl-banner-dark",
+      "title": "Kleidos organization banner, dark theme",
+      "description": "Kleidos, hardware password manager: your passwords, on a board you already own. Nine boards on one shelf show their real Kleidos screens: M5StickS3, M5StickC Plus2, M5StickC Plus 1.1, M5StickC Plus SE, M5Stack CoreInk, M5Stack CoreS3 SE, M5Stack Core2 v1.3, M5Cardputer ADV and LILYGO T-Deck Plus.",
+      "keywords": [
+        "Kleidos",
+        "hardware password manager",
+        "open source",
+        "GitHub organization profile",
+        "banner",
+        "M5Stack",
+        "LILYGO",
+        "M5StickS3",
+        "M5StickC",
+        "M5Stack CoreInk",
+        "M5Cardputer ADV",
+        "LILYGO T-Deck Plus"
+      ],
+      "digital_source_type": "composite",
+      "own_license": "GPL-3.0-or-later",
+      "language": "en",
+      "notice": "Lettering: glyph outlines of Mona Sans and Mona Sans Mono, Copyright 2022 The Mona Sans Project Authors (https://github.com/github/mona-sans), Reserved Font Name \"Mona\", licensed under the SIL Open Font License 1.1 (https://openfontlicense.org). Printed legends on the boards: glyph outlines of Inter, Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter), SIL Open Font License 1.1. Board drawings: the Kleidos board drawings, MIT; the products and their marks belong to their makers. Screens: real Kleidos captures. Banner: GPL-3.0-or-later, Kleidos (https://kleidos.dev).",
+      "bytes": 172840,
+      "sha256": "bb2d19a84ca522f963c3e7897014e45e7011c628c6702ad2a1f367f1d0bd8005"
+    },
+    "profile/assets/banner-light.svg": {
+      "id": "kl-banner-light",
+      "title": "Kleidos organization banner, light theme",
+      "description": "Kleidos, hardware password manager: your passwords, on a board you already own. Nine boards on one shelf show their real Kleidos screens: M5StickS3, M5StickC Plus2, M5StickC Plus 1.1, M5StickC Plus SE, M5Stack CoreInk, M5Stack CoreS3 SE, M5Stack Core2 v1.3, M5Cardputer ADV and LILYGO T-Deck Plus.",
+      "keywords": [
+        "Kleidos",
+        "hardware password manager",
+        "open source",
+        "GitHub organization profile",
+        "banner",
+        "M5Stack",
+        "LILYGO",
+        "M5StickS3",
+        "M5StickC",
+        "M5Stack CoreInk",
+        "M5Cardputer ADV",
+        "LILYGO T-Deck Plus"
+      ],
+      "digital_source_type": "composite",
+      "own_license": "GPL-3.0-or-later",
+      "language": "en",
+      "notice": "Lettering: glyph outlines of Mona Sans and Mona Sans Mono, Copyright 2022 The Mona Sans Project Authors (https://github.com/github/mona-sans), Reserved Font Name \"Mona\", licensed under the SIL Open Font License 1.1 (https://openfontlicense.org). Printed legends on the boards: glyph outlines of Inter, Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter), SIL Open Font License 1.1. Board drawings: the Kleidos board drawings, MIT; the products and their marks belong to their makers. Screens: real Kleidos captures. Banner: GPL-3.0-or-later, Kleidos (https://kleidos.dev).",
+      "bytes": 173320,
+      "sha256": "b29764f64ae68baa8c68ad46a4f8139e03b7b32fe3836d8a3ddb0015453494c2"
+    }
+  },
+  "exempt": []
+}
