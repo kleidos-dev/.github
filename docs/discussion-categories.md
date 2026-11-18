@@ -27,7 +27,7 @@ The emoji column gives GitHub's shortcode for the picker.
 
 Title: **Welcome to Kleidos Discussions**
 
-> Welcome. Kleidos is free firmware that turns a small ESP32 board from M5Stack or LilyGO into a hardware password manager: your passwords stay encrypted on the board, which types the one you pick over Bluetooth once you have unlocked it on the board itself. It runs on nine boards today and is not released yet. More at <https://kleidos.dev>.
+> Welcome. Kleidos is free firmware that turns a small ESP32 board from M5Stack or LILYGO into a hardware password manager: your passwords stay encrypted on the board, which types the one you pick over Bluetooth once you have unlocked it on the board itself. It runs on nine boards today and is not released yet. More at <https://kleidos.dev>.
 >
 > Where things go:
 >
