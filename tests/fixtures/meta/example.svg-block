@@ -1,0 +1,31 @@
+<title id="kl-example-t">Example drawing, test fixture</title>
+<desc id="kl-example-d">A fixed record that pins how the profile writes an SVG.</desc>
+<!-- REUSE-IgnoreStart -->
+<metadata id="kl-example-m">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+           xmlns:dc="http://purl.org/dc/elements/1.1/"
+           xmlns:cc="http://creativecommons.org/ns#"
+           xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/">
+    <cc:Work rdf:about="">
+      <dc:format>image/svg+xml</dc:format>
+      <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+      <dc:title>Example drawing, test fixture</dc:title>
+      <dc:description>A fixed record that pins how the profile writes an SVG.</dc:description>
+      <dc:creator><cc:Agent><dc:title>José M. Requena Plens</dc:title></cc:Agent></dc:creator>
+      <dc:publisher><cc:Agent><dc:title>Kleidos</dc:title></cc:Agent></dc:publisher>
+      <dc:rights><cc:Agent><dc:title>© 2026 José M. Requena Plens; © 2021 M5Stack. GPL-3.0-or-later AND MIT.</dc:title></cc:Agent></dc:rights>
+      <dc:identifier>https://github.com/kleidos-dev/.github/blob/main/example.svg</dc:identifier>
+      <dc:source>https://github.com/kleidos-dev/boards/blob/main/example.svg</dc:source>
+      <dc:language>en</dc:language>
+      <dc:subject><rdf:Bag>
+        <rdf:li>Kleidos</rdf:li>
+        <rdf:li>hardware password manager</rdf:li>
+        <rdf:li>open source</rdf:li>
+        <rdf:li>test &amp; fixture</rdf:li>
+      </rdf:Bag></dc:subject>
+      <Iptc4xmpExt:DigitalSourceType rdf:resource="http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation"/>
+      <cc:license rdf:resource="https://spdx.org/licenses/GPL-3.0-or-later.html"/>
+    </cc:Work>
+  </rdf:RDF>
+</metadata>
+<!-- REUSE-IgnoreEnd -->

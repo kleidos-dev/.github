@@ -1,0 +1,48 @@
+# The media metadata gate.
+#
+# Every tracked media file carries the Kleidos metadata profile
+# (kleidos-media-meta/1) written from its record in
+# profile/assets/assets.json, the repository is REUSE compliant, and the
+# metadata tools pass their own tests.
+#
+# The identity patterns of the privacy deny-list are private, so they come
+# from the KLEIDOS_DENY_EXTRA secret (one pattern per line). A run without
+# the secret (a pull request from a fork or from Dependabot, which get no
+# secrets, or a repository where it is not set yet) checks every other
+# class and shows a warning that identity was not checked.
+name: media-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: media-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    name: media metadata and REUSE
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KLEIDOS_DENY_EXTRA: ${{ secrets.KLEIDOS_DENY_EXTRA }}
+      KLEIDOS_DENY_OPTIONAL: ${{ secrets.KLEIDOS_DENY_EXTRA == '' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the REUSE tool
+        run: pipx install reuse==6.3.0
+      - name: REUSE compliance
+        run: reuse lint
+      - name: Metadata written from the records
+        run: python3 scripts/stamp_media_meta.py --check
+      - name: Metadata profile and privacy deny-list
+        run: python3 scripts/check_metadata.py
+      - name: Tests of the metadata tools
+        run: python3 -m unittest discover -s tests -v
