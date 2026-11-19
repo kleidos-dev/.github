@@ -53,5 +53,10 @@
       "sha256": "b29764f64ae68baa8c68ad46a4f8139e03b7b32fe3836d8a3ddb0015453494c2"
     }
   },
-  "exempt": []
+  "exempt": [
+    {
+      "path": ".github/readme/*.svg",
+      "reason": "byte copies of the social repository's README banner: their metadata is written there and comes with each copy; .github/readme/SHA256SUMS holds their bytes"
+    }
+  ]
 }
