@@ -1,9 +1,9 @@
 <!-- BEGIN GENERATED: banner (kleidos-dev/social, tools/sync_readme_banners.py); do not edit by hand -->
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/readme/banner-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset=".github/readme/banner-light.svg">
-  <img src=".github/readme/banner-light.svg" width="100%" alt="Kleidos Community: The organization's profile, contributing guide, security policy and templates.">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/kleidos-dev/social/main/svg/readme/dot-github/banner-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/kleidos-dev/social/main/svg/readme/dot-github/banner-light.svg">
+  <img src="https://raw.githubusercontent.com/kleidos-dev/social/main/svg/readme/dot-github/banner-light.svg" width="100%" alt="Kleidos Community: The organization's profile, contributing guide, security policy and templates.">
 </picture>
 
 <!-- END GENERATED: banner -->
@@ -16,7 +16,6 @@ This repository holds the kleidos-dev organization's profile, its community defa
 | --- | --- |
 | [`profile/README.md`](profile/README.md) | The organization's public landing page on GitHub. |
 | [`profile/assets/`](profile/assets/) | The profile banners (dark and light) and `assets.json`, the record of what each banner says about itself and its SHA-256. |
-| [`.github/readme/`](.github/readme/) | The banner at the top of this page: a byte copy of the [`social`](https://github.com/kleidos-dev/social) repository's, with its `SHA256SUMS`, written by social's `tools/sync_readme_banners.py`. The profile keeps its own banner. |
 | [`.github/FUNDING.yml`](.github/FUNDING.yml) | The two donation routes, used by every repository that has no funding file of its own and has Sponsorships turned on. |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability privately; the default for every repository without its own policy. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Where to ask, how a new board gets added, and the license of contributions; the default for every repository without its own guide. |
