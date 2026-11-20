@@ -45,7 +45,7 @@ python3 scripts/check_metadata.py             # checks the profile, REUSE and th
 python3 -m unittest discover -s tests         # the tools' own tests
 ```
 
-The stamp rewrites only the root `<svg>`'s `role`, `aria-labelledby` and `lang` and the title, description and metadata that follow it; the drawing is never touched. The checker refuses any e-mail address, local path, host name, machine time or tool name in the metadata, and identity patterns kept out of the repository (the `KLEIDOS_DENY_EXTRA` secret in CI, or an untracked `scripts/deny-local.txt`). The `media-check` workflow and the pre-commit hooks run the same commands.
+The stamp rewrites only the root `<svg>`'s `role`, `aria-labelledby` and `lang` and the title, description and metadata that follow it; the drawing is never touched. The checker refuses any e-mail address, local path, host name, machine time or tool name in the metadata, and identity patterns kept out of the repository (the `KLEIDOS_DENY_EXTRA` secret in CI, or an untracked `scripts/deny-local.txt`). The `CI` workflow (`media-check.yml`) and the pre-commit hooks run the same commands.
 
 ## License
 

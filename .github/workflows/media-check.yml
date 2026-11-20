@@ -10,7 +10,10 @@
 # the secret (a pull request from a fork or from Dependabot, which get no
 # secrets, or a repository where it is not set yet) checks every other
 # class and shows a warning that identity was not checked.
-name: media-check
+#
+# The repository's only gate, so it is named CI (the project's CI
+# convention); one job of seconds, its steps cheapest first.
+name: CI
 
 on:
   pull_request:
@@ -21,12 +24,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: media-check-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   metadata:
-    name: media metadata and REUSE
+    name: "🧹 Media metadata and REUSE"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
