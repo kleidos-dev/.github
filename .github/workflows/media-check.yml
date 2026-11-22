@@ -14,11 +14,14 @@
 # The repository's gate, so it is named CI (the project's CI convention):
 # the metadata job (seconds, its steps cheapest first, the tests measured by
 # coverage.py), then the SonarCloud analysis of the tools, which reads that
-# coverage report.
+# coverage report. The analysis is secretless: the job trades its GitHub
+# OIDC token for a short-lived SonarQube Cloud token, so no SONAR_TOKEN
+# secret exists in this repository.
 name: CI
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -78,45 +81,71 @@ jobs:
     # Last stage: it reads the coverage the test job wrote, and a red gate
     # earlier stops it from spending a runner.
     needs: [metadata]
-    # Read-only: the scan reads the code and the pull request it analyses.
+    # Read-only on the code; id-token lets the job ask GitHub for the OIDC
+    # token that SonarSource/sonarqube-auth-action exchanges for a
+    # project-scoped SonarQube Cloud token (30 minutes, masked in the log).
     permissions:
       contents: read
-      pull-requests: read # the pull request's branch and base for the scan
-    # Mandatory: no `if:` on the token and no continue-on-error. Every code
-    # repository holds SONAR_TOKEN, so a missing token, a scanner error or an
-    # analysis the server refuses is a red job, never a silent green.
+      id-token: write
+    # No continue-on-error: on a push to main and on a pull request from
+    # this repository, a failed token exchange, a scanner error or an
+    # analysis the server refuses is a red job, never a silent green. The
+    # one exception is a pull request that GitHub gives no OIDC token (from
+    # a fork, or from Dependabot): the job says so in a notice and skips
+    # the analysis; SonarCloud analyses the change once it is on main.
     steps:
-      # Full history: blame and the new-code period need it. The scan holds
-      # SONAR_TOKEN, so the checkout leaves no git credential behind.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: OIDC token available
+        id: oidc
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${EVENT}" = pull_request ] && { [ "${HEAD_REPO}" != "${REPO}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; }; then
+            echo "::notice title=SonarCloud skipped::GitHub gives this pull request (from ${HEAD_REPO}) no OIDC token, so the secretless analysis cannot run; it runs once the change is on main."
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      # Full history: blame and the new-code period need it. The checkout
+      # leaves no git credential behind.
+      - if: steps.oidc.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Fetch the coverage report
+        if: steps.oidc.outputs.run == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage
 
+      # Exports the short-lived token as SONAR_TOKEN for the next steps.
+      - name: SonarCloud token from the OIDC token
+        if: steps.oidc.outputs.run == 'true'
+        id: auth
+        uses: SonarSource/sonarqube-auth-action@b372e2c2930aadfcc4f4399446da1e12772709ad # v1.2
+
       # The scanner detects the branch or pull request from the GitHub event;
       # sonar-project.properties holds the rest.
       - name: SonarCloud Scan
+        if: steps.oidc.outputs.run == 'true'
         uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         env:
           SONAR_HOST_URL: https://sonarcloud.io
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The scanner's success means the report was uploaded; whether the
-      # server accepted it is decided afterwards by a Compute Engine task (the
-      # private plan's line limit, a broken report). This waits for that task
-      # and fails the job unless it succeeded. The quality gate is not judged
+      # server accepted it is decided afterwards by a Compute Engine task (a
+      # broken report, a refused analysis). This waits for that task and
+      # fails the job unless it succeeded. The quality gate is not judged
       # here: SonarCloud's GitHub App reports it on the pull request.
       - name: SonarCloud accepted the analysis
+        if: steps.oidc.outputs.run == 'true'
         timeout-minutes: 10
         env:
           SONAR_HOST_URL: https://sonarcloud.io
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           set -euo pipefail
           task="$(sed -n 's/^ceTaskId=//p' .scannerwork/report-task.txt)"

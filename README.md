@@ -51,7 +51,9 @@ The stamp rewrites only the root `<svg>`'s `role`, `aria-labelledby` and `lang` 
 
 ## Review bots and analysis
 
-Pull requests are reviewed by [CodeRabbit](https://coderabbit.ai) (`.coderabbit.yaml`) and [Greptile](https://www.greptile.com) (`.greptile/`), configured to post inline reviews and suggestions only: they never touch a pull request's title or description, post no summary of it, and commit nothing to it. Both review against the rules in this README and in [`CONTRIBUTING.md`](CONTRIBUTING.md). The `CI` workflow measures the tools' tests with coverage.py and then runs the `📊 SonarCloud` job (`sonar-project.properties`), which is mandatory: it fails when the analysis cannot run or when SonarCloud does not accept it.
+Pull requests are reviewed by [CodeRabbit](https://coderabbit.ai) (`.coderabbit.yaml`) and [Greptile](https://www.greptile.com) (`.greptile/`), configured to post inline reviews and suggestions only: they never touch a pull request's title or description, post no summary of it, and commit nothing to it. Both review against the rules in this README and in [`CONTRIBUTING.md`](CONTRIBUTING.md). The `CI` workflow runs on every push to `main` and every pull request against `main`: it measures the tools' tests with coverage.py and then runs the `📊 SonarCloud` job, which is mandatory: it fails when the analysis cannot run or when SonarCloud does not accept it.
+
+SonarCloud analysis is secretless and runs only from CI (Automatic Analysis is off): the job trades its GitHub OIDC token for a short-lived project token through `SonarSource/sonarqube-auth-action`, so the repository holds no `SONAR_TOKEN`. A pull request that GitHub gives no OIDC token (from a fork, or from Dependabot) skips the analysis with a notice, and the change is analysed once it is on `main`. Every setting a file can carry (sources, tests, coverage, Python version, links) is in `sonar-project.properties`; the new code period (30 days), the quality gate and profiles (Sonar way) are set in the SonarQube Cloud organization `kleidos-dev`.
 
 ## License
 
