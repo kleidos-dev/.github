@@ -1,3 +1,6 @@
 __pycache__/
 # Identity patterns for the media metadata checker; never committed.
 scripts/deny-local.txt
+# coverage.py's data and the report the CI hands to SonarCloud.
+.coverage
+coverage.xml

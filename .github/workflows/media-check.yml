@@ -11,14 +11,17 @@
 # secrets, or a repository where it is not set yet) checks every other
 # class and shows a warning that identity was not checked.
 #
-# The repository's only gate, so it is named CI (the project's CI
-# convention); one job of seconds, its steps cheapest first.
+# The repository's gate, so it is named CI (the project's CI convention):
+# the metadata job (seconds, its steps cheapest first, the tests measured by
+# coverage.py), then the SonarCloud analysis of the tools, which reads that
+# coverage report.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -39,6 +42,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install the pinned tools
+        run: pip install -r requirements.txt
       - name: Install the REUSE tool
         run: pipx install reuse==6.3.0
       - name: REUSE compliance
@@ -48,4 +58,90 @@ jobs:
       - name: Metadata profile and privacy deny-list
         run: python3 scripts/check_metadata.py
       - name: Tests of the metadata tools
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          python -m coverage run -m unittest discover -s tests -v
+          python -m coverage xml -o coverage.xml
+      - name: Hand the coverage report to the SonarCloud job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 1
+
+  sonarcloud:
+    name: "📊 SonarCloud"
+    runs-on: ubuntu-latest
+    # A bound for a hung scanner, with room for the scan to grow (15 minutes
+    # is the owner's value in gitlab-mcp-server, where 5 cut off the upload).
+    timeout-minutes: 15
+    # Last stage: it reads the coverage the test job wrote, and a red gate
+    # earlier stops it from spending a runner.
+    needs: [metadata]
+    # Read-only: the scan reads the code and the pull request it analyses.
+    permissions:
+      contents: read
+      pull-requests: read # the pull request's branch and base for the scan
+    # Mandatory: no `if:` on the token and no continue-on-error. Every code
+    # repository holds SONAR_TOKEN, so a missing token, a scanner error or an
+    # analysis the server refuses is a red job, never a silent green.
+    steps:
+      # Full history: blame and the new-code period need it. The scan holds
+      # SONAR_TOKEN, so the checkout leaves no git credential behind.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the coverage report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage
+
+      # The scanner detects the branch or pull request from the GitHub event;
+      # sonar-project.properties holds the rest.
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The scanner's success means the report was uploaded; whether the
+      # server accepted it is decided afterwards by a Compute Engine task (the
+      # private plan's line limit, a broken report). This waits for that task
+      # and fails the job unless it succeeded. The quality gate is not judged
+      # here: SonarCloud's GitHub App reports it on the pull request.
+      - name: SonarCloud accepted the analysis
+        timeout-minutes: 10
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          task="$(sed -n 's/^ceTaskId=//p' .scannerwork/report-task.txt)"
+          if [ -z "${task}" ]; then
+            echo "::error::The scanner wrote no ceTaskId to .scannerwork/report-task.txt"
+            exit 1
+          fi
+          while :; do
+            body="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+              --retry 3 --retry-all-errors \
+              -H "Authorization: Bearer ${SONAR_TOKEN}" \
+              "${SONAR_HOST_URL}/api/ce/task?id=${task}")"
+            status="$(jq -r '.task.status' <<<"${body}")"
+            case "${status}" in
+              SUCCESS)
+                echo "SonarCloud accepted analysis $(jq -r '.task.analysisId' <<<"${body}")"
+                break
+                ;;
+              PENDING|IN_PROGRESS)
+                sleep 5
+                ;;
+              *)
+                reason="$(jq -r '.task.errorMessage // "no reason given"' <<<"${body}")"
+                echo "::error::SonarCloud did not accept the analysis (${status}): ${reason}"
+                exit 1
+                ;;
+            esac
+          done

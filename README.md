@@ -27,8 +27,10 @@ This repository holds the kleidos-dev organization's profile, its community defa
 | [`.github/DISCUSSION_TEMPLATE/new-board-requests.yml`](.github/DISCUSSION_TEMPLATE/new-board-requests.yml) | The form behind the New board requests category. |
 | [`docs/discussion-categories.md`](docs/discussion-categories.md) | The Discussions categories and the pinned welcome post. |
 | [`scripts/`](scripts/), [`tests/`](tests/) | The media metadata tools (`media_meta.py`, `stamp_media_meta.py`, `check_metadata.py`) and their tests. |
-| [`.github/workflows/`](.github/workflows/) | The commit-message gate and the media metadata gate (`media-check.yml`). |
-| [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly updates of the pinned GitHub Actions. |
+| [`.github/workflows/`](.github/workflows/) | The commit-message gate and the CI (`media-check.yml`): the media metadata gate and the SonarCloud analysis of the tools. |
+| [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly updates of the pinned GitHub Actions and of the CI's Python tools (`requirements.txt`). |
+| [`.coderabbit.yaml`](.coderabbit.yaml), [`.greptile/`](.greptile/) | The review bots' configuration: inline reviews and suggestions only. |
+| [`sonar-project.properties`](sonar-project.properties), [`.coveragerc`](.coveragerc) | The SonarCloud project and the coverage report its analysis reads. |
 | [`REUSE.toml`](REUSE.toml), [`LICENSES/`](LICENSES/) | The license and copyright of every file, in the [REUSE](https://reuse.software/) format, and the license texts. |
 
 Kleidos itself is described at <https://kleidos.dev>.
@@ -47,6 +49,10 @@ python3 -m unittest discover -s tests         # the tools' own tests
 
 The stamp rewrites only the root `<svg>`'s `role`, `aria-labelledby` and `lang` and the title, description and metadata that follow it; the drawing is never touched. The checker refuses any e-mail address, local path, host name, machine time or tool name in the metadata, and identity patterns kept out of the repository (the `KLEIDOS_DENY_EXTRA` secret in CI, or an untracked `scripts/deny-local.txt`). The `CI` workflow (`media-check.yml`) and the pre-commit hooks run the same commands.
 
+## Review bots and analysis
+
+Pull requests are reviewed by [CodeRabbit](https://coderabbit.ai) (`.coderabbit.yaml`) and [Greptile](https://www.greptile.com) (`.greptile/`), configured to post inline reviews and suggestions only: they never touch a pull request's title or description, post no summary of it, and commit nothing to it. Both review against the rules in this README and in [`CONTRIBUTING.md`](CONTRIBUTING.md). The `CI` workflow measures the tools' tests with coverage.py and then runs the `📊 SonarCloud` job (`sonar-project.properties`), which is mandatory: it fails when the analysis cannot run or when SonarCloud does not accept it.
+
 ## License
 
-The text and the banners in this repository are licensed under the [GNU General Public License, version 3 or later](https://www.gnu.org/licenses/gpl-3.0.html) (GPL-3.0-or-later), except [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), which is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/) 2.1 (CC BY 4.0). The tooling (the commit-message gate copied from kleidos-dev/agents, the media metadata tools, their tests and the CI configuration) is under the MIT License, so the other kleidos-dev repositories can share it. [`REUSE.toml`](REUSE.toml) states the license of every file, and the texts are in [`LICENSES/`](LICENSES/); the full text of the GPL is also in [`LICENSE`](LICENSE). Every other Kleidos repository states its own license in its `LICENSE` file.
+The text and the banners in this repository are licensed under the [GNU General Public License, version 3 or later](https://www.gnu.org/licenses/gpl-3.0.html) (GPL-3.0-or-later), except [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), which is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/) 2.1 (CC BY 4.0). The tooling (the commit-message gate copied from kleidos-dev/agents, the media metadata tools, their tests, the CI configuration and the configuration of the review bots and of SonarCloud) is under the MIT License, so the other kleidos-dev repositories can share it. [`REUSE.toml`](REUSE.toml) states the license of every file, and the texts are in [`LICENSES/`](LICENSES/); the full text of the GPL is also in [`LICENSE`](LICENSE). Every other Kleidos repository states its own license in its `LICENSE` file.

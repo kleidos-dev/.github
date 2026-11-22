@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+#
+# coverage.py, for the report the SonarCloud job reads: paths relative to the
+# repository (SonarQube Cloud cannot map the runner's absolute paths), branch
+# coverage, and the media metadata tools as the one source root.
+[run]
+relative_files = True
+branch = True
+source = scripts

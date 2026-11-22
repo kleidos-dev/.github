@@ -38,13 +38,23 @@ SPDX-License-Identifier = "CC-BY-4.0"
 
 # Tooling: the commit-message gate copied from kleidos-dev/agents (MIT
 # there), the media metadata module and checker shared with the other
-# kleidos-dev repositories, their tests and the CI configuration.
+# kleidos-dev repositories, their tests, the CI configuration, and the
+# configuration of the review bots (CodeRabbit, Greptile), SonarCloud,
+# coverage.py and markdownlint. The JSON files and .python-version cannot
+# hold a comment, so this row is their only license statement.
 [[annotations]]
 path = [
   ".github/commit-check/**",
   ".github/workflows/**",
   ".github/dependabot.yml",
   ".pre-commit-config.yaml",
+  ".coderabbit.yaml",
+  ".greptile/**",
+  ".coveragerc",
+  ".markdownlint.json",
+  ".python-version",
+  "requirements.txt",
+  "sonar-project.properties",
   "scripts/**",
   "tests/**",
 ]

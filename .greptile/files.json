@@ -1,0 +1,12 @@
+{
+  "files": [
+    {
+      "path": "README.md",
+      "description": "What the repository holds, path by path, and the media metadata rules (profile kleidos-media-meta/1, the stamp and the checker, the privacy deny-list) and the license split. Review findings cite these rules."
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "description": "The organization-wide contributing guide: English only, imperative commit messages, one concern per pull request, documentation in the same change, no bypassed checks, SPDX headers, and the board-support and donation rules. Review findings cite these rules."
+    }
+  ]
+}

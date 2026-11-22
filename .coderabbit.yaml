@@ -1,0 +1,242 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# SPDX-License-Identifier: MIT
+#
+# CodeRabbit for the Kleidos repositories: line reviews and committable
+# suggestions, nothing else. The pull request's title and description are the
+# author's and stay exactly as written, and no summary of the pull request is
+# generated anywhere: not in the description, not in the walkthrough comment.
+#
+# This file is the whole configuration. It does not set inheritance, so no
+# value comes from a central repository or the web interface: what is not
+# written here is the schema default (reference/configuration, V2). The
+# canonical copy lives beside the commit-message gate in kleidos-dev/agents
+# and is synced into each repository; a repository adds only its own
+# path_filters, path_instructions and guideline files below the baseline.
+#
+# kleidos-dev/.github: the organization's profile, its community defaults
+# (used by every repository without its own) and the media metadata tools.
+# It has no AGENTS.md: its rules are in README.md and CONTRIBUTING.md, which
+# the knowledge base below adds to the guideline files.
+language: en-US
+
+reviews:
+  # Balanced feedback, the default every owner repository has used so far.
+  # "assertive" is the knob for more comments; "quiet" for fewer.
+  profile: chill
+
+  # The summary is off, not relocated. high_level_summary: false keeps it out
+  # of the description; high_level_summary_in_walkthrough: false keeps it out
+  # of the walkthrough comment too. CodeRabbit still writes a summary wherever
+  # its placeholder appears in a description, so the placeholder is a string
+  # nobody types. The same goes for the title, which is only rewritten when its
+  # placeholder appears in the title (there is no boolean for it).
+  high_level_summary: false
+  high_level_summary_in_walkthrough: false
+  high_level_summary_placeholder: "coderabbit-summary-disabled"
+  auto_title_placeholder: "coderabbit-title-disabled"
+
+  # The walkthrough comment cannot be turned off (no V2 or V3 key removes it),
+  # so it is collapsed and every section it can drop is dropped. What stays is
+  # the review status (why a review was skipped or paused) and Merge Risk,
+  # which has no toggle.
+  collapse_walkthrough: true
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  in_progress_fortune: false
+  poem: false
+  review_info: false
+  review_details: false
+  review_status: true
+
+  # Inline comments keep their "Prompt for Coding Agents" block: most fixes
+  # here are applied by an agent reading the review.
+  enable_prompt_for_ai_agents: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # Any base branch, so a stacked pull request is reviewed on its own diff
+    # rather than skipped for not targeting main (the default list is empty,
+    # which means the default branch only).
+    base_branches:
+      - ".*"
+    # Bot commits (dependency bumps, generated files) carry no reviewable
+    # intent.
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "github-actions[bot]"
+
+  # Reviews and suggestions only: no bot writes code into a pull request, and
+  # none of these adds its checkbox to the walkthrough. Committable suggestion
+  # blocks in inline comments are unaffected; the author applies them.
+  finishing_touches:
+    autofix:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+  # These never edit the title or description, but each posts a verdict on
+  # them. Commit messages are already gated by commit-check.yml.
+  pre_merge_checks:
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+
+  # Files reviewed through their source, not here, and files with nothing to
+  # review line by line.
+  path_filters:
+    # The commit-message gate and its two workflows are synced copies of
+    # kleidos-dev/agents: a change is made and reviewed there.
+    - "!.github/commit-check/**"
+    - "!.github/workflows/commit-check.yml"
+    - "!.github/workflows/commit-check-comment.yml"
+    # Verbatim license texts.
+    - "!LICENSE"
+    - "!LICENSES/**"
+    # The banners are artwork whose metadata stamp_media_meta.py writes from
+    # profile/assets/assets.json; the record is reviewed, and CI checks that
+    # each SVG holds exactly what its record gives.
+    - "!profile/assets/*.svg"
+
+  path_instructions:
+    - path: "**/*.md"
+      instructions: >-
+        English only. Markdown prose is never hard-wrapped: one line per
+        paragraph and one line per list item (tables, code and fenced blocks
+        keep their own layout); flag a paragraph or list item broken over
+        several lines. Everything here is public: flag any postal address,
+        donation amount, receipt, personal e-mail other than
+        mail@kleidos.dev, local path or host name. Claims about the firmware
+        must match kleidos.dev (unreleased, private source, nine boards).
+    - path: "{SECURITY,CONTRIBUTING,SUPPORT}.md"
+      instructions: >-
+        The organization-wide default for every kleidos-dev repository that
+        has no file of its own, so a change applies to all of them. SECURITY.md:
+        vulnerabilities are reported only privately (the Security tab or
+        mail@kleidos.dev with the OpenPGP key it names), never in Discussions,
+        issues or pull requests; flag any wording that weakens that, and any
+        change to the key fingerprint. CONTRIBUTING.md: a board is
+        "Supported" only after the maintainer's full bench test; donations
+        get nothing in return and guarantee no board or date.
+    - path: "CODE_OF_CONDUCT.md"
+      instructions: >-
+        Adapted from the Contributor Covenant 2.1 (CC BY 4.0): flag changes
+        beyond the adaptation, and keep the attribution.
+    - path: "README.md"
+      instructions: >-
+        The block between the BEGIN GENERATED and END GENERATED banner
+        comments is written by kleidos-dev/social
+        (tools/sync_readme_banners.py): flag hand edits inside it. A new
+        top-level file or folder a contributor needs to know gets its row in
+        the table, and the Media metadata section must match what the
+        scripts actually do.
+    - path: "profile/**"
+      instructions: >-
+        profile/README.md is the organization's public landing page on
+        GitHub. Links point at kleidos.dev or at public kleidos-dev
+        repositories only; the firmware's source is private until the first
+        release. Board names are spelled as their makers do (M5StickS3,
+        LILYGO T-Deck Plus, ...).
+    - path: "profile/assets/assets.json"
+      instructions: >-
+        The record each banner's metadata is written from
+        (kleidos-media-meta/1). A change to a record or a banner must come
+        with stamp_media_meta.py --write output (new bytes and sha256); a
+        title, description or keyword must hold no e-mail address, local
+        path, host name, machine time or tool name (the privacy deny-list).
+        License and holders come from REUSE.toml, never from the record.
+    - path: "scripts/**"
+      instructions: >-
+        Python standard library only (no third-party import), Python 3.11+
+        (tomllib). Every metadata value comes from fixed constants and the
+        file's record: flag a date, machine name, tool version, environment
+        read or randomness reaching the output. media_meta.py is the shared
+        part of the module every kleidos-dev repository keeps: a change to
+        the profile or the deny-list must be portable to those copies. The
+        checker's exit codes are 0 clean, 1 findings, 2 usage or internal
+        error, and its rule IDs (M001...) are stable: flag a reused or
+        renumbered ID. Identity patterns of the deny-list never enter the
+        repository (KLEIDOS_DENY_EXTRA or the untracked
+        scripts/deny-local.txt). A behaviour change needs a test in tests/.
+        New files start with the two SPDX lines the other scripts carry
+        (file copyright, then the MIT license identifier).
+    - path: "tests/**"
+      instructions: >-
+        unittest, not pytest: run as python3 -m unittest discover -s tests.
+        Tests use temporary directories and never rewrite tracked files;
+        the REUSE comparison skips only when the reuse tool is absent.
+        Cover each checker rule ID with a failing and a passing case.
+    - path: ".github/{ISSUE_TEMPLATE,DISCUSSION_TEMPLATE}/**"
+      instructions: >-
+        Public forms used by every repository without its own. They must
+        send questions to Discussions and vulnerabilities to the security
+        policy, and never ask for a postal address, an e-mail address or a
+        donation amount in public.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Every action is pinned to a full commit SHA with its version as a
+        comment; checkout sets persist-credentials: false; the workflow has
+        top-level permissions: contents: read and widens them only per job;
+        every job has an emoji name and a timeout-minutes, and cheap gates run
+        first, with needs: ordering the stages. No job turns a missing
+        secret into a silent green, except the documented
+        KLEIDOS_DENY_EXTRA warning for forks and Dependabot.
+    - path: "REUSE.toml"
+      instructions: >-
+        Every tracked file must be covered. Text and banners are
+        GPL-3.0-or-later; tooling (scripts, tests, CI, review-bot and
+        coverage configuration) is MIT; CODE_OF_CONDUCT.md is CC-BY-4.0. Flag
+        a new tooling file that falls only under the GPL row.
+
+  # The linters that match what this repository holds: Python tools, YAML
+  # forms and workflows, Markdown, and secrets. markdownlint reads
+  # .markdownlint.json (MD013 off: prose is never hard-wrapped).
+  tools:
+    ruff:
+      enabled: true
+    markdownlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    shellcheck:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+chat:
+  # Replies stay plain text.
+  art: false
+
+issue_enrichment:
+  # No implementation plans posted on issues: the review is the product.
+  planning:
+    enabled: false
+
+knowledge_base:
+  code_guidelines:
+    # Added to the defaults (which read AGENTS.md and CLAUDE.md files, of
+    # which this repository has none): the two files that hold its rules.
+    filePatterns:
+      - "README.md"
+      - "CONTRIBUTING.md"

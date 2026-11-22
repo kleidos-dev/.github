@@ -1,12 +1,28 @@
-# Keeps the GitHub Actions this repository pins by commit current: at most
-# one grouped pull request a week. Dependabot authors its own commit
-# messages, so the commit-message gate skips its pull requests.
+# Keeps the GitHub Actions this repository pins by commit, and the CI's
+# Python tools pinned in requirements.txt, current: at most one grouped pull
+# request a week for each. Dependabot authors its own commit messages, so the
+# commit-message gate skips its pull requests.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    # A release is proposed only once it is a week old, so a compromised or
+    # yanked version has time to be noticed first.
+    cooldown:
+      default-days: 7
     groups:
       actions:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    # A release is proposed only once it is a week old, so a compromised or
+    # yanked version has time to be noticed first.
+    cooldown:
+      default-days: 7
+    groups:
+      python:
         patterns: ["*"]

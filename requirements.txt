@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+#
+# The CI's Python tools, pinned. The media metadata tools themselves use the
+# standard library only; coverage.py measures their tests for SonarCloud.
+coverage==7.17.4
