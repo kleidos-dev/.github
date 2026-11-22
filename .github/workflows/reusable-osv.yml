@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The quality kit's dependency gate: OSV-Scanner over every manifest and
+# lockfile of the tree (pip, npm, pnpm, Go, Cargo...), failing on any known
+# vulnerability. An accepted one goes in osv-scanner.toml with a reason and
+# an ignoreUntil at most 90 days ahead (check_quality.py holds that). The
+# binary is the release tools.lock pins, checked by SHA-256: the org allows
+# no third-party action. Call it on pull requests and on a weekly schedule,
+# so a new advisory against unchanged code turns red:
+#
+#   osv:
+#     name: "🛡️ Dependency vulnerabilities (OSV)"
+#     needs: lint
+#     uses: kleidos-dev/.github/.github/workflows/reusable-osv.yml@<kit commit> # quality-vX.Y.Z
+#     permissions:
+#       contents: read
+name: Quality kit dependencies
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  osv:
+    name: "🛡️ OSV-Scanner"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The kit at the commit .github/quality/SOURCE.json records (kleidos-dev/.github
+      # is public: no token), so the copies are judged by the kit's own bytes.
+      - name: Fetch the quality kit at the recorded commit
+        id: kit
+        run: |
+          set -euo pipefail
+          commit="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
+          if [ "${commit}" = self ]; then
+            if [ "${GITHUB_REPOSITORY}" != kleidos-dev/.github ]; then
+              echo "::error::SOURCE.json records commit self, which only kleidos-dev/.github may do"
+              exit 1
+            fi
+            echo "dir=${GITHUB_WORKSPACE}" >> "${GITHUB_OUTPUT}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${commit}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+            echo "dir=${kit}" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Install OSV-Scanner (pinned, SHA-256 checked)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python3 "${KIT}/quality/fetch_tool.py" osv-scanner "${RUNNER_TEMP}/bin"
+      - name: Scan every manifest and lockfile
+        run: |
+          set -uo pipefail
+          status=0
+          "${RUNNER_TEMP}/bin/osv-scanner" scan source --recursive --format markdown . > "${RUNNER_TEMP}/osv.md" || status=$?
+          { echo "## OSV-Scanner"; echo; cat "${RUNNER_TEMP}/osv.md"; } >> "${GITHUB_STEP_SUMMARY}"
+          cat "${RUNNER_TEMP}/osv.md"
+          case "${status}" in
+            0) echo "No known vulnerability." ;;
+            128) echo "No manifest or lockfile in the tree: nothing to scan." ;;
+            *) echo "::error::OSV-Scanner found known vulnerabilities (exit ${status}): fix them, or record each in osv-scanner.toml with a reason and an ignoreUntil"; exit "${status}" ;;
+          esac

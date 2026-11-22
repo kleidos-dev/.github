@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The quality kit's type gate: a bare `mypy`, configured by the repository's
+# [tool.mypy] (the kit's strict block plus its own files and overrides),
+# with the repository's dependencies installed so every import is typed.
+# Owner, 2026-11-22: every error is fixed, no baseline. Called as:
+#
+#   types:
+#     name: "🔎 Types (mypy)"
+#     needs: lint
+#     uses: kleidos-dev/.github/.github/workflows/reusable-mypy.yml@<kit commit> # quality-vX.Y.Z
+#     with:
+#       install: pip install -r requirements.txt
+#     permissions:
+#       contents: read
+name: Quality kit types
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: The Python to check against (empty reads python-version-file)
+        type: string
+        default: ""
+      python-version-file:
+        description: The file naming that Python
+        type: string
+        default: .python-version
+      install:
+        description: The command that installs the repository's dependencies
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  mypy:
+    name: "🔎 mypy (strict)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The kit at the commit .github/quality/SOURCE.json records (kleidos-dev/.github
+      # is public: no token), so the copies are judged by the kit's own bytes.
+      - name: Fetch the quality kit at the recorded commit
+        id: kit
+        run: |
+          set -euo pipefail
+          commit="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
+          if [ "${commit}" = self ]; then
+            if [ "${GITHUB_REPOSITORY}" != kleidos-dev/.github ]; then
+              echo "::error::SOURCE.json records commit self, which only kleidos-dev/.github may do"
+              exit 1
+            fi
+            echo "dir=${GITHUB_WORKSPACE}" >> "${GITHUB_OUTPUT}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${commit}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+            echo "dir=${kit}" >> "${GITHUB_OUTPUT}"
+          fi
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ inputs.python-version }}
+          python-version-file: ${{ inputs.python-version == '' && inputs.python-version-file || '' }}
+      - name: Install the kit's tools (hashed)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+      - name: Install the repository's dependencies
+        if: inputs.install != ''
+        env:
+          INSTALL: ${{ inputs.install }}
+        run: bash -euo pipefail -c "${INSTALL}"
+      - name: mypy
+        run: mypy

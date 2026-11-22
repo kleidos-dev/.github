@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
 # Funding routes for Kleidos, used by every repository of the kleidos-dev
 # organization that has no FUNDING.yml of its own and has Sponsorships turned
 # on.

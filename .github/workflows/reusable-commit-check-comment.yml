@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# Posts, updates or removes the one commit-check comment on a pull request,
+# from the result reusable-commit-check.yml left as an artifact. A
+# pull_request job from a fork gets a read-only token and cannot comment, so
+# a repository calls this from a workflow_run caller, which runs as the
+# default branch has it, with a token that may write:
+#
+#   name: Commit check comment
+#   # Reviewed: workflow_run is what lets a fork's pull request get a
+#   # comment, and the job treats the artifact as data only.
+#   on: # zizmor: ignore[dangerous-triggers]
+#     workflow_run:
+#       workflows: [Commit check]
+#       types: [completed]
+#   permissions: {}
+#   jobs:
+#     comment:
+#       name: "🙋 Commit-check comment"
+#       uses: kleidos-dev/.github/.github/workflows/reusable-commit-check-comment.yml@<kit commit> # quality-vX.Y.Z
+#       permissions:
+#         actions: read
+#         contents: read
+#         pull-requests: write
+#
+# It reads the checker from the default branch (kleidos-dev/.github's own
+# copy, elsewhere the kit at the commit the default branch's SOURCE.json
+# records), reads the artifact as data (validated, every string escaped),
+# and acts only when that pull request's head is still the commit the check
+# ran on. It never checks out or runs code from the pull request.
+name: Commit check comment
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  comment:
+    name: "🙋 Post the commit-check comment"
+    if: github.event.workflow_run.event == 'pull_request' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # download the check's artifact
+      contents: read # check out this repository's default branch
+      pull-requests: write # create, edit or delete the one comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/commit-check
+            .github/quality
+      - name: The checker the default branch names
+        id: checker
+        run: |
+          set -euo pipefail
+          checker=.github/commit-check/check_commit_msg.py
+          recorded=""
+          if [ -f .github/quality/SOURCE.json ]; then
+            recorded="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
+          fi
+          if [ -z "$recorded" ] || [ "$recorded" = self ]; then
+            echo "path=$GITHUB_WORKSPACE/$checker" >> "$GITHUB_OUTPUT"
+          else
+            kit="$RUNNER_TEMP/kit"
+            git init -q "$kit"
+            git -C "$kit" fetch -q --depth 1 https://github.com/kleidos-dev/.github "$recorded"
+            git -C "$kit" show "FETCH_HEAD:$checker" > "$RUNNER_TEMP/check_commit_msg.py"
+            echo "path=$RUNNER_TEMP/check_commit_msg.py" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Fetch the check's result
+        id: download
+        # A run with no result (the check was skipped, or the artifact
+        # expired) leaves nothing to post; the next step does not run.
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: commit-check
+          path: ${{ runner.temp }}/commit-check
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Post, update or remove the comment
+        if: steps.download.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CHECKER: ${{ steps.checker.outputs.path }}
+        run: |
+          python3 "$CHECKER" \
+            --comment "$RUNNER_TEMP/commit-check/result.json" \
+            --repo "$GITHUB_REPOSITORY" --head-sha "$HEAD_SHA"

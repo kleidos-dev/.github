@@ -39,14 +39,41 @@ import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import media_meta as mm  # noqa: E402
+import media_meta as mm
 
 MEDIA_EXTENSIONS = frozenset(
-    "png jpg jpeg webp avif gif svg pdf mp4 webm mkv glb gltf obj mtl ico "
-    "ttf otf woff woff2 stl ksm wav mp3 vtt srt".split()
+    [
+        "png",
+        "jpg",
+        "jpeg",
+        "webp",
+        "avif",
+        "gif",
+        "svg",
+        "pdf",
+        "mp4",
+        "webm",
+        "mkv",
+        "glb",
+        "gltf",
+        "obj",
+        "mtl",
+        "ico",
+        "ttf",
+        "otf",
+        "woff",
+        "woff2",
+        "stl",
+        "ksm",
+        "wav",
+        "mp3",
+        "vtt",
+        "srt",
+    ]
 )
 
 #: Chunks an image embedded in a published SVG may hold: pixels only.
@@ -95,7 +122,7 @@ def _png_chunks(data: bytes) -> list[bytes]:
     return chunks
 
 
-def check_svg(root: Path, path: str, record: dict, identity: list[str]) -> list[Finding]:
+def check_svg(root: Path, path: str, record: dict[str, Any], identity: list[str]) -> list[Finding]:
     """Every rule for one SVG that has a record."""
     findings: list[Finding] = []
 
@@ -105,10 +132,10 @@ def check_svg(root: Path, path: str, record: dict, identity: list[str]) -> list[
     raw = (root / path).read_bytes()
     text = raw.decode("utf-8")
     try:
-        tree = ET.fromstring(raw)
+        # The repository's own tracked SVG files; expat resolves no external entity.
+        tree = ET.fromstring(raw)  # noqa: S314  tracked files of this repository, not untrusted input
     except ET.ParseError as error:
-        add("M006", f"malformed XML: {error}")
-        return findings
+        return [Finding(path, "M006", f"malformed XML: {error}")]
     svg_id = record.get("id", "")
 
     # M005: namespaces and where the metadata vocabularies may appear.
@@ -136,7 +163,9 @@ def check_svg(root: Path, path: str, record: dict, identity: list[str]) -> list[
             except ValueError as error:
                 add("M006", f"embedded PNG: {error}")
                 continue
-            extra = sorted({c.decode("latin-1") for c in chunks} - {c.decode() for c in BARE_PNG_CHUNKS})
+            extra = sorted(
+                {c.decode("latin-1") for c in chunks} - {c.decode() for c in BARE_PNG_CHUNKS}
+            )
             if extra:
                 add("M005", f"embedded PNG holds chunks outside the bare set: {', '.join(extra)}")
         else:
@@ -169,15 +198,17 @@ def check_svg(root: Path, path: str, record: dict, identity: list[str]) -> list[
     if not dst:
         add("M012", "no DigitalSourceType")
     for value in dst:
-        if value.removeprefix(mm.DST_BASE) not in mm.DIGITAL_SOURCE_TYPES or not value.startswith(mm.DST_BASE):
+        if value.removeprefix(mm.DST_BASE) not in mm.DIGITAL_SOURCE_TYPES or not value.startswith(
+            mm.DST_BASE
+        ):
             add("M012", f"unknown DigitalSourceType {value!r}")
 
     # M004: every metadata value and every comment.
     values = [c.strip() for c in _COMMENT.findall(text)]
-    for element in [root_title, root_desc, *metadata_elements]:
-        if element is not None:
-            values += [t for t in element.itertext() if t.strip()]
-            for sub in element.iter():
+    for node in [root_title, root_desc, *metadata_elements]:
+        if node is not None:
+            values += [t for t in node.itertext() if t.strip()]
+            for sub in node.iter():
                 values += list(sub.attrib.values())
     for hit in mm.deny_hits(values, identity):
         add("M004", f"deny-list hit: {hit}")
@@ -193,7 +224,10 @@ def check_svg(root: Path, path: str, record: dict, identity: list[str]) -> list[
     if not toml[0]:
         add("M003", "REUSE.toml gives this path no license")
     if full != toml:
-        add("M003", "the file states REUSE information of its own (a notice outside the ignore markers)")
+        add(
+            "M003",
+            "the file states REUSE information of its own (a notice outside the ignore markers)",
+        )
     if meta.own_license not in mm.spdx_ids(meta.spdx):
         add("M003", f"own_license {meta.own_license} is not in {meta.spdx}")
     licenses = [e.get(f"{{{mm.NS_RDF}}}resource") for e in tree.iter(f"{{{mm.NS_CC}}}license")]
@@ -215,7 +249,11 @@ def check_svg(root: Path, path: str, record: dict, identity: list[str]) -> list[
         add("M006", f"record: {error}")
         return findings
     if expected != raw:
-        add("M002", "the metadata differs from what the record generates (scripts/stamp_media_meta.py --write)")
+        add(
+            "M002",
+            "the metadata differs from what the record generates"
+            " (scripts/stamp_media_meta.py --write)",
+        )
     if hashlib.sha256(raw).hexdigest() != record.get("sha256") or len(raw) != record.get("bytes"):
         add("M002", "bytes or SHA-256 differ from profile/assets/assets.json")
     return findings
@@ -227,9 +265,11 @@ def check(root: Path, paths: list[str] | None, identity: list[str]) -> list[Find
     records = manifest.get("files", {})
     exempt = [row["path"] for row in manifest.get("exempt", [])]
     findings: list[Finding] = []
-    for row in manifest.get("exempt", []):
-        if not row.get("reason"):
-            findings.append(Finding(mm.MANIFEST, "M006", f"exemption {row.get('path')!r} has no reason"))
+    findings.extend(
+        Finding(mm.MANIFEST, "M006", f"exemption {row.get('path')!r} has no reason")
+        for row in manifest.get("exempt", [])
+        if not row.get("reason")
+    )
     for path in paths if paths is not None else tracked_media(root):
         if path in records:
             if path.endswith(".svg"):
@@ -237,7 +277,9 @@ def check(root: Path, paths: list[str] | None, identity: list[str]) -> list[Find
             else:
                 findings.append(Finding(path, "M006", "this repository checks SVG only"))
         elif not mm.fnmatch_any(path, exempt):
-            findings.append(Finding(path, "M008", "a media file with neither a record nor an exemption"))
+            findings.append(
+                Finding(path, "M008", "a media file with neither a record nor an exemption")
+            )
     for path in records:
         if not (root / path).is_file():
             findings.append(Finding(path, "M001", "recorded in the manifest but missing"))
@@ -247,7 +289,9 @@ def check(root: Path, paths: list[str] | None, identity: list[str]) -> list[Find
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
-    parser.add_argument("paths", nargs="*", help="files to check (default: every tracked media file)")
+    parser.add_argument(
+        "paths", nargs="*", help="files to check (default: every tracked media file)"
+    )
     args = parser.parse_args(argv)
     identity = mm.identity_patterns()
     if not identity:
@@ -258,8 +302,14 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        message = f"no identity patterns ({mm.DENY_ENV} or scripts/deny-local.txt); identity is not checked"
-        print(f"::warning::{message}" if in_ci else f"check_metadata: warning: {message}", file=sys.stderr)
+        message = (
+            f"no identity patterns ({mm.DENY_ENV} or scripts/deny-local.txt);"
+            " identity is not checked"
+        )
+        print(
+            f"::warning::{message}" if in_ci else f"check_metadata: warning: {message}",
+            file=sys.stderr,
+        )
     root = mm.ROOT
     media = [p for p in args.paths if p.rsplit(".", 1)[-1].lower() in MEDIA_EXTENSIONS]
     try:

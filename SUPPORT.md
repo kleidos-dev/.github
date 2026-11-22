@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
 # Getting help
 
 - **Questions** about how Kleidos works, or why it does not: [Q&A](https://github.com/orgs/kleidos-dev/discussions/categories/q-a) in Discussions.

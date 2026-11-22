@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The analysis tools' configuration (this repository is no Python package).
+# Each tool starts from the quality kit (docs/quality.md); what follows the
+# kit's part is this repository's own.
+
+[tool.ruff]
+extend = ".github/quality/ruff.toml"
+target-version = "py311"
+
+[tool.mypy]
+# >>> kleidos-quality mypy (synced from kleidos-dev/.github quality/mypy/block.toml; do not edit)
+strict = true
+# An ignore names the error it silences, so it cannot hide a second one.
+enable_error_code = ["ignore-without-code"]
+# <<< kleidos-quality mypy
+python_version = "3.11"
+# The media metadata tools, their tests, and the quality kit itself.
+files = ["scripts", "tests", "quality"]
+# The kit's tests and sync.py import check_quality.py from beside them.
+mypy_path = ["quality"]

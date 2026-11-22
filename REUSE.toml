@@ -38,26 +38,47 @@ SPDX-License-Identifier = "CC-BY-4.0"
 
 # Tooling: the commit-message gate copied from kleidos-dev/agents (MIT
 # there), the media metadata module and checker shared with the other
-# kleidos-dev repositories, their tests, the CI configuration, and the
+# kleidos-dev repositories, their tests, the CI configuration, the
 # configuration of the review bots (CodeRabbit, Greptile), SonarCloud,
-# coverage.py and markdownlint. The JSON files and .python-version cannot
-# hold a comment, so this row is their only license statement.
+# coverage.py and markdownlint, and the quality kit (quality/, its copies in
+# .github/quality/ and the analysis tools' configs). Every one of these
+# files that can carry a comment states both lines itself (docs/quality.md,
+# "Licensing headers"); the JSON files, .python-version and the copies from
+# kleidos-dev/agents cannot or may not, so this row is their statement.
 [[annotations]]
 path = [
   ".github/commit-check/**",
   ".github/workflows/**",
+  ".github/quality/**",
   ".github/dependabot.yml",
+  ".github/zizmor.yml",
   ".pre-commit-config.yaml",
   ".coderabbit.yaml",
   ".greptile/**",
   ".coveragerc",
+  ".gitignore",
+  ".gitleaks.toml",
+  ".gitleaks-mac.toml",
   ".markdownlint.json",
+  ".markdownlint-cli2.jsonc",
   ".python-version",
+  ".typos.toml",
+  "pyproject.toml",
+  "quality/**",
   "requirements.txt",
   "sonar-project.properties",
   "scripts/**",
   "tests/**",
 ]
 precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens"
+SPDX-License-Identifier = "MIT"
+
+# The quality kit's managed blocks: sync.py writes their text, byte for
+# byte, inside a table of another repository's pyproject.toml or
+# .typos.toml, so a header here would land in that file's middle.
+[[annotations]]
+path = ["quality/*/block.toml"]
+precedence = "override"
 SPDX-FileCopyrightText = "2026 José M. Requena Plens"
 SPDX-License-Identifier = "MIT"

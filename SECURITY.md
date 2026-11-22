@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
 # Security policy
 
 Kleidos is a hardware password manager. A vulnerability in it can expose someone's whole set of passwords, so security reports come first.

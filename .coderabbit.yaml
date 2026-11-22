@@ -1,4 +1,5 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
 # CodeRabbit for the Kleidos repositories: line reviews and committable
@@ -174,7 +175,7 @@ reviews:
         error, and its rule IDs (M001...) are stable: flag a reused or
         renumbered ID. Identity patterns of the deny-list never enter the
         repository (KLEIDOS_DENY_EXTRA or the untracked
-        scripts/deny-local.txt). A behaviour change needs a test in tests/.
+        scripts/deny-local.txt). A behavior change needs a test in tests/.
         New files start with the two SPDX lines the other scripts carry
         (file copyright, then the MIT license identifier).
     - path: "tests/**"

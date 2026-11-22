@@ -1,0 +1,177 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The repository's gate, so it is named CI (the project's CI convention).
+# This repository is the quality kit's home and its first consumer: every
+# check comes from one of the kit's reusable workflows, called here by ./
+# path so a pull request that changes one runs the changed version, and its
+# .github/quality/SOURCE.json records commit "self" (checked against this
+# working tree). Only the media metadata checks, which are this
+# repository's own and need the deny-list secret, are a local job.
+#
+# Stages: lint and licensing first (seconds, no dependencies); then the
+# media checks, the tests (the media tools' and the kit's, with coverage),
+# mypy, OSV and the secrets scan side by side; then the impact preview,
+# which applies the changed kit to throwaway clones of the public consumers
+# and writes what it would find to the job summary (it informs, it does not
+# gate); last, the SonarCloud analysis, which reads the tests' coverage. On
+# the weekly schedule the OSV scan catches new advisories against unchanged
+# code, and the pinned release binaries are compared with their upstream
+# releases.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Monday 06:00 Europe/Madrid in winter, with the Dependabot runs.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: "🧹 Lint (quality kit)"
+    uses: ./.github/workflows/reusable-lint.yml
+    with:
+      # The media hooks need the deny-list secret (the media job runs them);
+      # the kit's tests run in the tests job.
+      skip: kleidos-media-stamp,kleidos-media-metadata,kleidos-quality-kit-tests
+    permissions:
+      contents: read
+
+  reuse:
+    name: "⚖️ Licensing (REUSE)"
+    uses: ./.github/workflows/reusable-reuse.yml
+    permissions:
+      contents: read
+
+  # The identity patterns of the media deny-list are private, so they come
+  # from the KLEIDOS_DENY_EXTRA secret (one pattern per line). A run without
+  # it (a pull request from a fork or from Dependabot, which get no secrets)
+  # checks every other class and shows a warning that identity was not
+  # checked.
+  media:
+    name: "🖼️ Media metadata"
+    needs: [lint, reuse]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KLEIDOS_DENY_EXTRA: ${{ secrets.KLEIDOS_DENY_EXTRA }}
+      KLEIDOS_DENY_OPTIONAL: ${{ secrets.KLEIDOS_DENY_EXTRA == '' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Metadata written from the records
+        run: python3 scripts/stamp_media_meta.py --check
+      - name: Metadata profile and privacy deny-list
+        run: python3 scripts/check_metadata.py
+
+  tests:
+    name: "🧪 Tests"
+    needs: [lint, reuse]
+    uses: ./.github/workflows/reusable-python-tests.yml
+    with:
+      # The kit's tests run the checker, which reads YAML; coverage.py
+      # measures the media tools (.coveragerc), the code SonarCloud reads.
+      install: >-
+        python -m pip install -r requirements.txt
+        && python -m pip install --require-hashes -r quality/requirements-tools.txt
+      run: >-
+        python -m coverage run -m unittest discover -s tests -v
+        && python -m coverage run --append -m unittest discover -s quality/tests -v
+        && python -m coverage xml -o coverage.xml
+    permissions:
+      contents: read
+
+  types:
+    name: "🔎 Types (mypy)"
+    needs: [lint, reuse]
+    uses: ./.github/workflows/reusable-mypy.yml
+    with:
+      install: python -m pip install -r requirements.txt
+    permissions:
+      contents: read
+
+  osv:
+    name: "🛡️ Dependency vulnerabilities (OSV)"
+    needs: [lint, reuse]
+    uses: ./.github/workflows/reusable-osv.yml
+    permissions:
+      contents: read
+
+  secrets:
+    name: "🔐 Secrets and MAC scan (gitleaks)"
+    needs: [lint, reuse]
+    uses: ./.github/workflows/reusable-secrets.yml
+    permissions:
+      contents: read
+
+  preview:
+    name: "🔭 Impact on the public consumers"
+    needs: [tests, types]
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Install the kit's tools (hashed)
+        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+      - name: Apply the kit to throwaway clones and count what it finds
+        run: python quality/sync.py --tools --allow-dirty --summary "${GITHUB_STEP_SUMMARY}" --preview @public
+
+  sonarcloud:
+    name: "📊 SonarCloud"
+    needs: [tests, media]
+    if: github.event_name != 'schedule'
+    uses: ./.github/workflows/reusable-sonarcloud.yml
+    permissions:
+      contents: read
+      id-token: write
+
+  tools-outdated:
+    name: "📦 Pinned release binaries current"
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Issues are off in this repository: a red weekly run is the notice.
+      - name: Compare tools.lock with the upstream releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 quality/fetch_tool.py --outdated > "${RUNNER_TEMP}/outdated.txt" || status=$?
+          cat "${RUNNER_TEMP}/outdated.txt"
+          if [ "${status}" != 0 ]; then
+            {
+              echo "## A pinned release binary is outdated"
+              echo
+              echo "Bump its version, URL and SHA-256 (from the release's checksum file) in quality/tools.lock in one pull request; it is a kit release like any rule change (docs/quality.md, \"Versions\")."
+              echo
+              sed 's/^/- /' "${RUNNER_TEMP}/outdated.txt"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            echo "::error title=tools.lock outdated::a pinned release binary has a newer upstream release (see the job summary)"
+            exit 1
+          fi

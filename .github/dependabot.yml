@@ -1,7 +1,17 @@
-# Keeps the GitHub Actions this repository pins by commit, and the CI's
-# Python tools pinned in requirements.txt, current: at most one grouped pull
-# request a week for each. Dependabot authors its own commit messages, so the
-# commit-message gate skips its pull requests.
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# Keeps the GitHub Actions this repository pins by commit, the CI's Python
+# tools pinned in requirements.txt, and the quality kit's tool versions
+# current: at most one grouped pull request a week for each. Dependabot
+# authors its own commit messages, so the commit-message gate skips its pull
+# requests.
+#
+# The quality kit's versions are bumped here only (docs/quality.md,
+# "Versions"): quality/requirements-tools.txt (pip, hashed), the hook revs
+# of the kit's blocks in .pre-commit-config.yaml (pre-commit), and the
+# actions its reusable workflows pin (github-actions). A bump reaches the
+# other repositories through the sync, never through their own Dependabot.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -12,6 +22,11 @@ updates:
     # yanked version has time to be noticed first.
     cooldown:
       default-days: 7
+    # This repository calls its own reusable workflows by ./ path; the entry
+    # is the one every adopting repository carries (the sync moves those
+    # references).
+    ignore:
+      - dependency-name: "kleidos-dev/.github*"
     groups:
       actions:
         patterns: ["*"]
@@ -19,10 +34,26 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # A release is proposed only once it is a week old, so a compromised or
-    # yanked version has time to be noticed first.
     cooldown:
       default-days: 7
     groups:
       python:
+        patterns: ["*"]
+  - package-ecosystem: pip
+    directory: /quality
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      quality-tools:
+        patterns: ["*"]
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      hooks:
         patterns: ["*"]
