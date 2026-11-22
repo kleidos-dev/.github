@@ -403,15 +403,13 @@ def svg_block(meta: MediaMeta, svg_id: str) -> str:
 # --------------------------------------------------------------------------
 # Privacy deny-list (standard 7, text layer)
 
+#: The top directories of a local file system whose names give a path away.
+_LOCAL_ROOTS = ("Users", "home", "private", "var/folders", "tmp", "Volumes")
+
 DENY: dict[str, tuple[str, ...]] = {
     "e-mail": (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",),
     "local path": (
-        r"/Users/",
-        r"/home/",
-        r"/private/",
-        r"/var/folders/",
-        r"/tmp/",  # noqa: S108  a pattern of the deny-list, not a temporary file
-        r"/Volumes/",
+        *(f"/{re.escape(root)}/" for root in _LOCAL_ROOTS),
         r"file://",
         r"~/",
         r"\b[A-Za-z]:\\",

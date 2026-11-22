@@ -23,7 +23,7 @@
     {
       "path": ".github/quality/spdx_headers.py",
       "source_path": "quality/spdx_headers.py",
-      "sha256": "8618494236028c971a1b2e014b19cab8dc4a9e382372cad7847e08277bf404f0"
+      "sha256": "44e91f70bdca9b677ef66247744deabd012c9407685168b779ae415c2766fe81"
     },
     {
       "path": ".github/quality/requirements-tools.txt",

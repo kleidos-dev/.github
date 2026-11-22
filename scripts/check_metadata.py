@@ -135,8 +135,7 @@ def check_svg(root: Path, path: str, record: dict[str, Any], identity: list[str]
         # The repository's own tracked SVG files; expat resolves no external entity.
         tree = ET.fromstring(raw)  # noqa: S314  tracked files of this repository, not untrusted input
     except ET.ParseError as error:
-        add("M006", f"malformed XML: {error}")
-        return findings
+        return [Finding(path, "M006", f"malformed XML: {error}")]
     svg_id = record.get("id", "")
 
     # M005: namespaces and where the metadata vocabularies may appear.

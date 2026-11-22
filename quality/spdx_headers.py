@@ -333,7 +333,8 @@ def read_header(lines: list[str]) -> Header:
             at = line.find(tag)
             if at != -1:
                 value = line[at + len(tag) :].strip()
-                value = re.sub(r"\s*(\*/|-->)\s*$", "", value)
+                for closer in ("*/", "-->"):  # a header on one line of a block comment
+                    value = value.removesuffix(closer).rstrip()
                 bucket.append((i, value))
     return head
 
