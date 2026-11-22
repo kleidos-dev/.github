@@ -28,7 +28,7 @@ Until 2026-11-22 the organization was on the **Free** plan, which cannot attach 
 | Security contact | `mail@kleidos.dev` | Organization settings > Security contact | Receives Sonar's platform security advisories and incident notices (not scan results). It is the address in the organization's `SECURITY.md`. |
 | Default new code definition | **Number of days: 30** | Administration > New code | Kleidos pushes to `main` with no releases and no `sonar.projectVersion`, so "Previous version" (the default) never moves and every change since a project's first analysis would count as new code forever. 30 days is Sonar's recommendation for continuous delivery: a new issue stays in the new-code gate for a month, then joins the overall code. Pull requests always compare with `main`. Applies only to projects created after the change, so each project is also set (see Projects). |
 | Quality gate settings: Ignore duplication and coverage on small changes | on (default) | Administration > Quality gate settings | Coverage and duplication conditions are skipped until a change has 20 new lines, so a one-line fix does not fail on a percentage. |
-| Default quality gate | `Kleidos (agentic AI level)` (custom), also attached explicitly to every project | Policies > Quality gates | A copy of the conditions of the built-in `Sonar way for Agentic AI` gate, which the OSS plan does not list; see "Quality gate". The built-in `Sonar way` stays available but is no longer the default. |
+| Default quality gate | `Kleidos (agentic AI level)` (custom), also attached explicitly to every project | Policies > Quality gates | The conditions of the built-in `Sonar way for Agentic AI` gate (which the OSS plan does not list) on the current, non-deprecated metrics, plus those of `Sonar way`; see "Quality gate". The built-in `Sonar way` stays available but is no longer the default. |
 | Default quality profiles | `Sonar way core` (built-in) for every language (Python 303 rules, GitHub Actions 32, secrets 357) | Policies > Quality profiles | See "Stricter options". |
 | Webhooks | none | Webhooks | Available on OSS but not needed: the CI job checks the analysis itself, and the pull request decoration comes from the binding. |
 | Members, groups, permissions, permission templates | one member (the owner, Admin); groups `Members` and `Owners`; the default template only | Members, Groups, Permissions, Permission templates | Not changed. |
@@ -64,21 +64,26 @@ Until 2026-11-22 the organization was on the **Free** plan, which cannot attach 
 
 ## Quality gate
 
-`Kleidos (agentic AI level)` is a custom gate created on 2026-11-22 with the conditions of the built-in `Sonar way for Agentic AI` gate exactly as the owner's personal organization `jmrplens` (Team plan) shows them, since the OSS plan does not list that built-in gate. It is the organization default and is attached explicitly to the four projects. All its conditions are on new code (pull requests and the last 30 days of `main`); a pull request or analysis fails when any of them is met:
+`Kleidos (agentic AI level)` is a custom gate created on 2026-11-22 from the conditions of the built-in `Sonar way for Agentic AI` gate as the owner's personal organization `jmrplens` (Team plan) shows them, since the OSS plan does not list that built-in gate. The same day the three severity conditions that the UI marks "Deprecated" (bugs, vulnerabilities and code smells severity, of the old issue types) were replaced by their Multi-Quality Rule counterparts with the same thresholds, and "Review and update" added the four conditions Sonar recommends on new code. The UI now reads "This quality gate has all of the conditions recommended by Sonar". It is the organization default and is attached explicitly to the four projects. All its conditions are on new code (pull requests and the last 30 days of `main`); a pull request or analysis fails when any of them is met:
 
 | Condition (UI) | Metric and API value | Fails when |
 | --- | --- | --- |
-| No new bugs with severity greater or equal to minor | `new_bugs_severity` `GT 9` | a new bug of severity Minor or higher |
-| No new vulnerabilities with severity greater or equal to minor | `new_vulnerabilities_severity` `GT 9` | a new vulnerability of severity Minor or higher |
-| No new code smells with severity greater or equal to major | `new_code_smells_severity` `GT 14` | a new code smell of severity Major or higher |
-| New code has sufficient test coverage | `new_coverage` `LT 80` | coverage on new code below 80 % |
-| New code has limited duplications | `new_duplicated_lines_density` `GT 3` | duplicated lines on new code above 3 % |
-| No new dependency risk with severity greater or equal to low | `new_sca_severity_any_issue` `GT 9` | a new dependency risk of severity Low or higher |
+| Reliability severity is greater than or equal to Low | `new_reliability_issue_severity` `GT 9` | a new reliability issue of severity Low or higher (was bugs severity ≥ Minor) |
+| Security severity is greater than or equal to Low | `new_security_issue_severity` `GT 9` | a new security issue of severity Low or higher (was vulnerabilities severity ≥ Minor) |
+| Maintainability severity is greater than or equal to Medium | `new_maintainability_issue_severity` `GT 14` | a new maintainability issue of severity Medium or higher (was code smells severity ≥ Major) |
+| Reliability Rating is worse than A | `new_reliability_rating` `GT 1` | the reliability rating of new code is below A |
+| Security Rating is worse than A | `new_security_rating` `GT 1` | the security rating of new code is below A |
+| Maintainability Rating is worse than A | `new_maintainability_rating` `GT 1` | the maintainability rating of new code is below A |
+| Security hotspots reviewed is less than 100 % | `new_security_hotspots_reviewed` `LT 100` | a security hotspot in new code is not reviewed |
+| Coverage is less than 80 % | `new_coverage` `LT 80` | coverage on new code below 80 % |
+| Duplicated Lines (%) is greater than 3 % | `new_duplicated_lines_density` `GT 3` | duplicated lines on new code above 3 % |
+| Dependency risk severity is greater than or equal to Low | `new_sca_severity_any_issue` `GT 9` | a new dependency risk of severity Low or higher |
 
 Notes:
 
-- Compared with `Sonar way` it drops the "100 % of security hotspots reviewed" condition and replaces the A ratings with severity thresholds, as the built-in agentic gate does. The UI marks the three severity metrics "Deprecated" and offers "Review and update" to align the gate with Sonar's current recommendation; it was left as a faithful copy.
-- The dependency-risk condition belongs to SonarQube Advanced Security (dependency analysis), a paid add-on: `jmrplens` shows it greyed out with the paid-feature mark. Without the add-on the metric is not computed, so the condition is not expected to fail. It is kept so the gate stays identical to the built-in one.
+- The severity scale of the current metrics is Info, Low, Medium, High, Blocker; Low and Medium take the API values of the old Minor and Major (`9` and `14`), so the replacements fail on exactly what the deprecated conditions failed on.
+- The four conditions "Review and update" added (the three A ratings and 100 % of security hotspots reviewed) are those of the built-in `Sonar way`; with them this gate is the agentic gate plus `Sonar way`, never weaker than either.
+- The dependency-risk condition belongs to SonarQube Advanced Security (dependency analysis), a paid add-on: the UI shows it with the paid-feature mark. Without the add-on the metric is not computed, so the condition is not expected to fail. It is kept so the gate stays a superset of the built-in agentic one.
 - "Ignore duplication and coverage on small changes" (organization default, on) still skips the coverage and duplication conditions for changes under 20 new lines.
 
 ## AI Code Assurance
@@ -95,7 +100,7 @@ The owner's personal organization `jmrplens`, on the paid **Team** plan, has it:
 
 ## Stricter options (not applied)
 
-- **Quality gate.** The OSS plan lets the gate be made stricter (conditions on overall code, coverage of at least 90 % on new code, zero new issues of any severity, the security hotspots condition of `Sonar way`). That would fail analyses that pass today, which the "fix it, never ignore it" rule would then require fixing; it is the owner's call.
+- **Quality gate.** The OSS plan lets the gate be made stricter (conditions on overall code, coverage of at least 90 % on new code, zero new issues of any severity). That would fail analyses that pass today, which the "fix it, never ignore it" rule would then require fixing; it is the owner's call.
 - **Quality profile.** The OSS plan allows custom profiles per project, or switching the organization's default per language to another built-in profile: `Sonar way extended` (Python 346 rules, GitHub Actions 33) or `Sonar way comprehensive` (Python 492, GitHub Actions 45). That would raise new issues on every project at the next analysis; it is the owner's call.
 
 ## What each `sonar-project.properties` carries
