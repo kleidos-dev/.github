@@ -1,6 +1,6 @@
 # SonarQube Cloud settings
 
-What is set in the SonarQube Cloud web UI for the organization `kleidos-dev` (https://sonarcloud.io/organizations/kleidos-dev) and its projects, as audited and configured on 2026-11-22, so it can be redone by hand. Only what a `sonar-project.properties` file cannot carry lives here; everything else belongs in each repository's file (listed at the end), so a project can be rebuilt from its repository alone.
+What is set in the SonarQube Cloud web UI for the organization `kleidos-dev` (<https://sonarcloud.io/organizations/kleidos-dev>) and its projects, as audited and configured on 2026-11-22, so it can be redone by hand. Only what a `sonar-project.properties` file cannot carry lives here; everything else belongs in each repository's file (listed at the end), so a project can be rebuilt from its repository alone.
 
 The projects are `kleidos-dev_boards`, `kleidos-dev_brand`, `kleidos-dev_social` and `kleidos-dev_.github`, all public, each bound to its repository `kleidos-dev/<repo>` and analysed only from that repository's CI (GitHub Actions, secretless), on every push to `main` and every pull request against `main`.
 
@@ -56,6 +56,28 @@ The plan is **Free**: unlimited public lines of code, 50k private (none used), u
 3. Project > Administration > New code: confirm **Number of days, 30**.
 4. Project > Administration > General settings > General: if "Enable automatic configuration" shows a Reset button, reset it.
 5. Add `sonar-project.properties` (below) and the CI job: `permissions: contents: read, id-token: write`; `actions/checkout` with `fetch-depth: 0` and `persist-credentials: false`; `SonarSource/sonarqube-auth-action@b372e2c2930aadfcc4f4399446da1e12772709ad # v1.2` right before `SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0`; no `SONAR_TOKEN` secret; run only on a push to `main` or a pull request against `main`; on a pull request from a fork (GitHub gives it no OIDC token) skip every step with a `::notice` so the job ends green. The CI of `boards`, `brand`, `social` and this repository is the model to copy.
+
+## AI Code Assurance
+
+Not available to this organization, checked on 2026-11-22. Nothing was changed: every project stays on `Sonar way` and none is marked as containing AI-generated code.
+
+What the owner's personal organization `jmrplens` has, for comparison: it is on the paid **Team** plan (100k private lines of code). Its organization-level "Autodetect AI-generated code" (Administration > Autodetect AI-generated code) is off; that feature is deprecated and needs a GitHub Copilot Business permission. AI Code Assurance is set per project, in Project > Administration > AI code assurance: "This project contains AI-generated code" on, and the quality gate `Sonar way for Agentic AI` (built-in). `phonometry`, `ghchronicle` and `gitlab-mcp-server` use it; others (such as `jmrp.io`) stay on `Sonar way`, which that organization lists as qualified for AI Code Assurance. It also holds a custom gate, `Sonar way for Agentic AI (Kleidos relaxed)`.
+
+What `kleidos-dev`, on the **Free** plan, offers instead:
+
+| Place | What it shows |
+| --- | --- |
+| Project > Administration | No "AI code assurance" entry; `/project/ai_generated_code?id=<key>` answers "The page you were looking for does not exist". |
+| Organization Administration | No "Autodetect AI-generated code" entry; `/organizations/kleidos-dev/ai_code_detection` answers "You are not authorized to access this page". |
+| Policies > Quality gates | Only `Sonar way` (built-in, default); `Sonar way for Agentic AI` is not listed, and `api/qualitygates/list` reports `Sonar way` as not qualified for AI Code Assurance (`isAiCodeAssuredCompliant: false`). A gate can be created, but none can be attached. |
+| Project > Policies > Quality gate | "Your current plan does not allow you to associate a quality gate other than Sonar way (Default) to this project." |
+| `api/qualitygates/get_by_project` | `Sonar way` (default) for `kleidos-dev_boards`, `kleidos-dev_brand`, `kleidos-dev_social` and `kleidos-dev_.github`. |
+
+Sonar's subscription-plans page lists AI Code Assurance and the `Sonar way for agentic AI` gate as included in the Free plan, but the product does not offer either to this organization. The ways to get them:
+
+- **Team plan**: Billing and usage > Modify plan offers only "Upgrade to the Team plan" (14-day free trial, then monthly; $34/month for 100k private lines of code, plus an optional Advanced Security add-on). It is paid.
+- **OSS plan (SonarQube for OSS)**: free for public projects, with unlimited members, branches and pull requests. It is not offered under Modify plan: Sonar's documentation has it chosen only when an organization is created ("Get SonarQube for OSS" on the Create an organization page), and Sonar staff answered on the community forum (August and October 2026) that an existing Free organization cannot be moved to it; the way is a new organization, which loses the projects' analysis history. That is the owner's decision.
+- **Ask Sonar**: the documentation contradicts the product for the Free plan; a question on community.sonarsource.com may get the feature enabled or the page corrected.
 
 ## Stricter options (not applied)
 
