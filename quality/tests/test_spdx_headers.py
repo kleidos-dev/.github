@@ -79,6 +79,14 @@ class FixTextTest(unittest.TestCase):
     def test_typescript_takes_slashes(self) -> None:
         self.assertTrue(self.fixed("a.ts", "export {};\n").startswith(f"// {C} 2026 {H}\n"))
 
+    def test_an_xml_declaration_stays_first(self) -> None:
+        new = self.fixed("a.xml", '<?xml version="1.0"?>\n<root/>\n')
+        self.assertTrue(new.startswith('<?xml version="1.0"?>\n<!--\n'), new)
+
+    def test_a_one_line_comment_gets_a_one_line_sibling(self) -> None:
+        new = self.fixed("a.html", f"<!-- {L} MIT -->\n<p>x</p>\n", lic=None)
+        self.assertTrue(new.startswith(f"<!-- {C} 2026 {H} -->\n<!-- {L} MIT -->\n"), new)
+
     def test_an_e_mail_and_a_wrong_year_are_repaired(self) -> None:
         text = f"# {C} 2024 {H} <mail@example.org>\n# {L} MIT\n"
         self.assertEqual(self.fixed("a.py", text), fx.header(year="2026"))

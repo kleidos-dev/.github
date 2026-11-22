@@ -13,17 +13,17 @@
     {
       "path": ".github/quality/check_quality.py",
       "source_path": "quality/check_quality.py",
-      "sha256": "fbb70fc811d9a9af964468ddbc2cd229d8d95e67eb1db23342f6d89fce472dc6"
+      "sha256": "2e08c117b9f3fc961fce134feafab08cfab33f357ce0ea345b2b99070ce94973"
     },
     {
       "path": ".github/quality/md_nowrap.py",
       "source_path": "quality/md_nowrap.py",
-      "sha256": "58b7a60e12225bb353480554981d73390143f37ebf2a1e55d825746addbe4b70"
+      "sha256": "c08ec96af8015ba3649a4c9a88b96fde86b1b879d9e7151e35db1ff984639b77"
     },
     {
       "path": ".github/quality/spdx_headers.py",
       "source_path": "quality/spdx_headers.py",
-      "sha256": "44e91f70bdca9b677ef66247744deabd012c9407685168b779ae415c2766fe81"
+      "sha256": "b155ed6ff152ddfc583684e818410050f3f1cdf9571341cbb6586ed07da57fbc"
     },
     {
       "path": ".github/quality/requirements-tools.txt",

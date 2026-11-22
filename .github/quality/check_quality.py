@@ -617,6 +617,16 @@ def check_manifest_coverage(source: dict[str, Any], kit: Kit, report: Report) ->
         )
     for rel in sorted(have_files - want_files):
         report.add("source", SOURCE_JSON, f"records a copy at {rel} that the kit no longer has")
+    want_source = {str(c["target"]): str(c["source"]) for c in copies}
+    for entry in source["files"]:
+        rel = str(entry.get("path"))
+        if rel in want_source and str(entry.get("source_path")) != want_source[rel]:
+            report.add(
+                "source",
+                SOURCE_JSON,
+                f"records {rel} as a copy of {entry.get('source_path')}, but the kit copies"
+                f" {want_source[rel]} there",
+            )
     have_blocks = {str(e.get("id")) for e in source["blocks"]}
     want_blocks = {str(b["id"]) for b in blocks}
     for bid in sorted(want_blocks - have_blocks):
@@ -1241,6 +1251,45 @@ def check_typos(repo: Repo, report: Report) -> None:
 # Conformance: ts, cpp
 
 
+# The flags `strict` turns on, each of which a tsconfig can turn back off.
+TS_STRICT_FAMILY = (
+    "alwaysStrict",
+    "noImplicitAny",
+    "noImplicitThis",
+    "strictBindCallApply",
+    "strictBuiltinIteratorReturn",
+    "strictFunctionTypes",
+    "strictNullChecks",
+    "strictPropertyInitialization",
+    "useUnknownInCatchVariables",
+)
+
+
+def tsconfig_reaches(repo: Repo, rel: str, cfg: dict[str, Any], base_path: Path) -> bool:
+    """Whether a tsconfig's extends chain reaches the kit base (a few levels deep)."""
+    todo = [(PurePosixPath(rel).parent, cfg)]
+    for _ in range(8):
+        if not todo:
+            return False
+        folder, current = todo.pop()
+        ext = current.get("extends")
+        for e in [ext] if isinstance(ext, str) else list(ext or []):
+            if not str(e).startswith("."):
+                continue  # a package base (@tsconfig/...) adds rules; it is not the kit
+            target = (repo.root / folder / str(e)).resolve()
+            if target == base_path:
+                return True
+            if target.is_file() and target.is_relative_to(repo.root):
+                try:
+                    parent = load_jsonc(target.read_text(encoding="utf-8"))
+                except ValueError:
+                    continue
+                todo.append(
+                    (PurePosixPath(target.relative_to(repo.root).as_posix()).parent, parent)
+                )
+    return False
+
+
 def check_tsconfig(repo: Repo, report: Report) -> None:
     base_path = (repo.root / KIT_DIR / "tsconfig.base.json").resolve()
     base: dict[str, Any] = {}
@@ -1257,13 +1306,7 @@ def check_tsconfig(repo: Repo, report: Report) -> None:
         except ValueError as exc:
             report.add("tsconfig", rel, f"not valid JSONC: {exc}")
             continue
-        ext = cfg.get("extends")
-        exts = [ext] if isinstance(ext, str) else list(ext or [])
-        resolved = [
-            (repo.root / PurePosixPath(rel).parent / e).resolve() for e in exts if e.startswith(".")
-        ]
-        local_parent = any(r != base_path and r.is_file() for r in resolved)
-        if base_path not in resolved and not local_parent:
+        if not tsconfig_reaches(repo, rel, cfg, base_path):
             report.add(
                 "tsconfig",
                 rel,
@@ -1271,7 +1314,10 @@ def check_tsconfig(repo: Repo, report: Report) -> None:
             )
         options = cfg.get("compilerOptions") or {}
         for key, value in options.items():
-            if base.get(key) is True and value is False:
+            on_in_base = base.get(key) is True or (
+                key in TS_STRICT_FAMILY and base.get("strict") is True
+            )
+            if on_in_base and value is False:
                 report.weaken("tsconfig", key, rel)
         if "baseUrl" in options:
             report.weaken("tsconfig", "baseUrl", rel)
@@ -1288,7 +1334,7 @@ def check_eslint(repo: Repo, report: Report) -> None:
             "the ts profile needs an ESLint flat config built on the kit base",
         )
     off = re.compile(
-        r"""['"](?P<rule>[@\w/-]+)['"]\s*:\s*(?:\[\s*)?(?:['"](?:off|warn)['"]|[01])\b"""
+        r"""['"](?P<rule>[@\w/-]+)['"]\s*:\s*(?:\[\s*)?(?:['"](?:off|warn)['"]|[01](?![\w.]))"""
     )
     for rel in configs:
         text = repo.text(rel)

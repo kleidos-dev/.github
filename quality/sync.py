@@ -163,7 +163,7 @@ def _pre_commit_insert_point(lines: list[str]) -> int:
     if last_end is not None:
         return last_end
     for i, ln in enumerate(lines):
-        if re.match(r"^repos:\s*$", ln):
+        if re.match(r"^repos:\s*(?:#.*)?$", ln):
             return i + 1
     lines.append("repos:\n")
     return len(lines)

@@ -29,6 +29,14 @@ class NoWrapTest(unittest.TestCase):
         )
         self.assertEqual(md_nowrap.wrapped_lines(text), [])
 
+    def test_a_longer_fence_holds_a_shorter_one(self) -> None:
+        text = "````md\n```\ninner\nmore\n```\nstill code\n````\n"
+        self.assertEqual(md_nowrap.wrapped_lines(text), [])
+
+    def test_quoted_fences_and_tags_over_lines_keep_their_layout(self) -> None:
+        self.assertEqual(md_nowrap.wrapped_lines("> ```\n> a\n> b\n> ```\n"), [])
+        self.assertEqual(md_nowrap.wrapped_lines('<div\n  class="a"\n  id="b">\n</div>\n'), [])
+
     def test_a_hard_break_is_not_a_wrap(self) -> None:
         self.assertEqual(md_nowrap.wrapped_lines("Line one  \nline two\n"), [])
 

@@ -25,7 +25,8 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^[ \t]*(?:>[ \t]?)*[ \t]*(?P<fence>`{3,}|~{3,})")
+OPEN_TAG = re.compile(r"^\s*<[A-Za-z][^>]*$")
 LIST = re.compile(r"^\s*([-*+]|\d+[.)])\s+")
 BLOCKISH = re.compile(r"^\s*(#|\||<|---|\*\*\*|___|\[[^\]]+\]:\s)")
 QUOTE = re.compile(r"^\s*(>\s?)+(.*)$")
@@ -43,26 +44,38 @@ def markdown_lines(text: str) -> Iterator[tuple[int, str, str]]:
             for k in range(n):
                 yield k + 1, lines[k], "front"
             start = n
-    in_fence = False
+    fence = ""  # the open fence (its character repeated), "" outside code
     in_comment = False
+    in_tag = False
     prev_blank = True
     in_indented = False
     for k in range(start, len(lines)):
         ln = lines[k]
-        # An HTML comment (the licensing header among them) keeps its own layout.
-        if not in_fence and (in_comment or ln.lstrip().startswith("<!--")):
+        m_fence = FENCE.match(ln)
+        if fence:
+            # Only a fence of the same character, at least as long, closes it.
+            closer = m_fence.group("fence") if m_fence else ""
+            if closer[:1] == fence[:1] and len(closer) >= len(fence):
+                fence = ""
+            yield k + 1, ln, "code"
+            continue
+        if m_fence:
+            fence = m_fence.group("fence")
+            yield k + 1, ln, "code"
+            prev_blank = False
+            continue
+        # An HTML comment (the licensing header among them) and an HTML tag
+        # whose attributes span lines keep their own layout.
+        if in_comment or ln.lstrip().startswith("<!--"):
             opened = 0 if in_comment else ln.find("<!--") + 4
             in_comment = "-->" not in ln[opened:]
             yield k + 1, ln, "code"
             prev_blank = False
             continue
-        if FENCE.match(ln):
-            in_fence = not in_fence
+        if in_tag or OPEN_TAG.match(ln):
+            in_tag = ">" not in ln if in_tag else True
             yield k + 1, ln, "code"
             prev_blank = False
-            continue
-        if in_fence:
-            yield k + 1, ln, "code"
             continue
         if not ln.strip():
             in_indented = False

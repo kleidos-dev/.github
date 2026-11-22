@@ -380,6 +380,17 @@ def insert_at(lines: list[str]) -> int:
     return at
 
 
+def _sibling_line(line: str, tag: str, text: str) -> str:
+    """A new header line shaped like `line`: same prefix, same closer if it closes there."""
+    prefix = line[: line.find(tag)]
+    stripped = line.rstrip()
+    closer = next((c for c in ("-->", "*/") if stripped.endswith(c)), "")
+    if closer and closer not in prefix:
+        # A one-line comment (<!-- tag value -->): the new line is one too.
+        return f"{prefix}{text} {closer}\n"
+    return f"{prefix}{text}\n"
+
+
 def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[str, str | None]:
     """The text with a correct header, and why it could not be fixed (or None)."""
     style = style_for(rel)
@@ -401,9 +412,7 @@ def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[
     head = read_header(lines)
     if head.license_lines and not head.copyright_lines:
         i = head.license_lines[0][0]
-        lic_line = lines[i]
-        tag_at = lic_line.find(LICENSE_TAG)
-        lines.insert(i, lic_line[:tag_at] + f"{COPYRIGHT_TAG} {owner}\n")
+        lines.insert(i, _sibling_line(lines[i], LICENSE_TAG, f"{COPYRIGHT_TAG} {owner}"))
         return "".join(lines), None
     if head.license_lines and head.copyright_lines:
         if head.copyright_lines[0][0] > head.license_lines[0][0]:
@@ -415,9 +424,7 @@ def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[
         if not license_expr:
             return text, "no license: give --license or cover the file in REUSE.toml"
         i = head.copyright_lines[-1][0]
-        cr_line = lines[i]
-        tag_at = cr_line.find(COPYRIGHT_TAG)
-        lines.insert(i + 1, cr_line[:tag_at] + f"{LICENSE_TAG} {license_expr}\n")
+        lines.insert(i + 1, _sibling_line(lines[i], COPYRIGHT_TAG, f"{LICENSE_TAG} {license_expr}"))
         return "".join(lines), None
     if not license_expr:
         return text, "no license: give --license or cover the file in REUSE.toml"
@@ -427,8 +434,10 @@ def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[
         if front:
             body = text[front.end() :]
             return front.group(0) + "".join(new) + "\n" + body.lstrip("\n"), None
-        rest = "".join(lines).lstrip("\n")
-        return "".join(new) + "\n" + rest, None
+        # An XML declaration stays the first line.
+        decl = lines[:1] if lines and lines[0].startswith("<?xml") else []
+        rest = "".join(lines[len(decl) :]).lstrip("\n")
+        return "".join(decl) + "".join(new) + "\n" + rest, None
     at = insert_at(lines)
     after = lines[at] if at < len(lines) else ""
     joiner: list[str] = []

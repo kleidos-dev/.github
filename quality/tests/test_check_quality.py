@@ -200,6 +200,74 @@ class ConformanceTest(unittest.TestCase):
             "an eslint-disable names its rule",
         )
 
+    def test_a_copy_recorded_from_another_kit_file_is_caught(self) -> None:
+        import json
+
+        path = self.root / cq.SOURCE_JSON
+        record = json.loads(path.read_text(encoding="utf-8"))
+        for entry in record["files"]:
+            if entry["path"] == ".github/quality/ruff.toml":
+                entry["source_path"] = "quality/markdownlint/base.jsonc"
+                data = (fx.CENTRAL / entry["source_path"]).read_bytes()
+                (self.root / entry["path"]).write_bytes(data)
+                entry["sha256"] = cq.sha256(data)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        self.assertFound("but the kit copies quality/ruff/ruff.toml there")
+
+
+class TypeScriptTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = fx.consumer(Path(self._tmp.name) / "repo")
+        fx.write(self.root, "web/app.ts", "// x\nexport const a = 1;\n")
+        sync.write(self.root, commit=fx.FAKE_COMMIT)
+        fx.write(
+            self.root,
+            "web/eslint.config.js",
+            "// x\nimport { kleidosTypeScript } from '../.github/quality/eslint.base.mjs';\n"
+            "export default [];\n",
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def found(self) -> list[str]:
+        report = cq.run(self.root, kit=cq.DirKit(fx.CENTRAL), today=TODAY)
+        return [f"{p.where}: [{p.rule}] {p.message}" for p in report.problems]
+
+    def test_the_extends_chain_must_reach_the_kit_base(self) -> None:
+        fx.write(self.root, "web/config/base.json", "{}\n")
+        fx.write(self.root, "web/tsconfig.json", '{"extends": "./config/base.json"}\n')
+        self.assertTrue(any("extends neither" in f for f in self.found()))
+        fx.write(
+            self.root,
+            "web/config/base.json",
+            '{"extends": "../../.github/quality/tsconfig.base.json"}\n',
+        )
+        self.assertFalse(any("extends neither" in f for f in self.found()))
+
+    def test_a_flag_strict_turns_on_cannot_be_turned_off_silently(self) -> None:
+        fx.write(
+            self.root,
+            "web/tsconfig.json",
+            '{"extends": "../.github/quality/tsconfig.base.json",'
+            ' "compilerOptions": {"strictNullChecks": false}}\n',
+        )
+        self.assertTrue(any("strictNullChecks weakens" in f for f in self.found()))
+
+    def test_a_quoted_off_rule_is_a_weakening(self) -> None:
+        fx.write(
+            self.root, "web/tsconfig.json", '{"extends": "../.github/quality/tsconfig.base.json"}\n'
+        )
+        self.append_eslint('"no-console": "off", "eqeqeq": ["warn"], "max-len": 0,\n')
+        found = self.found()
+        for rule in ("no-console", "eqeqeq", "max-len"):
+            self.assertTrue(any(f"{rule} weakens" in f for f in found), (rule, found))
+
+    def append_eslint(self, text: str) -> None:
+        path = self.root / "web/eslint.config.js"
+        path.write_text(path.read_text(encoding="utf-8") + "// " + text, encoding="utf-8")
+
 
 class HelpersTest(unittest.TestCase):
     def test_jsonc_reads_comments_and_trailing_commas(self) -> None:

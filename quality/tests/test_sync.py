@@ -219,6 +219,21 @@ class PlaceBlockTest(unittest.TestCase):
             self.assertEqual(lines[0], "repos:")
             self.assertTrue(lines[1].startswith("  # >>> kleidos-quality pre-commit-base"))
 
+    def test_a_repos_key_with_a_comment_is_kept_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".pre-commit-config.yaml"
+            path.write_text(
+                "repos: # local hooks\n  - repo: local\n    hooks: []\n", encoding="utf-8"
+            )
+            entry = {
+                "id": "pre-commit-base",
+                "source": ".pre-commit-config.yaml",
+                "kind": "pre-commit",
+            }
+            sync.place_block(path, entry, "  - repo: local\n    hooks: []\n")
+            text = path.read_text(encoding="utf-8")
+            self.assertEqual(text.count("repos:"), 1, text)
+
 
 class CentralTest(unittest.TestCase):
     def test_the_kit_home_is_in_sync_with_itself(self) -> None:
