@@ -4,7 +4,9 @@ What is set in the SonarQube Cloud web UI for the organization `kleidos-dev` (<h
 
 The projects are `kleidos-dev_boards`, `kleidos-dev_brand`, `kleidos-dev_social` and `kleidos-dev_.github`, all public, each bound to its repository `kleidos-dev/<repo>` and analysed only from that repository's CI (GitHub Actions, secretless), on every push to `main` and every pull request against `main`.
 
-The plan is **Free**: unlimited public lines of code, 50k private (none used), up to 5 members, no webhooks, no editable permission templates or group permissions, no analysis of branches other than the main one (only `main` and pull requests are analysed), and no custom quality gate or quality profile on a project ("custom quality standards" is a paid feature). Several choices below follow from that.
+The plan is **OSS (SonarQube for OSS)** since 2026-11-22: free, public projects only (no private lines of code), unlimited members, unlimited branch and pull request analysis, custom quality gates and quality profiles per project, webhooks, the Projects Management page and GitHub member synchronization. It does not include AI Code Assurance or AI CodeFix (see "AI Code Assurance").
+
+Until 2026-11-22 the organization was on the **Free** plan, which cannot attach any quality gate other than `Sonar way` to a project and analyses no branch other than `main`. A Free organization cannot be moved to OSS (it is chosen only when an organization is created), so on 2026-11-22, with the owner's approval, the Free organization `kleidos-dev` was deleted and a new one was created on the OSS plan from the GitHub organization (Create organization > the already installed `Kleidos` GitHub organization > "Start SonarQube for OSS" > Create OSS organization, which reused the installed SonarQube Cloud GitHub App and asked for no new permission or terms), with the same key, name and project keys. The analysis history before that day was lost with the old organization; every project's history starts on 2026-11-22.
 
 ## Organization
 
@@ -20,15 +22,16 @@ The plan is **Free**: unlimited public lines of code, 50k private (none used), u
 | Automatic analysis | on for newly imported projects; not settable at organization level | Organization settings > Analysis | Informational: SonarQube Cloud turns Automatic Analysis on for every newly imported project, so it is turned off **per project** (see Projects). |
 | Secretless analysis for GitHub Actions | **on** (since 2026-11-22) | Organization settings > Analysis | GitHub Actions authenticate through OIDC (`SonarSource/sonarqube-auth-action`), so no `SONAR_TOKEN` secret exists in any kleidos-dev repository. |
 | In-code issue resolution (`sonar.issues.issueResolution.global.enabled`, `sonar.issues.issueResolution.enabled`) | off (default) | Organization settings > Issues | Left off on purpose: it lets a `SONAR-RESOLVE` comment in the code close an issue, and the Kleidos rule is that an issue is fixed with a real change or left open. |
-| Organization binding | bound to the GitHub organization `kleidos-dev` | Organization settings > Organization binding | Done at creation and not reversible. Gives the project import and the pull request decoration. |
-| Automatically import new GitHub repositories | **off** | Organization settings > Organization binding | On, every new repository the Sonar GitHub App can see would be imported with Automatic Analysis on, which conflicts with the CI analysis (a CI scan fails while Automatic Analysis is on) and would bring private repositories into the 50k private allowance. Repositories are added one by one, by hand (see "Adding a project"). |
+| Plan | SonarQube for OSS | Billing and usage | See above. Billing and usage offers only an upgrade to Team; nothing is paid. |
+| Organization binding | bound to the GitHub organization `kleidos-dev` | Organization settings > Organization binding | Done at creation (the organization is imported from GitHub) and not reversible. Gives the project import and the pull request decoration. |
+| Automatically import new GitHub repositories | **off** | Organization settings > Organization binding | On, every new repository the Sonar GitHub App can see would be imported with Automatic Analysis on, which conflicts with the CI analysis (a CI scan fails while Automatic Analysis is on) and would also pick up the private repositories, which the OSS plan cannot analyse. Repositories are added one by one, by hand (see "Adding a project"). |
 | Security contact | `mail@kleidos.dev` | Organization settings > Security contact | Receives Sonar's platform security advisories and incident notices (not scan results). It is the address in the organization's `SECURITY.md`. |
 | Default new code definition | **Number of days: 30** | Administration > New code | Kleidos pushes to `main` with no releases and no `sonar.projectVersion`, so "Previous version" (the default) never moves and every change since a project's first analysis would count as new code forever. 30 days is Sonar's recommendation for continuous delivery: a new issue stays in the new-code gate for a month, then joins the overall code. Pull requests always compare with `main`. Applies only to projects created after the change, so each project is also set (see Projects). |
 | Quality gate settings: Ignore duplication and coverage on small changes | on (default) | Administration > Quality gate settings | Coverage and duplication conditions are skipped until a change has 20 new lines, so a one-line fix does not fail on a percentage. |
-| Default quality gate | `Sonar way` (built-in) | Policies > Quality gates | On the Free plan no other gate can be attached to a project. Its conditions on new code: reliability, security and maintainability ratings A, 100 % of security hotspots reviewed, coverage at least 80 %, duplicated lines at most 3 %. |
+| Default quality gate | `Kleidos (agentic AI level)` (custom), also attached explicitly to every project | Policies > Quality gates | A copy of the conditions of the built-in `Sonar way for Agentic AI` gate, which the OSS plan does not list; see "Quality gate". The built-in `Sonar way` stays available but is no longer the default. |
 | Default quality profiles | `Sonar way core` (built-in) for every language (Python 303 rules, GitHub Actions 32, secrets 357) | Policies > Quality profiles | See "Stricter options". |
-| Webhooks | none | Webhooks | Not on the Free plan, and not needed: the CI job checks the analysis itself, and the pull request decoration comes from the binding. |
-| Members, groups, permissions, permission templates | one member (the owner, Admin); groups `Members` and `Owners`; the default template only | Members, Groups, Permissions, Permission templates | Not changed; not editable on the Free plan beyond the members. |
+| Webhooks | none | Webhooks | Available on OSS but not needed: the CI job checks the analysis itself, and the pull request decoration comes from the binding. |
+| Members, groups, permissions, permission templates | one member (the owner, Admin); groups `Members` and `Owners`; the default template only | Members, Groups, Permissions, Permission templates | Not changed. |
 | AI capabilities | disabled | AI capabilities | A paid feature. |
 
 ## Projects
@@ -37,13 +40,14 @@ The plan is **Free**: unlimited public lines of code, 50k private (none used), u
 | --- | --- | --- | --- |
 | Analysis method: Automatic analysis (`sonar.autoscan.enabled`) | **off** | Project > Administration > Analysis method | Analysis runs only from CI. |
 | Repository binding | `kleidos-dev/<repo>` | Administration > General settings > Repository binding | Gives the pull request decoration. |
-| Main branch | `main`, the only branch analysed | Project > Branches (from the binding) | The Free plan analyses only the main branch and pull requests. |
-| Long-lived branch pattern (`sonar.branch.longLivedBranches.regex`) | `(branch\|release)-.*` (inherited default) | General settings | No other branch is analysed on the Free plan; left at default. |
+| Main branch | `main` | Project > Branches (from the binding) | The CI analyses `main` and pull requests against it. The OSS plan would also analyse other branches, but no workflow runs the scan on them. |
+| Long-lived branch pattern (`sonar.branch.longLivedBranches.regex`) | `(branch\|release)-.*` (inherited default) | General settings | No other branch is analysed today; left at default. |
 | Pull request summary comment (`sonar.pullrequest.github.summary_comment`) | on (inherited default) | General settings > Pull Requests | Sonar posts its summary in the pull request's conversation. |
 | Pull request issue annotations (`sonar.enableIssueAnnotation`) | on (inherited default) | General settings > Pull Requests | Issues show as annotations on the GitHub check run. |
 | New code | **Number of days: 30** | Administration > New code | Projects imported before 2026-11-22 copied "Previous version" from the organization default; same reasoning as the organization row. |
-| Enable automatic configuration (`sonar.scanner.autoconfig.enabled`) | reset (no UI override) | Administration > General settings > General > Miscellaneous | The import flow sets it to true. It lets the scanner guess sources, tests and exclusions from the build system; every file names its scope explicitly and also says `sonar.scanner.autoconfig.enabled=false`, so a re-import cannot change the scope silently. |
-| Quality gate, quality profiles | organization defaults (`Sonar way`, `Sonar way core`) | Project > Policies | The only choice on the Free plan. |
+| Enable automatic configuration (`sonar.scanner.autoconfig.enabled`) | reset (no UI override; the inherited value is false) | Administration > General settings > General > Miscellaneous | The import flow sets it to true. It lets the scanner guess sources, tests and exclusions from the build system; every file names its scope explicitly and also says `sonar.scanner.autoconfig.enabled=false`, so a re-import cannot change the scope silently. |
+| Quality gate | `Kleidos (agentic AI level)`, attached explicitly | Project > Policies > Quality gate | See "Quality gate". |
+| Quality profiles | organization defaults (`Sonar way core`) | Project > Policies > Quality profiles | See "Stricter options". |
 | Sensor cache (`sonar.sensor.cache.project.enable`) | on (default) | General settings > General | Speeds up pull request analyses. |
 | Analysis scope, languages, SCM, external analyzers, links | nothing set in the UI | General settings, Administration > Links | Everything lives in the file. |
 | Visibility | public | Administration > Permissions | Public repositories. |
@@ -51,38 +55,48 @@ The plan is **Free**: unlimited public lines of code, 50k private (none used), u
 
 ## Adding a project
 
-1. Keep "Automatically import new GitHub repositories" **off**. Import the repository from the `+` menu > Analyze new project, in the organization `kleidos-dev`; if the import page does not list it, first grant the Sonar GitHub App access to that repository.
+1. Keep "Automatically import new GitHub repositories" **off** (the import page ticks it by default; untick it there too). Import the repository from the `+` menu > Analyze new project, in the organization `kleidos-dev`; if the import page does not list it, first grant the Sonar GitHub App access to that repository.
 2. Project > Administration > Analysis method: turn **Automatic analysis off** before the first CI run.
 3. Project > Administration > New code: confirm **Number of days, 30**.
 4. Project > Administration > General settings > General: if "Enable automatic configuration" shows a Reset button, reset it.
-5. Add `sonar-project.properties` (below) and the CI job: `permissions: contents: read, id-token: write`; `actions/checkout` with `fetch-depth: 0` and `persist-credentials: false`; `SonarSource/sonarqube-auth-action@b372e2c2930aadfcc4f4399446da1e12772709ad # v1.2` right before `SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0`; no `SONAR_TOKEN` secret; run only on a push to `main` or a pull request against `main`; on a pull request from a fork (GitHub gives it no OIDC token) skip every step with a `::notice` so the job ends green. The CI of `boards`, `brand`, `social` and this repository is the model to copy.
+5. Project > Policies > Quality gate: choose `Kleidos (agentic AI level)` explicitly (it is also the organization default).
+6. Add `sonar-project.properties` (below) and the CI job: `permissions: contents: read, id-token: write`; `actions/checkout` with `fetch-depth: 0` and `persist-credentials: false`; `SonarSource/sonarqube-auth-action@b372e2c2930aadfcc4f4399446da1e12772709ad # v1.2` right before `SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0`; no `SONAR_TOKEN` secret; run only on a push to `main` or a pull request against `main`; on a pull request from a fork (GitHub gives it no OIDC token) skip every step with a `::notice` so the job ends green. The CI of `boards`, `brand`, `social` and this repository is the model to copy.
+
+## Quality gate
+
+`Kleidos (agentic AI level)` is a custom gate created on 2026-11-22 with the conditions of the built-in `Sonar way for Agentic AI` gate exactly as the owner's personal organization `jmrplens` (Team plan) shows them, since the OSS plan does not list that built-in gate. It is the organization default and is attached explicitly to the four projects. All its conditions are on new code (pull requests and the last 30 days of `main`); a pull request or analysis fails when any of them is met:
+
+| Condition (UI) | Metric and API value | Fails when |
+| --- | --- | --- |
+| No new bugs with severity greater or equal to minor | `new_bugs_severity` `GT 9` | a new bug of severity Minor or higher |
+| No new vulnerabilities with severity greater or equal to minor | `new_vulnerabilities_severity` `GT 9` | a new vulnerability of severity Minor or higher |
+| No new code smells with severity greater or equal to major | `new_code_smells_severity` `GT 14` | a new code smell of severity Major or higher |
+| New code has sufficient test coverage | `new_coverage` `LT 80` | coverage on new code below 80 % |
+| New code has limited duplications | `new_duplicated_lines_density` `GT 3` | duplicated lines on new code above 3 % |
+| No new dependency risk with severity greater or equal to low | `new_sca_severity_any_issue` `GT 9` | a new dependency risk of severity Low or higher |
+
+Notes:
+
+- Compared with `Sonar way` it drops the "100 % of security hotspots reviewed" condition and replaces the A ratings with severity thresholds, as the built-in agentic gate does. The UI marks the three severity metrics "Deprecated" and offers "Review and update" to align the gate with Sonar's current recommendation; it was left as a faithful copy.
+- The dependency-risk condition belongs to SonarQube Advanced Security (dependency analysis), a paid add-on: `jmrplens` shows it greyed out with the paid-feature mark. Without the add-on the metric is not computed, so the condition is not expected to fail. It is kept so the gate stays identical to the built-in one.
+- "Ignore duplication and coverage on small changes" (organization default, on) still skips the coverage and duplication conditions for changes under 20 new lines.
 
 ## AI Code Assurance
 
-Not available to this organization, checked on 2026-11-22. Nothing was changed: every project stays on `Sonar way` and none is marked as containing AI-generated code.
+Not available to this organization, on either plan it has had (checked on 2026-11-22). Sonar's subscription-plans page lists AI Code Assurance and the `Sonar way for agentic AI` gate as included in Free, Team and Enterprise, but the product offers neither on the Free or the OSS plan:
 
-What the owner's personal organization `jmrplens` has, for comparison: it is on the paid **Team** plan (100k private lines of code). Its organization-level "Autodetect AI-generated code" (Administration > Autodetect AI-generated code) is off; that feature is deprecated and needs a GitHub Copilot Business permission. AI Code Assurance is set per project, in Project > Administration > AI code assurance: "This project contains AI-generated code" on, and the quality gate `Sonar way for Agentic AI` (built-in). `phonometry`, `ghchronicle` and `gitlab-mcp-server` use it; others (such as `jmrp.io`) stay on `Sonar way`, which that organization lists as qualified for AI Code Assurance. It also holds a custom gate, `Sonar way for Agentic AI (Kleidos relaxed)`.
-
-What `kleidos-dev`, on the **Free** plan, offers instead:
-
-| Place | What it shows |
+| Place | What it shows on OSS |
 | --- | --- |
-| Project > Administration | No "AI code assurance" entry; `/project/ai_generated_code?id=<key>` answers "The page you were looking for does not exist". |
-| Organization Administration | No "Autodetect AI-generated code" entry; `/organizations/kleidos-dev/ai_code_detection` answers "You are not authorized to access this page". |
-| Policies > Quality gates | Only `Sonar way` (built-in, default); `Sonar way for Agentic AI` is not listed, and `api/qualitygates/list` reports `Sonar way` as not qualified for AI Code Assurance (`isAiCodeAssuredCompliant: false`). A gate can be created, but none can be attached. |
-| Project > Policies > Quality gate | "Your current plan does not allow you to associate a quality gate other than Sonar way (Default) to this project." |
-| `api/qualitygates/get_by_project` | `Sonar way` (default) for `kleidos-dev_boards`, `kleidos-dev_brand`, `kleidos-dev_social` and `kleidos-dev_.github`. |
+| Project > Administration | No "AI code assurance" entry; `/project/ai_generated_code?id=<key>` answers "The page you were looking for does not exist" (the same URL opens the page on a Team-plan project). |
+| Policies > Quality gates | Only `Sonar way` among the built-in gates; `Sonar way for Agentic AI` is not listed. |
+| Billing and usage | "SonarQube for OSS"; the only offer is an upgrade to Team. |
 
-Sonar's subscription-plans page lists AI Code Assurance and the `Sonar way for agentic AI` gate as included in the Free plan, but the product does not offer either to this organization. The ways to get them:
-
-- **Team plan**: Billing and usage > Modify plan offers only "Upgrade to the Team plan" (14-day free trial, then monthly; $34/month for 100k private lines of code, plus an optional Advanced Security add-on). It is paid.
-- **OSS plan (SonarQube for OSS)**: free for public projects, with unlimited members, branches and pull requests. It is not offered under Modify plan: Sonar's documentation has it chosen only when an organization is created ("Get SonarQube for OSS" on the Create an organization page), and Sonar staff answered on the community forum (August and October 2026) that an existing Free organization cannot be moved to it; the way is a new organization, which loses the projects' analysis history. That is the owner's decision.
-- **Ask Sonar**: the documentation contradicts the product for the Free plan; a question on community.sonarsource.com may get the feature enabled or the page corrected.
+The owner's personal organization `jmrplens`, on the paid **Team** plan, has it: Project > Administration > AI code assurance, "This project contains AI-generated code" on, with the built-in gate `Sonar way for Agentic AI` (used by `phonometry`, `ghchronicle`, `gitlab-mcp-server` and others). Getting the feature here would need the Team plan (paid, $34/month for 100k private lines of code) or Enterprise; the custom gate above gives the same pass/fail conditions without the AI Code Assurance label.
 
 ## Stricter options (not applied)
 
-- **Quality gate.** A stricter gate (conditions on overall code, coverage of at least 90 % on new code, zero new issues of any severity) needs a custom gate, which only the Team plan can attach to a project.
-- **Quality profile.** The Free plan cannot give one project its own profile, but it can switch the organization's default per language to another built-in profile: `Sonar way extended` (Python 346 rules, GitHub Actions 33) or `Sonar way comprehensive` (Python 492, GitHub Actions 45). That would raise new issues on every project at the next analysis, which the "fix it, never ignore it" rule would then require fixing; it is the owner's call.
+- **Quality gate.** The OSS plan lets the gate be made stricter (conditions on overall code, coverage of at least 90 % on new code, zero new issues of any severity, the security hotspots condition of `Sonar way`). That would fail analyses that pass today, which the "fix it, never ignore it" rule would then require fixing; it is the owner's call.
+- **Quality profile.** The OSS plan allows custom profiles per project, or switching the organization's default per language to another built-in profile: `Sonar way extended` (Python 346 rules, GitHub Actions 33) or `Sonar way comprehensive` (Python 492, GitHub Actions 45). That would raise new issues on every project at the next analysis; it is the owner's call.
 
 ## What each `sonar-project.properties` carries
 
