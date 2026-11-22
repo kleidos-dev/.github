@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The repository's gate, named CI (the project's CI convention). Every check
+# is a job of the Kleidos quality kit (kleidos-dev/.github, docs/quality.md),
+# called at the kit commit .github/quality/SOURCE.json records; the kit's
+# sync.py keeps the references there. What only this repository does (a
+# model build, a firmware build, a picture check) is a job of its own
+# beside them. A model: copy it, drop the jobs a profile does not need, and
+# add the repository's own.
+#
+# Stages: lint and licensing first (seconds, no dependencies); then types,
+# tests, OSV and the history scan side by side; last, SonarCloud, which
+# reads the tests' coverage (public repositories only).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Monday 06:00 Europe/Madrid in winter: OSV catches new advisories
+    # against unchanged code.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: "🧹 Lint (quality kit)"
+    uses: kleidos-dev/.github/.github/workflows/reusable-lint.yml@0000000000000000000000000000000000000000 # quality-v0.0.0
+    permissions:
+      contents: read
+
+  reuse:
+    name: "⚖️ Licensing (REUSE)"
+    uses: kleidos-dev/.github/.github/workflows/reusable-reuse.yml@0000000000000000000000000000000000000000 # quality-v0.0.0
+    permissions:
+      contents: read
+
+  types:
+    name: "🔎 Types (mypy)"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-mypy.yml@0000000000000000000000000000000000000000 # quality-v0.0.0
+    with:
+      install: python -m pip install -r requirements.txt
+    permissions:
+      contents: read
+
+  tests:
+    name: "🧪 Tests"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@0000000000000000000000000000000000000000 # quality-v0.0.0
+    with:
+      run: python -m pytest -rs --cov --cov-report=xml:coverage.xml tests
+    permissions:
+      contents: read
+
+  osv:
+    name: "🛡️ Dependency vulnerabilities (OSV)"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-osv.yml@0000000000000000000000000000000000000000 # quality-v0.0.0
+    permissions:
+      contents: read
+
+  secrets:
+    name: "🔐 Secrets and MAC scan (gitleaks)"
+    needs: [lint, reuse]
+    uses: kleidos-dev/.github/.github/workflows/reusable-secrets.yml@0000000000000000000000000000000000000000 # quality-v0.0.0
+    permissions:
+      contents: read
+
+  sonarcloud:
+    name: "📊 SonarCloud"
+    needs: [tests]
+    if: github.event_name != 'schedule'
+    uses: kleidos-dev/.github/.github/workflows/reusable-sonarcloud.yml@0000000000000000000000000000000000000000 # quality-v0.0.0
+    permissions:
+      contents: read
+      id-token: write

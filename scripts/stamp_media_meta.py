@@ -20,13 +20,14 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import media_meta  # noqa: E402
+import media_meta
 
 
-def stamped(root: Path) -> tuple[dict, dict[str, bytes]]:
+def stamped(root: Path) -> tuple[dict[str, Any], dict[str, bytes]]:
     """The manifest and the file contents ``--write`` would leave."""
     manifest_path = root / media_meta.MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -43,7 +44,7 @@ def stamped(root: Path) -> tuple[dict, dict[str, bytes]]:
     return manifest, contents
 
 
-def manifest_bytes(manifest: dict) -> bytes:
+def manifest_bytes(manifest: dict[str, Any]) -> bytes:
     """The manifest as it is written: two-space indent, UTF-8, final newline."""
     return (json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 

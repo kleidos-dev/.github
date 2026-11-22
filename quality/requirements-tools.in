@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The Kleidos quality kit's PyPI tools, the one place their versions are set.
+# requirements-tools.txt is compiled from this file with hashes, for every
+# platform and Python 3.11 or newer (the command is in its header):
+# and installed with pip install --require-hashes. Dependabot (pip, in
+# kleidos-dev/.github only) proposes the bumps; the sync carries them out.
+mypy==2.4.1
+ruff==0.17.6
+zizmor==1.33.0
+# reuse needs an encoding detector; charset-normalizer is the pure-Python one.
+reuse[charset-normalizer]==6.3.0
+pre-commit==4.7.0
+# check_quality.py reads workflows, dependabot.yml and .clang-tidy.
+pyyaml==6.0.4

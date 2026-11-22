@@ -1,0 +1,88 @@
+{
+  "$comment": "Written by kleidos-dev/.github quality/sync.py --write; never edit it or the files and blocks it lists: change the kit there and sync again (docs/quality.md).",
+  "source": "https://github.com/kleidos-dev/.github",
+  "version": "1.0.0",
+  "commit": "self",
+  "profiles": [
+    "base",
+    "python",
+    "actions"
+  ],
+  "options": {},
+  "files": [
+    {
+      "path": ".github/quality/check_quality.py",
+      "source_path": "quality/check_quality.py",
+      "sha256": "fbb70fc811d9a9af964468ddbc2cd229d8d95e67eb1db23342f6d89fce472dc6"
+    },
+    {
+      "path": ".github/quality/md_nowrap.py",
+      "source_path": "quality/md_nowrap.py",
+      "sha256": "58b7a60e12225bb353480554981d73390143f37ebf2a1e55d825746addbe4b70"
+    },
+    {
+      "path": ".github/quality/spdx_headers.py",
+      "source_path": "quality/spdx_headers.py",
+      "sha256": "8618494236028c971a1b2e014b19cab8dc4a9e382372cad7847e08277bf404f0"
+    },
+    {
+      "path": ".github/quality/requirements-tools.txt",
+      "source_path": "quality/requirements-tools.txt",
+      "sha256": "8531b3b0000495339dbf1de7810928a43ec2df5a3ff93265e0af33f06c21ca44"
+    },
+    {
+      "path": ".github/quality/markdownlint.jsonc",
+      "source_path": "quality/markdownlint/base.jsonc",
+      "sha256": "f09947dc371fe195ac69837e7c231878b6fbdfb99cc3bcd52aa951311e04a6c8"
+    },
+    {
+      "path": ".gitleaks-mac.toml",
+      "source_path": "quality/gitleaks/mac.toml",
+      "sha256": "321806bc2e68db0d82347aef349e3eaa7bce1bd80993e582eddc51bda4cc32e9"
+    },
+    {
+      "path": ".github/quality/ruff.toml",
+      "source_path": "quality/ruff/ruff.toml",
+      "sha256": "556cad9b16294abac356b63579b58718476724d7205af7e965a3d38cfd93307f"
+    },
+    {
+      "path": ".github/zizmor.yml",
+      "source_path": "quality/zizmor/zizmor.yml",
+      "sha256": "3ed5593b2d0cce7b67b07f2003ec3c3189e9275e58d1b625645059e2d7d12b10"
+    }
+  ],
+  "blocks": [
+    {
+      "id": "pre-commit-base",
+      "path": ".pre-commit-config.yaml",
+      "source_path": ".pre-commit-config.yaml",
+      "sha256": "5755138682485a917efff70250e50270f1506015fa351409cf3e6ec506513a3d"
+    },
+    {
+      "id": "pre-commit-python",
+      "path": ".pre-commit-config.yaml",
+      "source_path": ".pre-commit-config.yaml",
+      "sha256": "532512e4b0bb223fc0d1abc3c31552097c9c6eb410f89d0764a45dc88b816fe1"
+    },
+    {
+      "id": "pre-commit-actions",
+      "path": ".pre-commit-config.yaml",
+      "source_path": ".pre-commit-config.yaml",
+      "sha256": "1e051ee2656fa46c9b822a86b135bb57d312565a15d9c4766078c2149200bd27"
+    },
+    {
+      "id": "mypy",
+      "path": "pyproject.toml",
+      "source_path": "quality/mypy/block.toml",
+      "sha256": "362e99636640a9de07e0cdfa84630ad088b755c59119c641d4df2b8341c33bb4",
+      "table": "tool.mypy"
+    },
+    {
+      "id": "typos",
+      "path": ".typos.toml",
+      "source_path": "quality/typos/block.toml",
+      "sha256": "d9cd1dd74f298aba2e52d10a5590d1d59a9ff6bd2343897b154fc334c527f244",
+      "table": "default"
+    }
+  ]
+}

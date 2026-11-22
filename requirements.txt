@@ -1,5 +1,8 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
 # The CI's Python tools, pinned. The media metadata tools themselves use the
 # standard library only; coverage.py measures their tests for SonarCloud.
 coverage==7.17.4
+# The stubs mypy reads for PyYAML, which the quality kit's checker imports.
+types-pyyaml==6.0.12.20261122

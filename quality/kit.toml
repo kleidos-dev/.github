@@ -1,0 +1,183 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The Kleidos quality kit's manifest: which files a repository copies, which
+# managed blocks it carries in files of its own, per profile. sync.py writes
+# them, check_quality.py checks them; docs/quality.md explains every rule.
+# Sources are paths in kleidos-dev/.github; targets are paths in the
+# repository that adopts the kit. A block's source is either a file holding
+# its text or, for the pre-commit blocks, the region of the same id in this
+# repository's own .pre-commit-config.yaml (which is the canonical hook list).
+
+[profiles]
+base = "every repository: secrets, spelling, licensing, Markdown, Dependabot, the kit check"
+python = "any tracked Python file: ruff, ruff format, mypy strict"
+actions = "any GitHub Actions workflow: actionlint, zizmor, the CI conventions"
+shell = "any tracked shell script: shellcheck"
+ts = "TypeScript: the ESLint and tsconfig bases"
+cpp = "C or C++ sources: the clang-tidy base"
+
+# --- Copies: the kit's bytes, recorded by SHA-256 in SOURCE.json ----------
+
+[[copy]]
+source = "quality/check_quality.py"
+target = ".github/quality/check_quality.py"
+profile = "base"
+
+[[copy]]
+source = "quality/md_nowrap.py"
+target = ".github/quality/md_nowrap.py"
+profile = "base"
+
+[[copy]]
+source = "quality/spdx_headers.py"
+target = ".github/quality/spdx_headers.py"
+profile = "base"
+
+[[copy]]
+source = "quality/requirements-tools.txt"
+target = ".github/quality/requirements-tools.txt"
+profile = "base"
+
+[[copy]]
+source = "quality/markdownlint/base.jsonc"
+target = ".github/quality/markdownlint.jsonc"
+profile = "base"
+
+[[copy]]
+source = "quality/gitleaks/mac.toml"
+target = ".gitleaks-mac.toml"
+profile = "base"
+
+[[copy]]
+source = "quality/ruff/ruff.toml"
+target = ".github/quality/ruff.toml"
+profile = "python"
+
+[[copy]]
+source = "quality/zizmor/zizmor.yml"
+target = ".github/zizmor.yml"
+profile = "actions"
+
+[[copy]]
+source = "quality/shellcheck/shellcheckrc"
+target = ".shellcheckrc"
+profile = "shell"
+
+[[copy]]
+source = "quality/eslint/base.mjs"
+target = ".github/quality/eslint.base.mjs"
+profile = "ts"
+
+[[copy]]
+source = "quality/tsconfig/base.json"
+target = ".github/quality/tsconfig.base.json"
+profile = "ts"
+
+[[copy]]
+source = "quality/clang-tidy/base.yaml"
+target = ".clang-tidy"
+profile = "cpp"
+
+# The drift test, for a repository whose test suite should fail on drift
+# too: sync.py --write --test-dir <dir> copies it there.
+[[copy]]
+source = "quality/templates/test_quality_kit.py"
+target = "{test_dir}/test_quality_kit.py"
+profile = "base"
+requires = "test_dir"
+
+# --- Managed blocks: kit text inside a file the repository owns ------------
+
+[[block]]
+id = "pre-commit-base"
+source = ".pre-commit-config.yaml"
+target = ".pre-commit-config.yaml"
+kind = "pre-commit"
+profile = "base"
+
+[[block]]
+id = "pre-commit-python"
+source = ".pre-commit-config.yaml"
+target = ".pre-commit-config.yaml"
+kind = "pre-commit"
+profile = "python"
+
+[[block]]
+id = "pre-commit-actions"
+source = ".pre-commit-config.yaml"
+target = ".pre-commit-config.yaml"
+kind = "pre-commit"
+profile = "actions"
+
+[[block]]
+id = "pre-commit-shell"
+source = ".pre-commit-config.yaml"
+target = ".pre-commit-config.yaml"
+kind = "pre-commit"
+profile = "shell"
+
+[[block]]
+id = "mypy"
+source = "quality/mypy/block.toml"
+target = "pyproject.toml"
+kind = "toml"
+table = "tool.mypy"
+profile = "python"
+
+[[block]]
+id = "typos"
+source = "quality/typos/block.toml"
+target = ".typos.toml"
+kind = "toml"
+table = "default"
+profile = "base"
+
+# --- Files written once and then the repository's own -----------------------
+# Their header year is set to the year they are written. The model of a
+# repository's CI, quality/templates/workflows/check.yml, is not seeded: each
+# repository merges it into its own check.yml by hand (docs/quality.md).
+
+[[seed]]
+source = "quality/gitleaks/default.example.toml"
+target = ".gitleaks.toml"
+profile = "base"
+
+[[seed]]
+source = "quality/templates/waivers.toml"
+target = ".github/quality/waivers.toml"
+profile = "base"
+
+[[seed]]
+source = "quality/templates/markdownlint-cli2.jsonc"
+target = ".markdownlint-cli2.jsonc"
+profile = "base"
+
+[[seed]]
+source = "quality/templates/workflows/quality-drift.yml"
+target = ".github/workflows/quality-drift.yml"
+profile = "base"
+consumer_only = true
+
+# The commit-message gate's callers. A repository that still carries the
+# kleidos-dev/agents copies of these two workflows gets them replaced.
+[[seed]]
+source = "quality/templates/workflows/commit-check.yml"
+target = ".github/workflows/commit-check.yml"
+profile = "base"
+consumer_only = true
+replace_if = "Vendored from kleidos-dev/agents"
+
+[[seed]]
+source = "quality/templates/workflows/commit-check-comment.yml"
+target = ".github/workflows/commit-check-comment.yml"
+profile = "base"
+consumer_only = true
+replace_if = "Vendored from kleidos-dev/agents"
+
+# --- The repositories that adopt the kit (the impact preview's list) --------
+
+[consumers]
+public = ["kleidos-dev/boards", "kleidos-dev/brand", "kleidos-dev/social", "kleidos-dev/cla"]
+private = ["kleidos-dev/qa", "kleidos-dev/meter", "kleidos-dev/videos", "kleidos-dev/agents", "kleidos-dev/posts"]
+planned = ["jmrplens/kleidos"]

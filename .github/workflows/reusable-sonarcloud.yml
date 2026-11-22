@@ -1,98 +1,56 @@
-# The media metadata gate.
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
 #
-# Every tracked media file carries the Kleidos metadata profile
-# (kleidos-media-meta/1) written from its record in
-# profile/assets/assets.json, the repository is REUSE compliant, and the
-# metadata tools pass their own tests.
+# The SonarCloud analysis every public kleidos-dev repository runs, moved
+# here from their CI unchanged (docs/sonarcloud.md, "Adding a project";
+# docs/quality.md, "Reusable workflows"). It is secretless: the job trades
+# its GitHub OIDC token for a short-lived, project-scoped SonarQube Cloud
+# token, so no SONAR_TOKEN secret exists anywhere. sonar-project.properties
+# in the calling repository holds every project setting. Called last, after
+# the job that writes the coverage report:
 #
-# The identity patterns of the privacy deny-list are private, so they come
-# from the KLEIDOS_DENY_EXTRA secret (one pattern per line). A run without
-# the secret (a pull request from a fork or from Dependabot, which get no
-# secrets, or a repository where it is not set yet) checks every other
-# class and shows a warning that identity was not checked.
+#   sonarcloud:
+#     name: "📊 SonarCloud"
+#     needs: [tests]
+#     uses: kleidos-dev/.github/.github/workflows/reusable-sonarcloud.yml@<kit commit> # quality-vX.Y.Z
+#     permissions:
+#       contents: read
+#       id-token: write
 #
-# The repository's gate, so it is named CI (the project's CI convention):
-# the metadata job (seconds, its steps cheapest first, the tests measured by
-# coverage.py), then the SonarCloud analysis of the tools, which reads that
-# coverage report. The analysis is secretless: the job trades its GitHub
-# OIDC token for a short-lived SonarQube Cloud token, so no SONAR_TOKEN
-# secret exists in this repository.
-name: CI
+# It analyses a push to main and a pull request against main, and nothing
+# else. No continue-on-error: a failed token exchange, a scanner error or an
+# analysis the server refuses is a red job, never a silent green. The one
+# exception is a pull request GitHub gives no OIDC token (from a fork, or
+# from Dependabot): the job says so in a notice and ends green, and
+# SonarCloud analyses the change once it is on main.
+name: SonarCloud
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      coverage-artifact:
+        description: The artifact holding the coverage report sonar-project.properties names (empty for none)
+        type: string
+        default: coverage
 
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+permissions: {}
 
 jobs:
-  metadata:
-    name: "🧹 Media metadata and REUSE"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      KLEIDOS_DENY_EXTRA: ${{ secrets.KLEIDOS_DENY_EXTRA }}
-      KLEIDOS_DENY_OPTIONAL: ${{ secrets.KLEIDOS_DENY_EXTRA == '' && '1' || '0' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: requirements.txt
-      - name: Install the pinned tools
-        run: pip install -r requirements.txt
-      - name: Install the REUSE tool
-        run: pipx install reuse==6.3.0
-      - name: REUSE compliance
-        run: reuse lint
-      - name: Metadata written from the records
-        run: python3 scripts/stamp_media_meta.py --check
-      - name: Metadata profile and privacy deny-list
-        run: python3 scripts/check_metadata.py
-      - name: Tests of the metadata tools
-        run: |
-          python -m coverage run -m unittest discover -s tests -v
-          python -m coverage xml -o coverage.xml
-      - name: Hand the coverage report to the SonarCloud job
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage
-          path: coverage.xml
-          if-no-files-found: error
-          retention-days: 1
-
   sonarcloud:
-    name: "📊 SonarCloud"
+    name: "📊 Analysis"
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: ubuntu-latest
     # A bound for a hung scanner, with room for the scan to grow (15 minutes
     # is the owner's value in gitlab-mcp-server, where 5 cut off the upload).
     timeout-minutes: 15
-    # Last stage: it reads the coverage the test job wrote, and a red gate
-    # earlier stops it from spending a runner.
-    needs: [metadata]
     # Read-only on the code; id-token lets the job ask GitHub for the OIDC
     # token that SonarSource/sonarqube-auth-action exchanges for a
     # project-scoped SonarQube Cloud token (30 minutes, masked in the log).
     permissions:
       contents: read
       id-token: write
-    # No continue-on-error: on a push to main and on a pull request from
-    # this repository, a failed token exchange, a scanner error or an
-    # analysis the server refuses is a red job, never a silent green. The
-    # one exception is a pull request that GitHub gives no OIDC token (from
-    # a fork, or from Dependabot): the job says so in a notice and skips
-    # the analysis; SonarCloud analyses the change once it is on main.
     steps:
       - name: OIDC token available
         id: oidc
@@ -109,7 +67,7 @@ jobs:
           fi
 
       # Full history: blame and the new-code period need it. The checkout
-      # leaves no git credential behind.
+      # leaves no git credential behind for the steps that hold the token.
       - if: steps.oidc.outputs.run == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,12 +75,13 @@ jobs:
           persist-credentials: false
 
       - name: Fetch the coverage report
-        if: steps.oidc.outputs.run == 'true'
+        if: steps.oidc.outputs.run == 'true' && inputs.coverage-artifact != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: coverage
+          name: ${{ inputs.coverage-artifact }}
 
-      # Exports the short-lived token as SONAR_TOKEN for the next steps.
+      # Right before the scan: the token lasts 30 minutes. It is exported as
+      # SONAR_TOKEN for the later steps of this job only.
       - name: SonarCloud token from the OIDC token
         if: steps.oidc.outputs.run == 'true'
         id: auth

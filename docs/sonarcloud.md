@@ -1,8 +1,13 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
 # SonarQube Cloud settings
 
 What is set in the SonarQube Cloud web UI for the organization `kleidos-dev` (<https://sonarcloud.io/organizations/kleidos-dev>) and its projects, as audited and configured on 2026-11-22, so it can be redone by hand. Only what a `sonar-project.properties` file cannot carry lives here; everything else belongs in each repository's file (listed at the end), so a project can be rebuilt from its repository alone.
 
-The projects are `kleidos-dev_boards`, `kleidos-dev_brand`, `kleidos-dev_social` and `kleidos-dev_.github`, all public, each bound to its repository `kleidos-dev/<repo>` and analysed only from that repository's CI (GitHub Actions, secretless), on every push to `main` and every pull request against `main`.
+The projects are `kleidos-dev_boards`, `kleidos-dev_brand`, `kleidos-dev_social` and `kleidos-dev_.github`, all public, each bound to its repository `kleidos-dev/<repo>` and analyzed only from that repository's CI (GitHub Actions, secretless), on every push to `main` and every pull request against `main`.
 
 The plan is **OSS (SonarQube for OSS)** since 2026-11-22: free, public projects only (no private lines of code), unlimited members, unlimited branch and pull request analysis, custom quality gates and quality profiles per project, webhooks, the Projects Management page and GitHub member synchronization. It does not include AI Code Assurance or AI CodeFix (see "AI Code Assurance").
 
@@ -24,7 +29,7 @@ Until 2026-11-22 the organization was on the **Free** plan, which cannot attach 
 | In-code issue resolution (`sonar.issues.issueResolution.global.enabled`, `sonar.issues.issueResolution.enabled`) | off (default) | Organization settings > Issues | Left off on purpose: it lets a `SONAR-RESOLVE` comment in the code close an issue, and the Kleidos rule is that an issue is fixed with a real change or left open. |
 | Plan | SonarQube for OSS | Billing and usage | See above. Billing and usage offers only an upgrade to Team; nothing is paid. |
 | Organization binding | bound to the GitHub organization `kleidos-dev` | Organization settings > Organization binding | Done at creation (the organization is imported from GitHub) and not reversible. Gives the project import and the pull request decoration. |
-| Automatically import new GitHub repositories | **off** | Organization settings > Organization binding | On, every new repository the Sonar GitHub App can see would be imported with Automatic Analysis on, which conflicts with the CI analysis (a CI scan fails while Automatic Analysis is on) and would also pick up the private repositories, which the OSS plan cannot analyse. Repositories are added one by one, by hand (see "Adding a project"). |
+| Automatically import new GitHub repositories | **off** | Organization settings > Organization binding | On, every new repository the Sonar GitHub App can see would be imported with Automatic Analysis on, which conflicts with the CI analysis (a CI scan fails while Automatic Analysis is on) and would also pick up the private repositories, which the OSS plan cannot analyze. Repositories are added one by one, by hand (see "Adding a project"). |
 | Security contact | `mail@kleidos.dev` | Organization settings > Security contact | Receives Sonar's platform security advisories and incident notices (not scan results). It is the address in the organization's `SECURITY.md`. |
 | Default new code definition | **Number of days: 30** | Administration > New code | Kleidos pushes to `main` with no releases and no `sonar.projectVersion`, so "Previous version" (the default) never moves and every change since a project's first analysis would count as new code forever. 30 days is Sonar's recommendation for continuous delivery: a new issue stays in the new-code gate for a month, then joins the overall code. Pull requests always compare with `main`. Applies only to projects created after the change, so each project is also set (see Projects). |
 | Quality gate settings: Ignore duplication and coverage on small changes | on (default) | Administration > Quality gate settings | Coverage and duplication conditions are skipped until a change has 20 new lines, so a one-line fix does not fail on a percentage. |
@@ -40,8 +45,8 @@ Until 2026-11-22 the organization was on the **Free** plan, which cannot attach 
 | --- | --- | --- | --- |
 | Analysis method: Automatic analysis (`sonar.autoscan.enabled`) | **off** | Project > Administration > Analysis method | Analysis runs only from CI. |
 | Repository binding | `kleidos-dev/<repo>` | Administration > General settings > Repository binding | Gives the pull request decoration. |
-| Main branch | `main` | Project > Branches (from the binding) | The CI analyses `main` and pull requests against it. The OSS plan would also analyse other branches, but no workflow runs the scan on them. |
-| Long-lived branch pattern (`sonar.branch.longLivedBranches.regex`) | `(branch\|release)-.*` (inherited default) | General settings | No other branch is analysed today; left at default. |
+| Main branch | `main` | Project > Branches (from the binding) | The CI analyses `main` and pull requests against it. The OSS plan would also analyze other branches, but no workflow runs the scan on them. |
+| Long-lived branch pattern (`sonar.branch.longLivedBranches.regex`) | `(branch\|release)-.*` (inherited default) | General settings | No other branch is analyzed today; left at default. |
 | Pull request summary comment (`sonar.pullrequest.github.summary_comment`) | on (inherited default) | General settings > Pull Requests | Sonar posts its summary in the pull request's conversation. |
 | Pull request issue annotations (`sonar.enableIssueAnnotation`) | on (inherited default) | General settings > Pull Requests | Issues show as annotations on the GitHub check run. |
 | New code | **Number of days: 30** | Administration > New code | Projects imported before 2026-11-22 copied "Previous version" from the organization default; same reasoning as the organization row. |

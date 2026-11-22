@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
 # Discussion categories
 
 The organization's Discussions are hosted by this repository (`kleidos-dev/.github`). This file lists the categories to set up, in display order, and the welcome post to pin in General.

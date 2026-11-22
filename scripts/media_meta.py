@@ -22,6 +22,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 META_PROFILE = "kleidos-media-meta/1"
 
@@ -112,7 +113,14 @@ class MediaMeta:
     @property
     def copyright(self) -> str:
         """The short rights line: holders and the REUSE expression."""
-        return COPYRIGHT_SIGN + " " + ("; " + COPYRIGHT_SIGN + " ").join(self.holders) + ". " + self.spdx + "."
+        return (
+            COPYRIGHT_SIGN
+            + " "
+            + ("; " + COPYRIGHT_SIGN + " ").join(self.holders)
+            + ". "
+            + self.spdx
+            + "."
+        )
 
 
 # --------------------------------------------------------------------------
@@ -147,7 +155,12 @@ def spdx_ids(expression: str) -> list[str]:
 
 
 _IN_FILE_COPYRIGHT = re.compile(
-    "(SPDX-(File|Snippet)" + "CopyrightText:|" + "Copy" + r"right(\s?\([cC]\))?\s|" + COPYRIGHT_SIGN + ")"
+    "(SPDX-(File|Snippet)"
+    + "CopyrightText:|"
+    + "Copy"
+    + r"right(\s?\([cC]\))?\s|"
+    + COPYRIGHT_SIGN
+    + ")"
 )
 _IN_FILE_LICENSE = re.compile("SPDX-" + r"License-Identifier:\s*(.+?)\s*(\*/|-->|$)")
 _IGNORED = re.compile(_MARK + r"Start.*?(" + _MARK + r"End|\Z)", re.S)
@@ -181,7 +194,7 @@ def _glob_match(pattern: str, path: str) -> bool:
     return re.fullmatch(regex, path) is not None
 
 
-def _as_list(value) -> list[str]:
+def _as_list(value: str | list[str] | tuple[str, ...] | None) -> list[str]:
     if value is None:
         return []
     return [value] if isinstance(value, str) else list(value)
@@ -209,10 +222,10 @@ def in_file_reuse(path: Path) -> tuple[list[str], list[str]]:
     return copyrights, licenses
 
 
-def reuse_annotation(path: str, root: Path = ROOT) -> dict:
+def reuse_annotation(path: str, root: Path = ROOT) -> dict[str, Any]:
     """The last ``[[annotations]]`` table of ``REUSE.toml`` that matches a path."""
     config = tomllib.loads((root / "REUSE.toml").read_text(encoding="utf-8"))
-    chosen: dict = {}
+    chosen: dict[str, Any] = {}
     for table in config.get("annotations", []):
         if any(_glob_match(p, path) for p in _as_list(table.get("path"))):
             chosen = table
@@ -245,7 +258,9 @@ def reuse_truth(path: str, root: Path = ROOT) -> tuple[str, tuple[str, ...]]:
     toml_holders = _as_list(chosen.get("SPDX-FileCopyrightText"))
     toml_licenses = _as_list(chosen.get("SPDX-" + "License-Identifier"))
     precedence = chosen.get("precedence", "closest")
-    file_holders, file_licenses = ([], []) if precedence == "override" else in_file_reuse(root / path)
+    file_holders, file_licenses = (
+        ([], []) if precedence == "override" else in_file_reuse(root / path)
+    )
     if precedence == "override":
         holders, licenses = toml_holders, toml_licenses
     elif precedence == "aggregate":
@@ -265,10 +280,7 @@ def reuse_truth(path: str, root: Path = ROOT) -> tuple[str, tuple[str, ...]]:
 def escape(text: str) -> str:
     """XML escaping of the four characters the profile escapes."""
     return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
     )
 
 
@@ -319,20 +331,21 @@ def svg_root_attributes(svg_id: str, language: str) -> dict[str, str]:
 def svg_block(meta: MediaMeta, svg_id: str) -> str:
     """The text that follows the root ``<svg>`` start tag (standard 5.7)."""
     validate(meta)
-    spanish = meta.language == "es"
-    title = meta.title_es if spanish else meta.title
-    description = meta.description_es if spanish else meta.description
-    if spanish:
+    title, description = meta.title, meta.description
+    if meta.language == "es":
+        if meta.title_es is None or meta.description_es is None:  # validate() refuses it
+            raise MetaError("a Spanish file needs title_es and description_es")
+        title, description = meta.title_es, meta.description_es
         dc_title = (
             "<dc:title><rdf:Alt>"
             f'<rdf:li xml:lang="x-default">{escape(meta.title)}</rdf:li>'
-            f'<rdf:li xml:lang="es">{escape(meta.title_es)}</rdf:li>'
+            f'<rdf:li xml:lang="es">{escape(title)}</rdf:li>'
             "</rdf:Alt></dc:title>"
         )
         dc_description = (
             "<dc:description><rdf:Alt>"
             f'<rdf:li xml:lang="x-default">{escape(meta.description)}</rdf:li>'
-            f'<rdf:li xml:lang="es">{escape(meta.description_es)}</rdf:li>'
+            f'<rdf:li xml:lang="es">{escape(description)}</rdf:li>'
             "</rdf:Alt></dc:description>"
         )
     else:
@@ -352,9 +365,21 @@ def svg_block(meta: MediaMeta, svg_id: str) -> str:
         '      <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>',
         f"      {dc_title}",
         f"      {dc_description}",
-        f"      <dc:creator><cc:Agent><dc:title>{escape(CREATOR)}</dc:title></cc:Agent></dc:creator>",
-        f"      <dc:publisher><cc:Agent><dc:title>{escape(PROJECT)}</dc:title></cc:Agent></dc:publisher>",
-        f"      <dc:rights><cc:Agent><dc:title>{escape(meta.copyright)}</dc:title></cc:Agent></dc:rights>",
+        (
+            "      <dc:creator><cc:Agent>"
+            f"<dc:title>{escape(CREATOR)}</dc:title>"
+            "</cc:Agent></dc:creator>"
+        ),
+        (
+            "      <dc:publisher><cc:Agent>"
+            f"<dc:title>{escape(PROJECT)}</dc:title>"
+            "</cc:Agent></dc:publisher>"
+        ),
+        (
+            "      <dc:rights><cc:Agent>"
+            f"<dc:title>{escape(meta.copyright)}</dc:title>"
+            "</cc:Agent></dc:rights>"
+        ),
         f"      <dc:identifier>{escape(meta.identifier_url)}</dc:identifier>",
     ]
     if meta.source_url:
@@ -364,7 +389,8 @@ def svg_block(meta: MediaMeta, svg_id: str) -> str:
     lines += [f"        <rdf:li>{escape(k)}</rdf:li>" for k in meta.keywords]
     lines.append("      </rdf:Bag></dc:subject>")
     lines.append(
-        f'      <Iptc4xmpExt:DigitalSourceType rdf:resource="{DST_BASE}{meta.digital_source_type}"/>'
+        "      <Iptc4xmpExt:DigitalSourceType"
+        f' rdf:resource="{DST_BASE}{meta.digital_source_type}"/>'
     )
     lines.append(f'      <cc:license rdf:resource="{license_url(meta.own_license)}"/>')
     lines += ["    </cc:Work>", "  </rdf:RDF>", "</metadata>"]
@@ -384,7 +410,7 @@ DENY: dict[str, tuple[str, ...]] = {
         r"/home/",
         r"/private/",
         r"/var/folders/",
-        r"/tmp/",
+        r"/tmp/",  # noqa: S108  a pattern of the deny-list, not a temporary file
         r"/Volumes/",
         r"file://",
         r"~/",
@@ -446,9 +472,7 @@ def deny_hits(values: list[str], identity: list[str] | None = None) -> list[str]
                 found = re.search(pattern, value)
                 if found:
                     hits.append(f"{name} ({found.group(0)!r})")
-        for pattern in identity or []:
-            if re.search(pattern, value, re.I):
-                hits.append("identity")
+        hits.extend("identity" for pattern in identity or [] if re.search(pattern, value, re.I))
     return hits
 
 
@@ -472,7 +496,7 @@ _HEAD = re.compile(
 )
 
 
-def meta_from_record(path: str, record: dict, root: Path = ROOT) -> MediaMeta:
+def meta_from_record(path: str, record: dict[str, Any], root: Path = ROOT) -> MediaMeta:
     """The record of one file, with its license and holders from REUSE."""
     spdx, holders = reuse_toml_truth(path, root)
     return MediaMeta(
@@ -510,7 +534,7 @@ def stamp_svg(text: str, meta: MediaMeta, svg_id: str) -> str:
     kept += list(wanted.items())
     closing = "/>" if tag.endswith("/>") else ">"
     new_tag = "<svg " + " ".join(f'{k}="{v}"' for k, v in kept) + closing
-    rest = text[found.end():]
-    head = _HEAD.match(rest)
-    drawing = rest[head.end():]
+    rest = text[found.end() :]
+    head = _HEAD.match(rest)  # matches every string: each part of it is optional
+    drawing = rest[head.end() :] if head else rest
     return text[: found.start()] + new_tag + svg_block(meta, svg_id) + drawing

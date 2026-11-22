@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+
 # Contributing to Kleidos
 
 Thank you for being here. This is the default guide for every public repository of the kleidos-dev organization; a repository with its own `CONTRIBUTING.md` adds its specific rules there.
@@ -29,9 +34,7 @@ You can help by donating a device, by donating to the project, or by testing bui
 - **Devices are accepted only as donations.** A donated board stays on the test bench for future testing; it is not sent back.
 - **Never post a postal address** in a discussion, an issue, or a pull request. If you want to donate a device, write to <mail@kleidos.dev> and the shipping is arranged privately by email.
 - **A donation is a gift.** Donations go through [GitHub Sponsors](https://github.com/sponsors/jmrplens) or [Ko-fi](https://ko-fi.com/jmrplens) and get you nothing in return: no reward, no tier, no priority, no date, and no name on any list the project keeps (GitHub Sponsors and Ko-fi let you stay private).
-- **Money can be given toward one board.** Say which board in the Ko-fi message, public or private as you prefer, or in an email to
-  <mail@kleidos.dev>; never post amounts or receipts in a discussion, an issue,
-  or a pull request. That money goes to buying that board, up to its price. If the board is bought and the money falls short, the project pays the rest. Anything beyond the price, and all of it if the board is never bought (discontinued, or the port declined), goes to a general fund for the project's other costs, such as more boards and bench parts. It is still a gift, with nothing in return.
+- **Money can be given toward one board.** Say which board in the Ko-fi message, public or private as you prefer, or in an email to <mail@kleidos.dev>; never post amounts or receipts in a discussion, an issue, or a pull request. That money goes to buying that board, up to its price. If the board is bought and the money falls short, the project pays the rest. Anything beyond the price, and all of it if the board is never bought (discontinued, or the port declined), goes to a general fund for the project's other costs, such as more boards and bench parts. It is still a gift, with nothing in return.
 - **Neither a donation nor a donated device guarantees support for a board, or a date for it.**
 
 ## Pull requests
@@ -49,11 +52,18 @@ Kleidos is licensed under the GNU General Public License, version 3 or later (`G
 
 A contribution is accepted under the license of the repository it goes to, and under nothing else (inbound = outbound): you keep the copyright of what you wrote. If the project ever asks contributors to sign a contributor agreement, it will be announced here before it applies to anything.
 
-New source files carry the SPDX identifier of their repository's license as their first line, for example:
+Every file that can carry a comment starts with two lines, copyright first, then the SPDX identifier of the repository's license for it, in that file's comment syntax: the year is the year the file was first committed, and there is no e-mail address. For example:
+
+<!-- REUSE-IgnoreStart -->
 
 ```cpp
+// SPDX-FileCopyrightText: 2026 José M. Requena Plens
 // SPDX-License-Identifier: GPL-3.0-or-later
 ```
+
+<!-- REUSE-IgnoreEnd -->
+
+A file that cannot carry a comment (an image, a JSON file, generated data) gets both through the repository's `REUSE.toml`. The quality kit's header check enforces this, and `spdx_headers.py --write` writes the lines with the right year (`docs/quality.md` in kleidos-dev/.github, "Licensing headers").
 
 ## The name and the logo
 
