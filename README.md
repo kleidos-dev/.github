@@ -26,6 +26,7 @@ This repository holds the kleidos-dev organization's profile, its community defa
 | [`.github/VULNERABILITY_REPORT.yml`](.github/VULNERABILITY_REPORT.yml) | The default form for a private vulnerability report. |
 | [`.github/DISCUSSION_TEMPLATE/new-board-requests.yml`](.github/DISCUSSION_TEMPLATE/new-board-requests.yml) | The form behind the New board requests category. |
 | [`docs/discussion-categories.md`](docs/discussion-categories.md) | The Discussions categories and the pinned welcome post. |
+| [`docs/sonarcloud.md`](docs/sonarcloud.md) | What is set by hand in the SonarQube Cloud organization and its projects, and how to add a project. |
 | [`scripts/`](scripts/), [`tests/`](tests/) | The media metadata tools (`media_meta.py`, `stamp_media_meta.py`, `check_metadata.py`) and their tests. |
 | [`.github/workflows/`](.github/workflows/) | The commit-message gate and the CI (`media-check.yml`): the media metadata gate and the SonarCloud analysis of the tools. |
 | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly updates of the pinned GitHub Actions and of the CI's Python tools (`requirements.txt`). |
@@ -53,7 +54,7 @@ The stamp rewrites only the root `<svg>`'s `role`, `aria-labelledby` and `lang` 
 
 Pull requests are reviewed by [CodeRabbit](https://coderabbit.ai) (`.coderabbit.yaml`) and [Greptile](https://www.greptile.com) (`.greptile/`), configured to post inline reviews and suggestions only: they never touch a pull request's title or description, post no summary of it, and commit nothing to it. Both review against the rules in this README and in [`CONTRIBUTING.md`](CONTRIBUTING.md). The `CI` workflow runs on every push to `main` and every pull request against `main`: it measures the tools' tests with coverage.py and then runs the `📊 SonarCloud` job, which is mandatory: it fails when the analysis cannot run or when SonarCloud does not accept it.
 
-SonarCloud analysis is secretless and runs only from CI (Automatic Analysis is off): the job trades its GitHub OIDC token for a short-lived project token through `SonarSource/sonarqube-auth-action`, so the repository holds no `SONAR_TOKEN`. A pull request that GitHub gives no OIDC token (from a fork, or from Dependabot) skips the analysis with a notice, and the change is analysed once it is on `main`. Every setting a file can carry (sources, tests, coverage, Python version, links) is in `sonar-project.properties`; the new code period (30 days), the quality gate and profiles (Sonar way) are set in the SonarQube Cloud organization `kleidos-dev`.
+SonarCloud analysis is secretless and runs only from CI (Automatic Analysis is off): the job trades its GitHub OIDC token for a short-lived project token through `SonarSource/sonarqube-auth-action`, so the repository holds no `SONAR_TOKEN`. A pull request that GitHub gives no OIDC token (from a fork, or from Dependabot) skips the analysis with a notice, and the change is analysed once it is on `main`. Every setting a file can carry (sources, tests, coverage, Python version, links) is in `sonar-project.properties`; the new code period (30 days), the quality gate and profiles (Sonar way) and the rest of what a file cannot hold are set by hand in the SonarQube Cloud organization `kleidos-dev`, as [`docs/sonarcloud.md`](docs/sonarcloud.md) records.
 
 ## License
 
