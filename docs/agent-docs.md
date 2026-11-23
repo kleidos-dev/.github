@@ -117,12 +117,12 @@ The repository's `.claude/` is the source and the plugin in `kleidos-dev/agents`
 
 | Check | Fails when |
 | --- | --- |
-| `files` | The root lacks `AGENTS.md` or `CLAUDE.md`; a nested one has no twin beside it. A copy under `.claude/` or `plugins/`, or in a `fixtures` or `testdata` folder, is content and is skipped |
+| `files` | The root lacks `AGENTS.md` or `CLAUDE.md`; a nested one has no twin beside it; one is a symbolic link or not UTF-8 text. A copy under `.claude/` or `plugins/`, or in a `fixtures` or `testdata` folder, is content and is skipped |
 | `import` | A `CLAUDE.md` does not open, after its comment, with the line `@AGENTS.md` |
 | `at` | An `@name` stands outside code in either file (Claude would try to import it) |
-| `local` | `CLAUDE.local.md` is tracked, or `.gitignore` does not ignore it |
-| `single` | A rules file for one other tool exists, or a `.claude/rules/` folder |
-| `size` | A file or a chain is over the limits of [Length](#length) (a warning above the target) |
+| `local` | A `CLAUDE.local.md` is tracked anywhere, or `.gitignore` does not ignore it beside the root or a nested `AGENTS.md` |
+| `single` | A rules file for one other tool exists, at the root or in a subfolder, or a `.claude/rules/` folder |
+| `size` | Any chain Codex concatenates (the root `AGENTS.md` down to a nested one, every level counted) is over 32 KiB, or what `CLAUDE.md` holds under the import, code included, is over 4 KiB; a warning when one `AGENTS.md` passes the 20 KiB target ([Length](#length)) |
 | `paths` | A path in a code span or a fenced command, whose first folder exists in this repository, is neither tracked nor ignored. This is how "the commands work" is checked: every script a command names must be in the tree. A path that starts with another repository (`kleidos-dev/<repo>/`) is skipped |
 | `links` | A relative Markdown link does not resolve |
 | `kit` | A skill or subagent under `.claude/` is named in neither file |

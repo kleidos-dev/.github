@@ -313,15 +313,21 @@ def place_block(path: Path, entry: dict[str, Any], inner: str) -> list[str]:
     return removed
 
 
-def _section_end(lines: list[str], start: int) -> int:
-    """The line after a `## ` section that opens at start: the next `#`/`##` heading or the end."""
+def _markdown_headings(lines: list[str]) -> list[int]:
+    """The indexes of the heading lines a reader sees: none in a fenced block or an HTML comment."""
+    found: list[int] = []
     fenced = False
-    for i in range(start + 1, len(lines)):
-        if re.match(r"^\s*(```|~~~)", lines[i]):
+    in_comment = False
+    for i, line in enumerate(lines):
+        if not in_comment and re.match(r"^\s*(```|~~~)", line):
             fenced = not fenced
-        elif not fenced and re.match(r"^#{1,2}\s", lines[i]):
-            return i
-    return len(lines)
+        elif fenced:
+            continue
+        elif in_comment or line.lstrip().startswith("<!--"):
+            in_comment = "-->" not in line
+        elif re.match(r"^#{1,6}\s", line):
+            found.append(i)
+    return found
 
 
 def _place_markdown(lines: list[str], block: list[str], inner: str) -> tuple[list[str], list[str]]:
@@ -339,18 +345,20 @@ def _place_markdown(lines: list[str], block: list[str], inner: str) -> tuple[lis
         level, _, title = heading.partition(" ")
         # The same heading, numbered or not (`## 5. Organization rules`).
         same = re.compile(rf"^{level}\s+(?:\d+\.\s+)?{re.escape(title.strip())}\s*$")
-    at = next((i for i, ln in enumerate(lines) if same and same.match(ln.rstrip("\n"))), None)
+    headings = _markdown_headings(lines)
+    at = next((i for i in headings if same and same.match(lines[i].rstrip("\n"))), None)
     removed: list[str] = []
     if at is not None:
-        end = _section_end(lines, at)
+        # The section ends at the next heading of its level or above, or the file's end.
+        end = next((i for i in headings if i > at and re.match(r"^#{1,2}\s", lines[i])), len(lines))
         removed = [ln.rstrip("\n") for ln in lines[at:end] if ln.strip()]
         del lines[at:end]
     else:
         at = next(
             (
                 i
-                for i, ln in enumerate(lines)
-                if re.match(r"^##\s+(?:\d+\.\s+)?Other repositories\s*$", ln)
+                for i in headings
+                if re.match(r"^##\s+(?:\d+\.\s+)?Other repositories\s*$", lines[i])
             ),
             len(lines),
         )

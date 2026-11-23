@@ -23,7 +23,7 @@
     {
       "path": ".github/quality/agent_docs.py",
       "source_path": "quality/agent_docs.py",
-      "sha256": "66661b5ea0ee4aff53df3b3bcc9f47f7d02ab0b26d0279e042b44fa06234fca3"
+      "sha256": "bff2b42cd637dc5fda36a16e82e28d7661b8c9487dc9a27ff93b4c9cb017be39"
     },
     {
       "path": ".github/quality/spdx_headers.py",

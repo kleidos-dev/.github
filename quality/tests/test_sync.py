@@ -305,6 +305,22 @@ class MarkdownBlockTest(unittest.TestCase):
         self.assertIn("-->\n\n## 6. Other repositories", text)
         self.assertIn("- Mine.\n\n<!-- >>> kleidos-quality organization-rules", text)
 
+    def test_a_heading_in_code_or_a_comment_is_not_the_section(self) -> None:
+        fx.write(
+            self.root,
+            "AGENTS.md",
+            fx.md_header()
+            + "# AGENTS.md\n\n## Example\n\n```md\n## Organization rules\n```\n\n"
+            + "<!--\n## Organization rules\n-->\n\n## Rules\n\n- Keep me.\n\n"
+            + "```md\n## Other repositories\n```\n",
+        )
+        log = self.sync()
+        text = self.agents.read_text(encoding="utf-8")
+        self.assertIn("- Keep me.", text)
+        self.assertEqual(text.count("```md\n## Organization rules\n```"), 1)
+        self.assertFalse(any("replaced the hand-written" in line for line in log), log)
+        self.assertTrue(text.endswith("<!-- <<< kleidos-quality organization-rules -->\n"), text)
+
     def test_without_a_later_section_the_block_ends_the_file(self) -> None:
         fx.write(self.root, "AGENTS.md", fx.md_header() + "# AGENTS.md\n\nRules.\n")
         self.sync()

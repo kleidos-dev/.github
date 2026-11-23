@@ -99,6 +99,14 @@ class AgentDocsTest(unittest.TestCase):
         fx.write(self.root, "src/CLAUDE.md", fx.md_header() + "@AGENTS.md\n")
         self.assertEqual(self.findings(), [])
 
+    def test_a_symbolic_link_or_an_unreadable_file_is_found(self) -> None:
+        (self.root / "CLAUDE.md").unlink()
+        (self.root / "CLAUDE.md").symlink_to("AGENTS.md")
+        self.assert_finding("files", "CLAUDE.md: [files] is a symbolic link")
+        (self.root / "CLAUDE.md").unlink()
+        (self.root / "CLAUDE.md").write_bytes(b"\xff\xfe@AGENTS.md\n")
+        self.assert_finding("files", "CLAUDE.md: [files] cannot be read as UTF-8 text")
+
     def test_a_plugin_or_fixture_copy_is_content_not_rules(self) -> None:
         fx.write(self.root, "plugins/x/AGENTS.md", "# A template\n")
         fx.write(self.root, "tests/fixtures/CLAUDE.md", "No import here.\n")
@@ -150,6 +158,23 @@ class AgentDocsTest(unittest.TestCase):
         fx.git(self.root, "add", "-f", "CLAUDE.local.md")
         self.assert_finding("local", "CLAUDE.local.md: [local] is tracked")
 
+    def test_a_nested_claude_local_md_is_tracked_or_not_ignored(self) -> None:
+        fx.write(self.root, "src/AGENTS.md", fx.md_header() + "# src\n\nRules.\n")
+        fx.write(self.root, "src/CLAUDE.md", fx.md_header() + "@AGENTS.md\n")
+        fx.write(self.root, ".gitignore", fx.header() + "\n/CLAUDE.local.md\n")
+        self.assert_finding("local", ".gitignore: [local] does not ignore src/CLAUDE.local.md")
+        fx.write(self.root, "src/CLAUDE.local.md", "Mine.\n")
+        fx.git(self.root, "add", "-f", "src/CLAUDE.local.md")
+        self.assert_finding("local", "src/CLAUDE.local.md: [local] is tracked")
+
+    def test_a_nested_rules_file_for_one_tool_is_found(self) -> None:
+        fx.write(self.root, "src/AGENTS.override.md", "Rules.\n")
+        fx.write(self.root, "web/.cursor/rules/a.mdc", "Rules.\n")
+        fx.write(self.root, ".claude/rules/b.md", "Rules.\n")
+        found = self.findings("single")
+        for where in ("src/AGENTS.override.md:", "web/.cursor/rules/:", ".claude/rules/:"):
+            self.assertTrue(any(f.startswith(where) for f in found), (where, found))
+
     def test_a_rules_file_for_one_tool_is_found(self) -> None:
         fx.write(self.root, "GEMINI.md", "Rules.\n")
         fx.write(self.root, ".cursor/rules/a.mdc", "Rules.\n")
@@ -176,7 +201,22 @@ class AgentDocsTest(unittest.TestCase):
             self.root, "src/AGENTS.md", fx.md_header() + "- " + "y" * (ad.HARD_BYTES // 2) + "\n"
         )
         fx.write(self.root, "src/CLAUDE.md", fx.md_header() + "@AGENTS.md\n")
-        self.assert_finding("size", "src/AGENTS.md: [size] with the root AGENTS.md is ")
+        self.assert_finding("size", "src/AGENTS.md: [size] with AGENTS.md is ")
+
+    def test_every_level_of_a_nested_chain_counts(self) -> None:
+        third = ad.HARD_BYTES // 3 + 200
+        self.agents("- " + "x" * (third - 2000) + "\n")
+        for folder in ("src", "src/cli"):
+            fx.write(self.root, f"{folder}/AGENTS.md", fx.md_header() + "- " + "y" * third + "\n")
+            fx.write(self.root, f"{folder}/CLAUDE.md", fx.md_header() + "@AGENTS.md\n")
+        found = self.findings("size")
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("src/cli/AGENTS.md: [size] with AGENTS.md, src/AGENTS.md is ", found[0])
+
+    def test_code_under_the_import_counts_toward_its_size(self) -> None:
+        fence = "```sh\n" + "\n".join(f"run step {n} " + "z" * 60 for n in range(80)) + "\n```\n"
+        fx.write(self.root, "CLAUDE.md", fx.md_header() + "@AGENTS.md\n\n" + fence)
+        self.assert_finding("size", "CLAUDE.md: [size] holds ")
 
     def test_claude_md_holds_little_of_its_own(self) -> None:
         own = "\n".join(f"- Claude only, line {n}: " + "z" * 60 for n in range(80))

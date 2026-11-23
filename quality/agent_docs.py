@@ -8,17 +8,21 @@ rule of a repository, for any agent; CLAUDE.md imports it and adds only what
 Claude alone can use. This script checks one repository, from its root:
 
   files    AGENTS.md and CLAUDE.md exist at the root; every nested AGENTS.md
-           has a CLAUDE.md beside it, and the reverse
+           has a CLAUDE.md beside it, and the reverse; each is a readable
+           file, not a symbolic link
   import   each CLAUDE.md opens, after its licensing comment, with the line
            @AGENTS.md
   at       no other @name stands outside code in either file (Claude reads
            it as an import, in an imported AGENTS.md too)
-  local    CLAUDE.local.md is git-ignored and not tracked
+  local    CLAUDE.local.md is git-ignored beside every AGENTS.md and tracked
+           nowhere
   single   no rules file for one other tool (copilot-instructions.md,
-           GEMINI.md, .cursorrules, .cursor/rules/, AGENTS.override.md, ...)
-  size     the root AGENTS.md, and the root with each nested one, is at most
-           32 KiB (Codex stops adding files there), with a warning above the
-           20 KiB target; CLAUDE.md holds at most 4 KiB under the import
+           GEMINI.md, .cursorrules, .cursor/rules/, AGENTS.override.md, ...),
+           at the root or below it
+  size     every chain of AGENTS.md files Codex concatenates (the root down
+           to a nested one) is at most 32 KiB, with a warning above the 20 KiB
+           target for one file; CLAUDE.md holds at most 4 KiB under the
+           import, code included
   paths    a path in a code span or a fenced block whose first folder exists
            in the repository exists (tracked or git-ignored); a path that
            starts with kleidos-dev/<repo>/ is another repository's
@@ -56,6 +60,15 @@ NAMES = ("AGENTS.md", "CLAUDE.md")
 IMPORT_LINE = "@AGENTS.md"
 OTHER_TOOL_FILES = (
     ".github/copilot-instructions.md",
+    "GEMINI.md",
+    ".cursorrules",
+    ".windsurfrules",
+    ".clinerules",
+    "AGENTS.override.md",
+    "AGENT.md",
+)
+# The names above that a tool also reads in a subfolder.
+ONE_TOOL_NAMES = (
     "GEMINI.md",
     ".cursorrules",
     ".windsurfrules",
@@ -150,21 +163,32 @@ def split_code(text: str) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]
     """
     prose: list[tuple[int, str]] = []
     code: list[tuple[int, str]] = []
+    for num, line, kind in classify(text):
+        if kind == "code":
+            code.append((num, line))
+        elif kind == "prose":
+            code.extend((num, m.group(1)) for m in SPAN.finditer(line))
+            prose.append((num, SPAN.sub("`x`", line)))
+    return prose, code
+
+
+def classify(text: str) -> list[tuple[int, str, str]]:
+    """Each line with its kind: "prose", "code" (fenced, fences included) or "comment"."""
+    out: list[tuple[int, str, str]] = []
     fenced = False
     in_comment = False
     for num, line in enumerate(text.splitlines(), 1):
         if not in_comment and FENCE.match(line):
             fenced = not fenced
-            continue
-        if fenced:
-            code.append((num, line))
-            continue
-        if in_comment or line.lstrip().startswith("<!--"):
+            out.append((num, line, "code"))
+        elif fenced:
+            out.append((num, line, "code"))
+        elif in_comment or line.lstrip().startswith("<!--"):
             in_comment = "-->" not in line
-            continue
-        code.extend((num, m.group(1)) for m in SPAN.finditer(line))
-        prose.append((num, SPAN.sub("`x`", line)))
-    return prose, code
+            out.append((num, line, "comment"))
+        else:
+            out.append((num, line, "prose"))
+    return out
 
 
 def path_tokens(code: str) -> list[str]:
@@ -209,38 +233,49 @@ def check_files(repo: Repo, docs: list[str], out: list[Finding]) -> None:
             out.append(Finding("files", doc, 0, f"has no {other} beside it"))
 
 
-def check_local_and_single(repo: Repo, out: list[Finding]) -> None:
-    if "CLAUDE.local.md" in repo.tracked:
-        out.append(Finding("local", "CLAUDE.local.md", 0, "is tracked; it is one person's file"))
-    if not repo.ignored("CLAUDE.local.md"):
-        out.append(Finding("local", ".gitignore", 0, "does not ignore CLAUDE.local.md"))
-    out.extend(
-        Finding("single", rel, 0, "a rules file for one tool: AGENTS.md is the one")
-        for rel in OTHER_TOOL_FILES
-        if rel in repo.tracked
-    )
+def check_local_and_single(repo: Repo, docs: list[str], out: list[Finding]) -> None:
+    """CLAUDE.local.md and the files of one other tool, at the root and in every folder."""
+    folders = sorted({posixpath.dirname(d) for d in docs} | {""})
+    for folder in folders:
+        local = posixpath.join(folder, "CLAUDE.local.md")
+        if not repo.ignored(local):
+            out.append(Finding("local", ".gitignore", 0, f"does not ignore {local}"))
+    for rel in sorted(repo.tracked):
+        if is_content(rel):
+            continue
+        name = posixpath.basename(rel)
+        if name == "CLAUDE.local.md":
+            out.append(Finding("local", rel, 0, "is tracked; it is one person's file"))
+        elif rel in OTHER_TOOL_FILES or name in ONE_TOOL_NAMES:
+            out.append(Finding("single", rel, 0, "a rules file for one tool: AGENTS.md is the one"))
     out.extend(
         Finding("single", rel, 0, "rules for one tool: AGENTS.md is the one")
-        for rel in OTHER_TOOL_DIRS
-        if rel in repo.dirs
+        for rel in sorted(repo.dirs)
+        if rel in OTHER_TOOL_DIRS
+        or (not is_content(rel) and any(rel.endswith("/" + d) for d in OTHER_TOOL_DIRS))
     )
 
 
-def check_size(
-    repo: Repo, doc: str, text: str, prose: list[tuple[int, str]], out: list[Finding]
-) -> None:
+def chain_of(repo: Repo, doc: str) -> list[str]:
+    """The AGENTS.md files Codex concatenates for a working directory at doc's folder."""
+    parts = posixpath.dirname(doc).split("/") if "/" in doc else []
+    folders = [""] + ["/".join(parts[: n + 1]) for n in range(len(parts))]
+    return [p for f in folders if (p := posixpath.join(f, "AGENTS.md")) in repo.tracked]
+
+
+def check_size(repo: Repo, doc: str, text: str, out: list[Finding]) -> None:
     size = len(text.encode("utf-8"))
     if doc.endswith("AGENTS.md"):
-        root = repo.read("AGENTS.md") if "/" in doc else None
-        chain = size + (len(root.encode("utf-8")) if root is not None else 0)
-        if chain > HARD_BYTES:
-            what = "with the root AGENTS.md " if root is not None else ""
+        chain = chain_of(repo, doc)
+        total = sum(len((repo.read(p) or "").encode("utf-8")) for p in chain)
+        if total > HARD_BYTES:
+            what = f"with {', '.join(p for p in chain if p != doc)} " if len(chain) > 1 else ""
             out.append(
                 Finding(
                     "size",
                     doc,
                     0,
-                    f"{what}is {chain} bytes, over {HARD_BYTES} (Codex stops adding files there)",
+                    f"{what}is {total} bytes, over {HARD_BYTES} (Codex stops adding files there)",
                 )
             )
         elif size > TARGET_BYTES:
@@ -248,11 +283,14 @@ def check_size(
                 Finding("size", doc, 0, f"is {size} bytes, over the {TARGET_BYTES} target", True)
             )
         return
-    body = [ln for _, ln in prose if ln.strip()]
-    if not body or body[0].strip() != IMPORT_LINE:
+    # What Claude reads under the import, code included: everything but HTML comments.
+    seen = [(line, kind) for _, line, kind in classify(text) if kind != "comment"]
+    filled = [(line, kind) for line, kind in seen if line.strip()]
+    if not filled or filled[0] != (IMPORT_LINE, "prose"):
         out.append(Finding("import", doc, 0, f"does not open with the line {IMPORT_LINE}"))
         return
-    own = sum(len(ln.encode("utf-8")) + 1 for ln in body[1:])
+    after = seen[seen.index(filled[0]) + 1 :]
+    own = sum(len(line.encode("utf-8")) + 1 for line, _ in after)
     if own > CLAUDE_OWN_BYTES:
         out.append(
             Finding("size", doc, 0, f"holds {own} bytes under the import, over {CLAUDE_OWN_BYTES}")
@@ -395,15 +433,19 @@ def check(repo: Repo) -> list[Finding]:
     out: list[Finding] = []
     docs = sorted(p for p in repo.tracked if posixpath.basename(p) in NAMES and not is_content(p))
     check_files(repo, docs, out)
-    check_local_and_single(repo, out)
+    check_local_and_single(repo, docs, out)
     mentioned = ""
     for doc in docs:
+        if (repo.root / doc).is_symlink():
+            out.append(Finding("files", doc, 0, "is a symbolic link: commit the file itself"))
+            continue
         text = repo.read(doc)
         if text is None:
+            out.append(Finding("files", doc, 0, "cannot be read as UTF-8 text"))
             continue
         mentioned += text
         prose, code = split_code(text)
-        check_size(repo, doc, text, prose, out)
+        check_size(repo, doc, text, out)
         check_at(doc, prose, out)
         check_paths(repo, doc, code, out)
         check_links(repo, doc, prose, out)
