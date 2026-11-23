@@ -7,6 +7,10 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 2.1.1 (2026-11-23)
+
+A checker fix that cannot add findings. A job's container shared through a YAML alias (`container: *kicad`, the anchor on another job) is the anchor's line: it was looked up a second time, found no line of its own, lost the tag comment beside the anchor and was reported as "names no tag" at line 0.
+
 ## 2.1.0 (2026-11-23)
 
 Container images join the pin rule. Nothing turns a green repository red: the only image the kit knows, `kicad/kicad`, is already pinned by its 10.0.8 digest in boards and brand, and no other repository runs a known image.

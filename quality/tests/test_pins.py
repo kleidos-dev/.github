@@ -344,6 +344,29 @@ class PinsTest(unittest.TestCase):
             "extra.yml:17: [pins] image:kicad/kicad is pinned by tag only",
         )
 
+    def test_a_container_shared_through_a_yaml_alias_is_read_once(self) -> None:
+        self.image(f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}")
+        self.edit(
+            ".github/workflows/extra.yml",
+            "    container:\n",
+            "    container: &kicad\n",
+        )
+        self.append(
+            ".github/workflows/extra.yml",
+            '  again:\n    name: "🧪 Again"\n    runs-on: ubuntu-latest\n'
+            "    timeout-minutes: 5\n    container: *kicad\n"
+            "    steps:\n      - run: echo again\n",
+        )
+        self.assertEqual(self.found(), [])
+        self.edit(
+            ".github/workflows/extra.yml",
+            f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}",
+            f"kicad/kicad:{KICAD_TAG}",
+        )
+        found = [f for f in self.found() if "[pins] image:" in f]
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("extra.yml:15: [pins] image:kicad/kicad is pinned by tag only", found[0])
+
     def test_an_image_named_in_a_script_is_not_a_pin(self) -> None:
         self.image(f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}")
         self.append(

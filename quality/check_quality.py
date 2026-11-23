@@ -2265,6 +2265,7 @@ def check_image_pins(repo: Repo, report: Report) -> None:
             continue
         lines = text.splitlines()
         taken: set[int] = set()
+        checked: set[tuple[str, int]] = set()
         for image in workflow_images(wf):
             ref = IMAGE_REF.match(image)
             if not ref:
@@ -2273,6 +2274,13 @@ def check_image_pins(repo: Repo, report: Report) -> None:
             if name not in LATEST_IMAGES:
                 continue
             index = image_line(lines, image, taken)
+            if index < 0:
+                # A YAML alias (container: *kicad) repeats an image its anchor already
+                # wrote once: it is that line, checked already.
+                index = max((i for i in taken if image in lines[i]), default=-1)
+            if (image, index) in checked:
+                continue
+            checked.add((image, index))
             taken.add(index)
             line = lines[index] if index >= 0 else ""
             after = line[line.index(image) + len(image) :] if image in line else ""
