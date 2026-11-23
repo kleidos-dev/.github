@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The quality kit's TypeScript gate (docs/quality.md, "Reusable workflows"):
+# the repository's pinned ESLint over its sources, with the flat config
+# built on the kit's .github/quality/eslint.base.mjs (a warning fails it
+# too), then tsc with every project that must type-check. The commands are
+# the kit's, not inputs: a caller names where the package is and which
+# tsconfig projects to check, never what to run. Called as:
+#
+#   eslint:
+#     name: "🔎 ESLint and tsc"
+#     needs: [lint, reuse]
+#     uses: kleidos-dev/.github/.github/workflows/reusable-eslint.yml@<kit commit> # quality-vX.Y.Z
+#     with:
+#       working-directory: worker
+#       projects: tsconfig.json ../scripts/tsconfig.json
+#     permissions:
+#       contents: read
+#
+# ESLint, typescript-eslint and TypeScript stay the repository's own
+# dependencies, installed from its lockfile with npm ci.
+name: Quality kit TypeScript
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: The folder that holds package.json, package-lock.json and the ESLint config
+        type: string
+        default: "."
+      projects:
+        description: Space-separated tsconfig files tsc checks, relative to working-directory
+        type: string
+        default: tsconfig.json
+      node-version:
+        description: The Node.js to run with
+        type: string
+        default: lts/*
+
+permissions: {}
+
+jobs:
+  eslint:
+    name: "🔎 ESLint and tsc"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - name: Install the repository's pinned tools
+        run: npm ci
+      - name: ESLint (a warning fails too)
+        run: npx --no-install eslint --max-warnings 0 .
+      - name: tsc on every project
+        env:
+          PROJECTS: ${{ inputs.projects }}
+        run: |
+          set -euo pipefail
+          read -r -a projects <<< "${PROJECTS}"
+          for project in "${projects[@]}"; do
+            echo "tsc --noEmit -p ${project}"
+            npx --no-install tsc --noEmit -p "${project}"
+          done

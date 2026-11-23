@@ -19,9 +19,15 @@
 line-length = 100
 # Excludes apply to files pre-commit names on the command line too.
 force-exclude = true
-# The byte copies: the kit's own scripts (checked in kleidos-dev/.github) and
-# the commit-message gate copied from kleidos-dev/agents.
-extend-exclude = ["./*.py", "../commit-check/*.py"]
+# The byte copies, by name: the kit's own scripts (checked in
+# kleidos-dev/.github) and the commit-message checker copied from
+# kleidos-dev/agents. Any other Python file is linted wherever it is.
+extend-exclude = [
+  "./check_quality.py",
+  "./md_nowrap.py",
+  "./spdx_headers.py",
+  "../commit-check/check_commit_msg.py",
+]
 
 [lint]
 select = [

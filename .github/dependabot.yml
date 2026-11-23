@@ -12,6 +12,9 @@
 # of the kit's blocks in .pre-commit-config.yaml (pre-commit), and the
 # actions its reusable workflows pin (github-actions). A bump reaches the
 # other repositories through the sync, never through their own Dependabot.
+# Each such pull request is a kit release: before it merges, a signed
+# commit on its branch bumps quality/VERSION and adds the CHANGELOG entry
+# (the CI's release check fails until then), and the merge is tagged.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -54,6 +57,11 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # crate-ci/typos also tags its sub-crates (varcon-core-v5.0.7), which
+      # Dependabot reads as typos 5.0.7 (PR #10). typos itself is at 1.x.
+      - dependency-name: "https://github.com/crate-ci/typos"
+        versions: [">= 2"]
     groups:
       hooks:
         patterns: ["*"]

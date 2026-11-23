@@ -121,10 +121,13 @@ def consumer(root: Path) -> Path:
         + "version: 2\nupdates:\n"
         + "  - package-ecosystem: github-actions\n    directory: /\n"
         + "    schedule:\n      interval: weekly\n"
+        + "    cooldown:\n      default-days: 7\n"
         + '    ignore:\n      - dependency-name: "kleidos-dev/.github*"\n'
         + "  - package-ecosystem: pip\n    directory: /\n"
-        + "    schedule:\n      interval: weekly\n",
+        + "    schedule:\n      interval: weekly\n"
+        + "    cooldown:\n      default-days: 7\n",
     )
+    write(root, ".python-version", "3.11\n")
     write(
         root, ".github/workflows/check.yml", (QUALITY / "templates/workflows/check.yml").read_text()
     )

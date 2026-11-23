@@ -20,10 +20,19 @@ with the same command in a sync pull request:
         applies --write to a throwaway clone and reports what the kit would
         find there (with --tools, ruff and zizmor too); never fails
 
-Run it from a clean checkout of kleidos-dev/.github at the commit to
-record: the commit is HEAD, and a dirty tree is refused for --write (pass
---allow-dirty while developing the kit). REPO may be kleidos-dev/.github
-itself, which records commit "self".
+Run it from a clean checkout of kleidos-dev/.github at the release to
+record: the commit is HEAD, which --write requires to be the tag
+quality-v<quality/VERSION> on origin/main (--allow-untagged lifts that for a
+throwaway tree), and a dirty tree is refused (--allow-dirty while
+developing the kit). REPO may be kleidos-dev/.github itself, which records
+commit "self".
+
+    sync.py --release-check [--on-main]
+        kleidos-dev/.github's CI: a change to what repositories receive
+        bumps quality/VERSION, and a version on main is tagged
+    sync.py --drift RECORDED_COMMIT
+        the drift notice: key=value lines naming the newest release and
+        whether RECORDED_COMMIT's kit is behind it
 
 Python 3.11 or newer; PyYAML.
 """
@@ -32,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -40,7 +50,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
@@ -57,10 +67,24 @@ SKELETONS = {
 }
 
 
+TAG_PREFIX = "quality-v"
+MAIN_REF = "refs/remotes/origin/main"
+# What a repository receives from the kit: a change here is a kit release.
+KIT_TREE = ("quality", ".github/workflows", ".github/commit-check")
+
+
 def git(*args: str, cwd: Path = CENTRAL) -> str:
     return subprocess.run(
         ["git", "-C", str(cwd), *args], capture_output=True, check=True, text=True
     ).stdout.strip()
+
+
+def git_ok(*args: str, cwd: Path = CENTRAL) -> str | None:
+    """A git command's output, or None when it fails."""
+    done = subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, check=False, text=True
+    )
+    return done.stdout.strip() if done.returncode == 0 else None
 
 
 def central_commit(allow_dirty: bool) -> str:
@@ -70,6 +94,135 @@ def central_commit(allow_dirty: bool) -> str:
             "sync: the kit checkout has uncommitted changes; commit them or pass --allow-dirty"
         )
     return git("rev-parse", "HEAD")
+
+
+def tag_commit(tag: str, cwd: Path = CENTRAL) -> str | None:
+    return git_ok("rev-parse", "-q", "--verify", f"refs/tags/{tag}^{{commit}}", cwd=cwd)
+
+
+def release_commit(version: str, cwd: Path = CENTRAL) -> str:
+    """HEAD, if it is exactly the release tag of this VERSION and on origin/main.
+
+    A repository records only a released kit commit: every call to a kit
+    workflow carries `# quality-v<VERSION>`, and zizmor's online
+    ref-version-mismatch audit fails unless that tag names the same commit.
+    """
+    tag = f"{TAG_PREFIX}{version}"
+    head = git("rev-parse", "HEAD", cwd=cwd)
+    tagged = tag_commit(tag, cwd)
+    if tagged is None:
+        raise SystemExit(
+            f"sync: there is no tag {tag} in this kit checkout: fetch the tags and check out"
+            f" the release (git fetch --tags origin && git checkout {tag}), or tag the merged"
+            ' release first (docs/quality.md, "Changing the kit")'
+        )
+    if tagged != head:
+        raise SystemExit(
+            f"sync: HEAD {head[:12]} is not {tag} ({tagged[:12]}): check out the release"
+            f" (git checkout {tag}); a repository records released kit commits only"
+        )
+    if git_ok("rev-parse", "-q", "--verify", MAIN_REF, cwd=cwd) is None:
+        raise SystemExit("sync: no origin/main in this kit checkout: git fetch origin main")
+    if git_ok("merge-base", "--is-ancestor", head, MAIN_REF, cwd=cwd) is None:
+        raise SystemExit(f"sync: {tag} ({head[:12]}) is not on origin/main: refusing to record it")
+    return head
+
+
+def kit_fingerprint(ref: str, cwd: Path = CENTRAL) -> str:
+    """A digest of everything a repository receives from the kit at one commit.
+
+    quality/ (but its tests), the reusable workflows, the commit-message
+    checker, and the bytes of the kit's managed blocks; nothing else of this
+    repository (its own CI, its media hooks, its docs) moves the kit.
+    """
+    listing = git("ls-tree", "-r", ref, "--", *KIT_TREE, cwd=cwd)
+    digest = hashlib.sha256()
+    for line in sorted(listing.splitlines()):
+        meta, _, path = line.partition("\t")
+        if path.startswith("quality/tests/"):
+            continue
+        if path.startswith(".github/workflows/") and not PurePosixPath(path).name.startswith(
+            "reusable-"
+        ):
+            continue
+        if path.startswith(".github/commit-check/") and not path.endswith("check_commit_msg.py"):
+            continue
+        digest.update(f"{path}\0{meta.split()[-1]}\n".encode())
+    kit = cq.GitKit(cwd, ref)
+    for entry in kit.manifest().get("block", []):
+        digest.update(f"block {entry['id']}\0".encode())
+        digest.update(cq.canonical_block(kit, entry).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def release_tags(cwd: Path = CENTRAL) -> list[str]:
+    """The kit's release tags, newest first."""
+    out = git("tag", "-l", f"{TAG_PREFIX}*", "--sort=-v:refname", cwd=cwd)
+    return [t for t in out.splitlines() if re.fullmatch(rf"{TAG_PREFIX}\d+\.\d+\.\d+", t)]
+
+
+def release_check(on_main: bool, cwd: Path = CENTRAL) -> tuple[int, list[str]]:
+    """Whether this commit's kit is a release: (exit status, lines to print).
+
+    A pull request that changes what repositories receive bumps
+    quality/VERSION and adds its CHANGELOG entry; once merged to main, the
+    release is tagged at the merge commit, which is what repositories record.
+    """
+    version = (cwd / "quality" / "VERSION").read_text(encoding="utf-8").strip()
+    tag = f"{TAG_PREFIX}{version}"
+    head = git("rev-parse", "HEAD", cwd=cwd)
+    tags = release_tags(cwd)
+    lines: list[str] = []
+    if tag in tags:
+        tagged = tag_commit(tag, cwd) or ""
+        if kit_fingerprint(tagged, cwd) != kit_fingerprint(head, cwd):
+            lines.append(
+                f"::error title=Kit changed without a release::what repositories receive"
+                f" changed since {tag} ({tagged[:12]}): bump quality/VERSION and add its"
+                ' quality/CHANGELOG.md entry (docs/quality.md, "Versions")'
+            )
+            return 1, lines
+        lines.append(f"kit at {tag} ({tagged[:12]}): released")
+        return 0, lines
+    changelog = (cwd / "quality" / "CHANGELOG.md").read_text(encoding="utf-8")
+    if not re.search(rf"^## {re.escape(version)}\b", changelog, re.MULTILINE):
+        lines.append(f"::error title=No changelog entry::quality/CHANGELOG.md has no ## {version}")
+        return 1, lines
+    if tags:
+        newest = tags[0].removeprefix(TAG_PREFIX)
+        if tuple(map(int, version.split("."))) <= tuple(map(int, newest.split("."))):
+            lines.append(
+                f"::error title=Version not newer::quality/VERSION {version} is not newer than"
+                f" the newest release {tags[0]}"
+            )
+            return 1, lines
+    if on_main:
+        lines.append(
+            f"::error title=Release not tagged::quality/VERSION is {version} and no tag"
+            f" {tag} exists: tag this commit, signed (git tag -s {tag} -m 'Quality kit"
+            f" {version}' {head} && git push origin {tag}), then re-run this job"
+        )
+        return 1, lines
+    lines.append(f"::notice title=Kit release {version}::tag {tag} at the merge commit once merged")
+    return 0, lines
+
+
+def drift_status(recorded: str, cwd: Path = CENTRAL) -> dict[str, str]:
+    """For a repository's drift notice: the newest release and whether it is behind it."""
+    tags = release_tags(cwd)
+    if not tags:
+        return {"behind": "false", "tag": "", "commit": "", "version": ""}
+    newest = tags[0]
+    commit = tag_commit(newest, cwd) or ""
+    behind = recorded != commit
+    if behind and git_ok("cat-file", "-e", f"{recorded}^{{commit}}", cwd=cwd) is not None:
+        behind = kit_fingerprint(recorded, cwd) != kit_fingerprint(commit, cwd)
+    return {
+        "behind": "true" if behind else "false",
+        "tag": newest,
+        "commit": commit,
+        "version": newest.removeprefix(TAG_PREFIX),
+    }
 
 
 def expected_entries(
@@ -207,14 +360,24 @@ def write(
     commit: str | None = None,
     test_dir: str | None = None,
     allow_dirty: bool = False,
+    allow_untagged: bool = False,
 ) -> list[str]:
-    """Bring repo to this kit checkout; return a log of what was written."""
+    """Bring repo to this kit checkout; return a log of what was written.
+
+    With no commit given, a repository records HEAD, which must be the
+    release tag of quality/VERSION on origin/main (allow_untagged lifts that
+    for a throwaway tree, never for a sync pull request).
+    """
     repo = repo.resolve()
     kit = cq.DirKit(CENTRAL)
     version = kit.version()
     is_central = repo == CENTRAL.resolve()
-    if commit is None:
-        commit = "self" if is_central else central_commit(allow_dirty)
+    if commit is None and is_central:
+        commit = "self"
+    elif commit is None:
+        commit = central_commit(allow_dirty)
+        if not allow_untagged:
+            commit = release_commit(version)
     old: dict[str, Any] = {}
     source_path = repo / cq.SOURCE_JSON
     if source_path.is_file():
@@ -259,7 +422,16 @@ def write(
         if b.get("table"):
             rec["table"] = b["table"]
         blocks_rec.append(rec)
+    kept = {str(f["path"]) for f in files_rec}
+    for entry in old.get("files") or []:
+        rel = str(entry.get("path", ""))
+        target = repo / rel
+        if rel and rel not in kept and (cq.is_kit_target(rel) or rel.startswith(cq.KIT_DIR)):
+            if target.is_file():
+                target.unlink()
+            log.append(f"removed {rel}: the kit no longer copies it")
     year = str(dt.datetime.now(tz=dt.UTC).year)
+    replaced: list[str] = []
     for s in seeds:
         if s.get("consumer_only") and is_central:
             continue
@@ -274,6 +446,9 @@ def write(
             target.write_text(text, encoding="utf-8")
             verb = "replaced the copy at" if replace else "seeded"
             log.append(f"{verb} {s['target']} (the repository's own from now on)")
+            if replace:
+                replaced.append(str(s["target"]))
+    log.extend(forget_commit_check_copies(repo, replaced))
     if not is_central:
         log.extend(
             f"pointed kit workflow calls in {f} at {commit[:12]}"
@@ -298,6 +473,31 @@ def write(
     )
     log.append(f"recorded kit {version} at {commit[:12]} in {cq.SOURCE_JSON}")
     return log
+
+
+def forget_commit_check_copies(repo: Path, replaced: list[str]) -> list[str]:
+    """Drop the replaced workflows from .github/commit-check/SOURCE.json; return a log.
+
+    The commit-message checker stays kleidos-dev/agents' copy (the
+    commit-msg hook runs it); the two workflows become thin callers of the
+    kit, which the repository owns, so its commit-check manifest and the
+    digest test that reads it stop listing them.
+    """
+    path = repo / cq.COMMIT_CHECK_SOURCE
+    if not replaced or not path.is_file():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    files = data.get("files") or []
+    left = [e for e in files if str(e.get("path")) not in replaced]
+    if len(left) == len(files):
+        return []
+    data["files"] = left
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return [
+        f"dropped {', '.join(sorted(replaced))} from {cq.COMMIT_CHECK_SOURCE}: the repository's"
+        " commit-check digest test (tests/ci/test_commit_check_copy.py) now expects the"
+        " checker alone; edit its path set in this pull request"
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -332,6 +532,25 @@ def _count(cmd: list[str], cwd: Path) -> str:
     return str(len(lines))
 
 
+def format_count(tree: Path) -> str:
+    """How many files `ruff format` would change in a tree (from its JSON report)."""
+    exe = shutil.which("ruff")
+    if exe is None:
+        return "n/a"
+    out = subprocess.run(
+        [exe, "format", "--check", "--output-format", "json", "."],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        found = json.loads(out.stdout or "[]")
+    except ValueError:
+        return "n/a"
+    return str(len({d.get("filename") for d in found if d.get("code") == "unformatted"}))
+
+
 def preview(targets: list[str], tools: bool, allow_dirty: bool) -> str:
     """A Markdown table of what the kit would find in each target."""
     commit = central_commit(allow_dirty)
@@ -356,16 +575,7 @@ def preview(targets: list[str], tools: bool, allow_dirty: bool) -> str:
                 ruff = _count(
                     ["ruff", "check", "--output-format", "concise", "--exit-zero", "."], dest
                 )
-                fmt_out = subprocess.run(
-                    [shutil.which("ruff") or "ruff", "format", "--check", "."],
-                    cwd=dest,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                fmt = str(
-                    sum(1 for ln in fmt_out.stdout.splitlines() if ln.startswith("Would reformat"))
-                )
+                fmt = format_count(dest)
                 ziz_out = subprocess.run(
                     [shutil.which("zizmor") or "zizmor", "--format", "json", "--offline", "."],
                     cwd=dest,
@@ -395,6 +605,16 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--write", type=Path, metavar="REPO")
     group.add_argument("--check", type=Path, nargs="+", metavar="REPO")
     group.add_argument("--preview", nargs="+", metavar="REPO_OR_SLUG")
+    group.add_argument(
+        "--release-check",
+        action="store_true",
+        help="kleidos-dev/.github CI: is this commit's kit a tagged release (or a new one)?",
+    )
+    group.add_argument(
+        "--drift",
+        metavar="RECORDED_COMMIT",
+        help="the drift notice: the newest release, and whether a recorded commit is behind it",
+    )
     ap.add_argument(
         "--profiles", help="comma-separated; base is always on, and detected languages are added"
     )
@@ -409,15 +629,35 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="record HEAD even if the kit checkout has changes",
     )
+    ap.add_argument(
+        "--allow-untagged",
+        action="store_true",
+        help="--write: record HEAD even if it is not the release tag (throwaway trees only)",
+    )
+    ap.add_argument(
+        "--on-main", action="store_true", help="--release-check: this is a commit on main"
+    )
     ap.add_argument("--summary", type=Path, help="--preview appends its table here")
     args = ap.parse_args(argv)
+    if args.release_check:
+        status, lines = release_check(args.on_main)
+        print("\n".join(lines))
+        return status
+    if args.drift:
+        for key, value in drift_status(args.drift).items():
+            print(f"{key}={value}")
+        return 0
     if args.write:
         if not args.write.is_dir():
             print(f"sync: {args.write} is not a directory", file=sys.stderr)
             return 2
         profiles = [p.strip() for p in args.profiles.split(",")] if args.profiles else None
         for line in write(
-            args.write, profiles=profiles, test_dir=args.test_dir, allow_dirty=args.allow_dirty
+            args.write,
+            profiles=profiles,
+            test_dir=args.test_dir,
+            allow_dirty=args.allow_dirty,
+            allow_untagged=args.allow_untagged,
         ):
             print(line)
         return check([args.write])

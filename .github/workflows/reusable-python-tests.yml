@@ -23,8 +23,12 @@ name: Python tests
 on:
   workflow_call:
     inputs:
+      python-version:
+        description: The Python to test with (empty reads python-version-file)
+        type: string
+        default: ""
       python-version-file:
-        description: The file naming the Python to test with
+        description: The file naming that Python (check_quality.py requires .python-version)
         type: string
         default: .python-version
       install:
@@ -63,7 +67,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version-file: ${{ inputs.python-version-file }}
+          python-version: ${{ inputs.python-version }}
+          python-version-file: ${{ inputs.python-version == '' && inputs.python-version-file || '' }}
       - name: Install the repository's dependencies
         if: inputs.install != ''
         env:

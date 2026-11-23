@@ -108,6 +108,14 @@ class ConformanceTest(unittest.TestCase):
         self.edit("pyproject.toml", 'ignore = ["E501"]', "")
         self.assertFound("matches nothing any more")
 
+    def test_a_ruff_include_narrows_the_files_and_needs_a_waiver(self) -> None:
+        self.edit(
+            "pyproject.toml",
+            'target-version = "py311"\n',
+            'target-version = "py311"\ninclude = ["nothing/*.py"]\n',
+        )
+        self.assertFound("include:nothing/*.py weakens a kit rule")
+
     def test_an_expired_or_unreasoned_waiver_fails(self) -> None:
         self.append("pyproject.toml", '\n[tool.ruff.lint]\nignore = ["E501"]\n')
         self.append(
@@ -116,6 +124,29 @@ class ConformanceTest(unittest.TestCase):
             'decided = "owner 2026-01-01"\nexpires = 2026-06-01\n',
         )
         self.assertFound("needs reason", "expired on 2026-06-01")
+
+    def test_mypy_takes_only_the_settings_it_allows(self) -> None:
+        pyproject = self.root / "pyproject.toml"
+        original = pyproject.read_text(encoding="utf-8")
+        for line in (
+            'always_false = ["TYPE_CHECKED"]',
+            'always_true = ["X"]',
+            'untyped_calls_exclude = ["pkg"]',
+            "follow_untyped_imports = true",
+            "implicit_reexport = true",
+            "warn_unreachable = false",
+        ):
+            pyproject.write_text(original + line + "\n", encoding="utf-8")
+            self.assertFound("refused (no waiver)")
+        for line in (
+            "warn_unreachable = true",
+            "pretty = true",
+            'plugins = ["pydantic.mypy"]',
+            "implicit_reexport = false",
+            'follow_imports = "error"',
+        ):
+            pyproject.write_text(original + line + "\n", encoding="utf-8")
+            self.assertEqual(self.found(), [], line)
 
     def test_mypy_cannot_be_waived(self) -> None:
         self.append(
@@ -189,6 +220,143 @@ class ConformanceTest(unittest.TestCase):
         fx.write(self.root, "web/app.ts", "// x\nexport const a = 1;\n")
         self.assertFound("the tree holds ts files but the ts profile is not adopted")
 
+    def test_a_kit_call_that_may_not_run_is_caught(self) -> None:
+        wf = ".github/workflows/check.yml"
+        original = (self.root / wf).read_text(encoding="utf-8")
+        gated = original.replace(
+            "\n    uses: kleidos-dev/.github/.github/workflows/reusable-lint.yml",
+            "\n    if: false\n    uses: kleidos-dev/.github/.github/workflows/reusable-lint.yml",
+        )
+        self.assertNotEqual(gated, original)
+        (self.root / wf).write_text(gated, encoding="utf-8")
+        self.assertFound("calls reusable-lint.yml but it carries the condition `if: false`")
+        # A job that needs the gated one cannot run either.
+        self.assertFound("calls reusable-mypy.yml but the job it needs, lint,")
+        for triggers, why in (
+            ("on:\n  workflow_dispatch:\n", "does not run on pull_request"),
+            ("on:\n  push:\n    branches: [main]\n", "does not run on pull_request"),
+            ("on:\n  pull_request:\n", "does not run on push"),
+            (
+                "on:\n  pull_request:\n    paths: [docs/**]\n  push:\n",
+                "pull_request trigger has a paths filter",
+            ),
+            (
+                "on:\n  pull_request:\n    branches: [dev]\n  push:\n",
+                "trigger does not include main",
+            ),
+        ):
+            head, _, rest = original.partition("\non:\n")
+            body = rest[rest.index("\npermissions:") :]
+            (self.root / wf).write_text(head + "\n" + triggers + body, encoding="utf-8")
+            self.assertFound(why)
+        (self.root / wf).write_text(original, encoding="utf-8")
+        self.assertEqual(self.found(), [])
+
+    def test_the_lint_caller_skips_only_hooks_of_its_own(self) -> None:
+        wf = self.root / ".github/workflows/check.yml"
+        text = wf.read_text(encoding="utf-8")
+        marker = "reusable-lint.yml@"
+        at = text.index("\n", text.index(marker))
+        wf.write_text(text[:at] + "\n    with:\n      skip: my-hook,ruff-check" + text[at:])
+        self.assertFound("skip names the kit hook ruff-check")
+        self.assertFalse(any("my-hook" in f for f in self.found()))
+
+    def test_lint_skip_is_refused_from_the_kit_itself(self) -> None:
+        kit = cq.DirKit(fx.CENTRAL)
+        self.assertIn("ruff-check", cq.kit_block_hook_ids(kit))
+        self.assertIn("gitleaks-mac", cq.kit_block_hook_ids(kit))
+        self.assertEqual(
+            cq.refused_skips("mine, gitleaks ,x", cq.kit_block_hook_ids(kit)), ["gitleaks"]
+        )
+
+    def test_pre_commit_globals_cannot_switch_the_kit_hooks_off(self) -> None:
+        self.edit(".pre-commit-config.yaml", "repos:\n", "exclude: '^pkg/'\nrepos:\n")
+        self.assertFound("exclude:^pkg/ weakens a kit rule")
+        self.edit(".pre-commit-config.yaml", "exclude: '^pkg/'\n", "default_stages: [manual]\n")
+        self.assertFound("default_stages without pre-commit")
+        self.edit(
+            ".pre-commit-config.yaml",
+            "default_stages: [manual]\n",
+            "default_stages: [pre-commit, manual]\n",
+        )
+        self.assertEqual(self.found(), [])
+
+    def test_only_kit_copies_live_in_the_kit_folder(self) -> None:
+        fx.write(
+            self.root,
+            ".github/quality/osv-scanner.toml",
+            "# x\n[[IgnoredVulns]]\nid = 'GHSA-0000-0000-0000'\n",
+        )
+        fx.write(self.root, ".github/quality/parked.py", "import os\nimport sys\n")
+        self.assertFound(
+            ".github/quality/osv-scanner.toml: [kit-dir]",
+            ".github/quality/parked.py: [kit-dir]",
+            "IgnoredVulns[0] GHSA-0000-0000-0000: [osv] needs a reason",
+            ".github/quality/parked.py: [mypy] not checked by mypy",
+        )
+
+    def test_a_manifest_cannot_hide_a_file(self) -> None:
+        import json
+
+        fx.write(self.root, "other/hidden.py", "import os\n")
+        path = self.root / cq.SOURCE_JSON
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["files"].append({"path": "other/hidden.py", "source_path": "x", "sha256": "0"})
+        path.write_text(json.dumps(record), encoding="utf-8")
+        self.assertFound(
+            "records other/hidden.py, which is not a path the kit copies to",
+            "other/hidden.py: [mypy] not checked by mypy",
+        )
+        record["files"].pop()
+        path.write_text(json.dumps(record), encoding="utf-8")
+        fx.write(
+            self.root,
+            cq.COMMIT_CHECK_SOURCE,
+            json.dumps({"files": [{"path": "other/hidden.py"}]}),
+        )
+        self.assertFound(
+            "records other/hidden.py: the commit-check manifest lists only",
+            "other/hidden.py: [mypy] not checked by mypy",
+        )
+
+    def test_kit_copies_match_the_manifest(self) -> None:
+        manifest = cq.DirKit(fx.CENTRAL).manifest()
+        copies = {
+            str(c["target"]): str(c["source"]) for c in manifest["copy"] if not c.get("requires")
+        }
+        self.assertEqual(copies, cq.KIT_COPIES)
+        test_copy = [c for c in manifest["copy"] if c.get("requires")]
+        self.assertEqual(
+            [(c["target"].rsplit("/", 1)[1], c["source"]) for c in test_copy],
+            [cq.KIT_TEST_COPY],
+        )
+
+    def test_python_version_and_dependabot_cooldown_are_required(self) -> None:
+        (self.root / ".python-version").unlink()
+        self.edit(".github/dependabot.yml", "    cooldown:\n      default-days: 7\n", "")
+        self.assertFound(
+            ".python-version: [python] missing",
+            "github-actions /: needs a cooldown",
+        )
+
+    def test_a_license_sidecar_needs_a_waiver(self) -> None:
+        fx.write(self.root, "logo.svg.license", "x\n")
+        self.assertFound("sidecar:logo.svg.license weakens a kit rule")
+
+    def test_cpp_runs_clang_tidy_in_a_job_of_its_own(self) -> None:
+        fx.write(self.root, "src/a.cpp", "// x\nint a;\n")
+        sync.write(self.root, commit=fx.FAKE_COMMIT)
+        self.assertFound("the cpp profile runs clang-tidy")
+        fx.write(
+            self.root,
+            ".github/workflows/tidy.yml",
+            fx.header()
+            + "name: Tidy\non:\n  pull_request:\njobs:\n  tidy:\n"
+            + '    name: "🔎 clang-tidy"\n    runs-on: ubuntu-latest\n'
+            + "    timeout-minutes: 5\n    steps:\n      - run: clang-tidy -p build src/a.cpp\n",
+        )
+        self.assertFalse(any("the cpp profile runs clang-tidy" in f for f in self.found()))
+
     # --- suppressions in other languages -------------------------------------
 
     def test_nolint_and_eslint_disable_name_their_rule_and_reason(self) -> None:
@@ -220,6 +388,17 @@ class TypeScriptTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = fx.consumer(Path(self._tmp.name) / "repo")
         fx.write(self.root, "web/app.ts", "// x\nexport const a = 1;\n")
+        wf = self.root / ".github/workflows/check.yml"
+        wf.write_text(
+            wf.read_text(encoding="utf-8")
+            + "\n  eslint:\n"
+            + '    name: "🔎 ESLint and tsc"\n'
+            + "    needs: [lint, reuse]\n"
+            + "    uses: kleidos-dev/.github/.github/workflows/reusable-eslint.yml@0 # q\n"
+            + "    with:\n      working-directory: web\n"
+            + "    permissions:\n      contents: read\n",
+            encoding="utf-8",
+        )
         sync.write(self.root, commit=fx.FAKE_COMMIT)
         fx.write(
             self.root,
@@ -263,6 +442,30 @@ class TypeScriptTest(unittest.TestCase):
         found = self.found()
         for rule in ("no-console", "eqeqeq", "max-len"):
             self.assertTrue(any(f"{rule} weakens" in f for f in found), (rule, found))
+
+    def test_the_ts_profile_calls_the_eslint_workflow(self) -> None:
+        wf = self.root / ".github/workflows/check.yml"
+        wf.write_text(
+            wf.read_text(encoding="utf-8").replace("reusable-eslint.yml", "reusable-x.yml"),
+            encoding="utf-8",
+        )
+        self.assertTrue(any("reusable-eslint.yml" in f for f in self.found()))
+
+    def test_type_checking_off_and_ignored_sources_are_weakenings(self) -> None:
+        fx.write(
+            self.root, "web/tsconfig.json", '{"extends": "../.github/quality/tsconfig.base.json"}\n'
+        )
+        path = self.root / "web/eslint.config.js"
+        path.write_text(
+            path.read_text(encoding="utf-8")
+            + "export const x = [{ ignores: ['dist/**', 'src/legacy/**'] },"
+            + " tseslint.configs.disableTypeChecked];\n",
+            encoding="utf-8",
+        )
+        found = self.found()
+        self.assertTrue(any("disableTypeChecked weakens" in f for f in found), found)
+        self.assertTrue(any("ignores:src/legacy/** weakens" in f for f in found), found)
+        self.assertFalse(any("ignores:dist/**" in f for f in found), found)
 
     def append_eslint(self, text: str) -> None:
         path = self.root / "web/eslint.config.js"

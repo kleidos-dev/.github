@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -145,6 +146,46 @@ class WriteTest(unittest.TestCase):
         )
         self.assertEqual(kept, own)
 
+    def test_the_commit_check_manifest_drops_the_replaced_workflows(self) -> None:
+        for rel in (
+            ".github/workflows/commit-check.yml",
+            ".github/workflows/commit-check-comment.yml",
+        ):
+            fx.write(self.root, rel, "# Vendored from kleidos-dev/agents\nname: x\n")
+        fx.write(self.root, ".github/commit-check/check_commit_msg.py", "# x\n")
+        manifest = {
+            "files": [
+                {"path": ".github/commit-check/check_commit_msg.py", "sha256": "a"},
+                {"path": ".github/workflows/commit-check.yml", "sha256": "b"},
+                {"path": ".github/workflows/commit-check-comment.yml", "sha256": "c"},
+            ]
+        }
+        fx.write(self.root, cq.COMMIT_CHECK_SOURCE, json.dumps(manifest))
+        log = self.sync()
+        left = json.loads((self.root / cq.COMMIT_CHECK_SOURCE).read_text(encoding="utf-8"))
+        self.assertEqual(
+            [e["path"] for e in left["files"]], [".github/commit-check/check_commit_msg.py"]
+        )
+        self.assertTrue(any("test_commit_check_copy.py" in line for line in log), log)
+
+    def test_a_copy_the_kit_no_longer_makes_is_removed(self) -> None:
+        self.sync()
+        path = self.root / cq.SOURCE_JSON
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["files"].append(
+            {
+                "path": ".github/quality/requirements-tools.txt",
+                "source_path": "quality/requirements-tools.txt",
+                "sha256": "0",
+            }
+        )
+        path.write_text(json.dumps(record), encoding="utf-8")
+        fx.write(self.root, ".github/quality/requirements-tools.txt", "# old\n")
+        log = self.sync()
+        self.assertFalse((self.root / ".github/quality/requirements-tools.txt").exists())
+        self.assertTrue(any("no longer copies" in line for line in log), log)
+        self.assertEqual(problems(self.root), [])
+
     def test_a_seeded_file_carries_the_year_it_is_written(self) -> None:
         self.sync()
         year = str(dt.datetime.now(tz=dt.UTC).year)
@@ -233,6 +274,107 @@ class PlaceBlockTest(unittest.TestCase):
             sync.place_block(path, entry, "  - repo: local\n    hooks: []\n")
             text = path.read_text(encoding="utf-8")
             self.assertEqual(text.count("repos:"), 1, text)
+
+
+class ReleaseTest(unittest.TestCase):
+    """A repository records a tagged release; central's CI keeps releases honest."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        # A kit clone with this checkout's tree as one commit on main.
+        self.kit = fx.init(tmp / "kit")
+        for rel in sync.git("ls-files", "--cached", "--others", "--exclude-standard").splitlines():
+            src = fx.CENTRAL / rel
+            if src.is_file():
+                dest = self.kit / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(src.read_bytes())
+        fx.commit(self.kit, "Kit")
+        self.head = fx.git(self.kit, "rev-parse", "HEAD").strip()
+        self.version = (self.kit / "quality" / "VERSION").read_text(encoding="utf-8").strip()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def tag(self, name: str, ref: str = "HEAD") -> None:
+        fx.git(self.kit, "tag", name, ref)
+
+    def on_main(self) -> None:
+        fx.git(self.kit, "update-ref", sync.MAIN_REF, "HEAD")
+
+    def test_a_write_records_only_the_release_tag_on_main(self) -> None:
+        with self.assertRaises(SystemExit) as no_tag:
+            sync.release_commit(self.version, self.kit)
+        self.assertIn("no tag", str(no_tag.exception))
+        self.tag(f"quality-v{self.version}")
+        with self.assertRaises(SystemExit) as no_main:
+            sync.release_commit(self.version, self.kit)
+        self.assertIn("origin/main", str(no_main.exception))
+        self.on_main()
+        self.assertEqual(sync.release_commit(self.version, self.kit), self.head)
+        fx.write(self.kit, "later.txt", "x\n")
+        fx.commit(self.kit, "Later")
+        self.on_main()
+        with self.assertRaises(SystemExit) as moved:
+            sync.release_commit(self.version, self.kit)
+        self.assertIn("is not quality-v", str(moved.exception))
+        fx.git(self.kit, "checkout", "-q", "-b", "side", f"quality-v{self.version}")
+        fx.write(self.kit, "side.txt", "x\n")
+        fx.commit(self.kit, "Side")
+        self.tag("quality-v9.9.9")
+        with self.assertRaises(SystemExit) as off_main:
+            sync.release_commit("9.9.9", self.kit)
+        self.assertIn("not on origin/main", str(off_main.exception))
+
+    def test_a_kit_change_needs_a_new_version_and_main_needs_its_tag(self) -> None:
+        status, lines = sync.release_check(on_main=False, cwd=self.kit)
+        self.assertEqual(status, 0, lines)
+        status, lines = sync.release_check(on_main=True, cwd=self.kit)
+        self.assertEqual(status, 1, lines)
+        self.assertIn("git tag -s", "\n".join(lines))
+        self.tag(f"quality-v{self.version}")
+        self.assertEqual(sync.release_check(on_main=True, cwd=self.kit)[0], 0)
+        # Central's own files move nothing a repository receives.
+        fx.write(self.kit, "docs/note.md", "x\n")
+        fx.write(self.kit, "quality/tests/extra.txt", "x\n")
+        fx.commit(self.kit, "Docs")
+        self.assertEqual(sync.release_check(on_main=True, cwd=self.kit)[0], 0)
+        # A kit change without a version bump is refused.
+        rel = "quality/ruff/ruff.toml"
+        fx.write(self.kit, rel, (self.kit / rel).read_text(encoding="utf-8") + "# more\n")
+        fx.commit(self.kit, "Kit change")
+        status, lines = sync.release_check(on_main=False, cwd=self.kit)
+        self.assertEqual(status, 1, lines)
+        self.assertIn("bump quality/VERSION", "\n".join(lines))
+
+    def test_drift_compares_with_the_newest_release(self) -> None:
+        self.assertEqual(sync.drift_status(self.head, self.kit)["behind"], "false")
+        self.tag(f"quality-v{self.version}")
+        self.assertEqual(sync.drift_status(self.head, self.kit)["behind"], "false")
+        fx.write(self.kit, "docs/note.md", "x\n")
+        fx.commit(self.kit, "Docs")
+        newer = fx.git(self.kit, "rev-parse", "HEAD").strip()
+        self.tag("quality-v99.0.0")
+        status = sync.drift_status(self.head, self.kit)
+        self.assertEqual((status["tag"], status["commit"]), ("quality-v99.0.0", newer))
+        self.assertEqual(status["behind"], "false")  # the same kit bytes
+        rel = ".github/workflows/reusable-lint.yml"
+        fx.write(self.kit, rel, (self.kit / rel).read_text(encoding="utf-8") + "# more\n")
+        fx.commit(self.kit, "Kit change")
+        self.tag("quality-v100.0.0")
+        self.assertEqual(sync.drift_status(self.head, self.kit)["behind"], "true")
+
+
+class PreviewTest(unittest.TestCase):
+    def test_the_format_count_reads_ruff_itself(self) -> None:
+        if shutil.which("ruff") is None:
+            self.skipTest("ruff is not on PATH")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a.py").write_text("x=1\ny  =  2\n", encoding="utf-8")
+            Path(tmp, "b.py").write_text("z = 3\n", encoding="utf-8")
+            Path(tmp, "c.py").write_text("w  = 4\n", encoding="utf-8")
+            self.assertEqual(sync.format_count(Path(tmp)), "2")
 
 
 class CentralTest(unittest.TestCase):

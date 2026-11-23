@@ -27,7 +27,9 @@ on:
         type: string
         default: "3.14"
       skip:
-        description: Comma-separated ids of the repository's own hooks that cannot run here
+        description: >-
+          Comma-separated ids of the repository's own hooks that cannot run here;
+          a kit hook named here fails the kit check
         type: string
         default: ""
 
@@ -71,10 +73,14 @@ jobs:
         env:
           KIT: ${{ steps.kit.outputs.dir }}
         run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+      # --lint-skip refuses a skip input that names a hook of the kit's
+      # blocks, read from the kit itself, so a stale local checker cannot let
+      # a repository switch a kit hook off from its caller.
       - name: The kit check
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-        run: python "${KIT}/quality/check_quality.py" --kit "${KIT}" --summary "${GITHUB_STEP_SUMMARY}"
+          EXTRA_SKIP: ${{ inputs.skip }}
+        run: python "${KIT}/quality/check_quality.py" --kit "${KIT}" --lint-skip "${EXTRA_SKIP}" --summary "${GITHUB_STEP_SUMMARY}"
       - name: Cache the hook environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
