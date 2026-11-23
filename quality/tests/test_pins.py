@@ -732,7 +732,8 @@ class SubmoduleHelpersTest(unittest.TestCase):
     def test_requirement_pins_normalizes_names_and_stays_inside_the_tree(self) -> None:
         files = {
             "requirements.txt": "-r sub/more.txt\n-c ../outside.txt\nFoo_Bar[x]==1.2  # why\n",
-            "sub/more.txt": "--requirement=../extra.txt\nbaz===2.0 ; python_version > '3'\n",
+            "sub/more.txt": "--requirement=../extra.txt\nbaz===2.0 ; python_version > '3'\n"
+            "-r /etc/other.txt\n-r https://example.invalid/r.txt\n-r ..\n",
             "extra.txt": "qux==3\nloose>=1\n",
         }
         pins = cq.requirement_pins(files.get, "requirements.txt")

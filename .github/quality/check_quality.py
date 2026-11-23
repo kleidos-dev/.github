@@ -2570,18 +2570,17 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
         for _, joined in logical_lines(text):
             m = REQ_INCLUDE.match(joined)
             if m:
-                nested = posixpath.normpath(
-                    posixpath.join(posixpath.dirname(path), include_path(m))
-                )
-                if not nested.startswith("../"):
+                # Only a path inside the same tree: no URL, no absolute path, no "..".
+                raw = include_path(m)
+                nested = posixpath.normpath(posixpath.join(posixpath.dirname(path), raw))
+                if "://" not in raw and nested != ".." and not nested.startswith(("../", "/")):
                     todo.append(nested)
                 continue
             # A requirement's options (--hash=...) follow it; they pin nothing.
             m = REQ_PIN.match(REQ_OPTION.sub("", joined))
             if m:
-                # One package may be pinned once per environment marker; the
-                # marker is keyed without spaces and with one kind of quote,
-                # so respelling it changes no pin.
+                # One package may be pinned once per environment marker, keyed
+                # by its tokens (marker_key), so respelling it changes no pin.
                 key = re.sub(r"[-_.]+", "-", m["name"]).lower()
                 marker = marker_key(m["marker"] or "")
                 pins[f"{key} ; {marker}" if marker else key] = m["version"]
