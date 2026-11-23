@@ -25,9 +25,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import check_metadata  # noqa: E402
-import media_meta as mm  # noqa: E402
-import stamp_media_meta  # noqa: E402
+import check_metadata  # noqa: E402  found through the path set above
+import media_meta as mm  # noqa: E402  found through the path set above
+import stamp_media_meta  # noqa: E402  found through the path set above
 
 FIXTURES = ROOT / "tests" / "fixtures" / "meta"
 
