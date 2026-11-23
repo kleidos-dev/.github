@@ -667,6 +667,12 @@ class SubmodulePinsTest(unittest.TestCase):
         self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
         self.assertTrue(any("requirements.txt:3: [pins] submodule:" in f for f in self.found()))
 
+    def test_an_indented_long_include_inside_the_submodule_is_followed(self) -> None:
+        self.upstream_commit("requirements.txt", "  --requirement=more.txt\n")
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        self.assertTrue(any("charset-normalizer==3.5.3 (here 3.5.2)" in f for f in self.found()))
+
     def test_a_continued_marker_and_hashes_are_one_pin(self) -> None:
         text = (
             "foo==1 ; python_version >= '3' and \\\n"

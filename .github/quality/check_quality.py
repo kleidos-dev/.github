@@ -2568,8 +2568,7 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
                 return None
             continue
         for _, joined in logical_lines(text):
-            line = REQ_OPTION.sub("", joined)
-            m = REQ_INCLUDE.match(line)
+            m = REQ_INCLUDE.match(joined)
             if m:
                 nested = posixpath.normpath(
                     posixpath.join(posixpath.dirname(path), include_path(m))
@@ -2577,7 +2576,8 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
                 if not nested.startswith("../"):
                     todo.append(nested)
                 continue
-            m = REQ_PIN.match(line)
+            # A requirement's options (--hash=...) follow it; they pin nothing.
+            m = REQ_PIN.match(REQ_OPTION.sub("", joined))
             if m:
                 # One package may be pinned once per environment marker; the
                 # marker is keyed without spaces and with one kind of quote,
