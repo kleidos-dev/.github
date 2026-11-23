@@ -2045,6 +2045,31 @@ def pin_below(report: Report, rel: str, num: int, what: str, latest: str, reason
     )
 
 
+def workflow_job_ranges(lines: list[str]) -> list[tuple[int, int]]:
+    """The line range (start, end) of each job under a workflow's top-level jobs:."""
+    try:
+        top = next(i for i, line in enumerate(lines) if re.match(r"^jobs\s*:", line))
+    except StopIteration:
+        return []
+    starts: list[int] = []
+    indent = None
+    end = len(lines)
+    for i in range(top + 1, len(lines)):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        depth = len(line) - len(line.lstrip())
+        if depth == 0:
+            end = i
+            break
+        if indent is None:
+            indent = depth
+        if depth == indent:
+            starts.append(i)
+    return [(s, nxt) for s, nxt in zip(starts, [*starts[1:], end], strict=True)]
+
+
 def check_python_pins(repo: Repo, report: Report) -> None:
     """The Python a repository names (.python-version, ruff, mypy, requires-python, CI)."""
     latest = ".".join(str(n) for n in LATEST_PYTHON)
@@ -2079,10 +2104,15 @@ def check_python_pins(repo: Repo, report: Report) -> None:
                 if m:
                     scan(rel, lines, num, m.group("value"))
             continue
-        keys = {"python-version", *MATRIX_PY_REF.findall("\n".join(lines))}
+        # A matrix key is a Python pin only in the job whose python-version reads it.
+        keys_at = [{"python-version"} for _ in lines]
+        for start, end in workflow_job_ranges(lines):
+            refs = set(MATRIX_PY_REF.findall("\n".join(lines[start:end])))
+            for i in range(start, end):
+                keys_at[i] |= refs
         for num, line in enumerate(lines, 1):
             m = YAML_KEY.match(line)
-            if not m or m.group("key") not in keys:
+            if not m or m.group("key") not in keys_at[num - 1]:
                 continue
             if m.group("value").strip():
                 scan(rel, lines, num, m.group("value"))

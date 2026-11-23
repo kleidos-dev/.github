@@ -153,6 +153,34 @@ class PinsTest(unittest.TestCase):
         )
         self.assertFound("[pins] python:3.13 is below", "[pins] python:3.12 is below")
 
+    def test_a_matrix_key_counts_only_in_the_job_that_reads_it(self) -> None:
+        self.workflow()
+        self.edit(
+            ".github/workflows/extra.yml",
+            "      matrix:\n",
+            '      matrix:\n        version: ["3.15"]\n',
+        )
+        self.edit(
+            ".github/workflows/extra.yml",
+            "${{ matrix.python-version }}",
+            "${{ matrix.version }}",
+        )
+        self.append(
+            ".github/workflows/extra.yml",
+            "  other:\n"
+            '    name: "🧪 Other tool"\n'
+            "    runs-on: ubuntu-latest\n"
+            "    timeout-minutes: 5\n"
+            "    strategy:\n"
+            "      matrix:\n"
+            '        version: ["1.0", "2.0"]\n'
+            "    steps:\n"
+            "      - run: echo ${{ matrix.version }}\n",
+        )
+        self.assertEqual(self.found(), [])
+        self.edit(".github/workflows/extra.yml", 'version: ["3.15"]', 'version: ["3.13"]')
+        self.assertFound("[pins] python:3.13 is below")
+
     def test_the_documented_reason_inside_with_counts(self) -> None:
         self.workflow(python='"3.9"')
         self.edit(

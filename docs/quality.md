@@ -155,7 +155,7 @@ files = ["youtube/music-styles/keys/test-cue"]
 
 Owner, 2026-11-23: every pinned version is the latest stable release, and whatever cannot move has its blocker fixed; only what truly cannot move stays lower, with its reason beside the pin. `check_quality.py` holds every repository to the newest releases this kit release knows, the kit's own pins (a kit test keeps them equal):
 
-- **Python** (`LATEST_PYTHON`, 3.15): the first version line of every `.python-version`; `target-version`, `python_version` and `requires-python` (its lower bound) in `pyproject.toml`, `ruff.toml` and `.ruff.toml`; every `python-version:` in a workflow, inline or as a block list, and the matrix key a `python-version: ${{ matrix.<key> }}` reads (its inline list, block list or `include:` entries).
+- **Python** (`LATEST_PYTHON`, 3.15): the first version line of every `.python-version`; `target-version`, `python_version` and `requires-python` (its lower bound) in `pyproject.toml`, `ruff.toml` and `.ruff.toml`; every `python-version:` in a workflow, inline or as a block list, and the matrix key a `python-version: ${{ matrix.<key> }}` reads, in that job only (its inline list, block list or `include:` entries).
 - **Actions** (`LATEST_ACTIONS`): every `uses:` of an action the kit itself pins, by the version in its comment (`# v7.0.1`); an action the kit does not use is left to Dependabot.
 - **Hook revisions** (`LATEST_HOOKS`): every `rev:` of a hook repository the kit's blocks use, by its `# frozen: vX.Y.Z` comment (or the rev, when it is a tag); a bare commit SHA with no tag beside it is reported, since nothing says which release it is.
 
