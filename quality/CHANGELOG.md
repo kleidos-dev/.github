@@ -9,7 +9,7 @@ One entry per release; each says what can turn a green repository red. The rules
 
 ## 2.1.1 (2026-11-23)
 
-A checker fix that cannot add findings. A job's container shared through a YAML alias (`container: *kicad`, the anchor on another job) is the anchor's line: it was looked up a second time, found no line of its own, lost the tag comment beside the anchor and was reported as "names no tag" at line 0.
+A checker fix that cannot add findings. The image pin check reads each job's container and each service's image from the composed YAML, with the line and the comment of the value itself, instead of searching the file's text for the image. A container shared through a YAML alias (`container: *kicad`, its anchor on another job) is the anchor's node, checked once: it was looked up a second time, took no line or a script line that named the same reference, lost the tag comment beside the anchor and was reported as "names no tag".
 
 ## 2.1.0 (2026-11-23)
 

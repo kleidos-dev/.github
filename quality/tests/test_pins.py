@@ -358,6 +358,12 @@ class PinsTest(unittest.TestCase):
             "    steps:\n      - run: echo again\n",
         )
         self.assertEqual(self.found(), [])
+        # A script that names the same reference is text, not the alias's line.
+        self.append(
+            ".github/workflows/extra.yml",
+            f"      - run: docker pull kicad/kicad@{KICAD_DIGEST}\n",
+        )
+        self.assertEqual(self.found(), [])
         self.edit(
             ".github/workflows/extra.yml",
             f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}",
