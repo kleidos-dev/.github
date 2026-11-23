@@ -41,6 +41,7 @@ This repository holds the kleidos-dev organization's profile, its community defa
 | [`.github/dependabot.yml`](.github/dependabot.yml) | Weekly updates of the pinned GitHub Actions, of the CI's Python tools (`requirements.txt`) and of the kit's tool versions (`quality/requirements-tools.txt`, the pre-commit hooks). |
 | [`.coderabbit.yaml`](.coderabbit.yaml), [`.greptile/`](.greptile/) | The review bots' configuration: inline reviews and suggestions only. |
 | [`sonar-project.properties`](sonar-project.properties), [`.coveragerc`](.coveragerc) | The SonarCloud project and the coverage report its analysis reads. |
+| [`AGENTS.md`](AGENTS.md), [`CLAUDE.md`](CLAUDE.md) | The rules for coding agents working here (`CLAUDE.md` imports `AGENTS.md` for Claude Code). Each kleidos-dev repository keeps its own. |
 | [`REUSE.toml`](REUSE.toml), [`LICENSES/`](LICENSES/) | The license and copyright of every file, in the [REUSE](https://reuse.software/) format, and the license texts. |
 
 Kleidos itself is described at <https://kleidos.dev>.

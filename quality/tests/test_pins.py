@@ -18,6 +18,7 @@ from kit_fixtures import latest_releases as lr
 from kit_fixtures import sync
 
 TODAY = dt.date(2026, 11, 23)
+KICAD_TAG, KICAD_DIGEST = cq.LATEST_IMAGES["kicad/kicad"]
 OLD_SHA = "a" * 40
 WAIVER = (
     '\n[[waiver]]\ntool = "pins"\nwhat = "{what}"\n'
@@ -287,6 +288,76 @@ class PinsTest(unittest.TestCase):
     def test_the_synced_hook_block_is_at_the_latest(self) -> None:
         self.assertFalse(any("[pins] hook:" in f for f in self.found()))
 
+    def image(self, ref: str, above: str = "") -> None:
+        self.workflow()
+        self.edit(
+            ".github/workflows/extra.yml",
+            "    runs-on: ubuntu-latest\n",
+            f"    runs-on: ubuntu-latest\n    container:\n{above}      image: {ref}\n",
+        )
+
+    def test_a_known_image_at_its_latest_digest_is_clean(self) -> None:
+        self.image(f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}")
+        self.assertEqual(self.found(), [])
+        self.image(f"docker.io/kicad/kicad:{KICAD_TAG}@{KICAD_DIGEST}")
+        self.assertEqual(self.found(), [])
+
+    def test_a_known_image_by_tag_only_is_reported(self) -> None:
+        self.image(f"kicad/kicad:{KICAD_TAG}")
+        self.assertFound(
+            "extra.yml:15: [pins] image:kicad/kicad is pinned by tag only",
+            f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}",
+        )
+
+    def test_a_known_image_by_digest_with_no_tag_is_reported(self) -> None:
+        self.image(f"kicad/kicad@{KICAD_DIGEST}")
+        self.assertFound("image:kicad/kicad pins a digest and names no tag")
+
+    def test_the_latest_tag_with_another_digest_is_reported(self) -> None:
+        self.image(f"kicad/kicad@sha256:{'b' * 64} # {KICAD_TAG}")
+        self.assertFound(f"image:kicad/kicad:{KICAD_TAG} pins sha256:{'b' * 64}, not the digest")
+
+    def test_an_older_image_needs_a_reason_and_a_waiver(self) -> None:
+        self.image(f"kicad/kicad@sha256:{'c' * 64} # 9.0.9")
+        self.assertFound(
+            "image:kicad/kicad:9.0.9 is below the latest stable release"
+            f" the kit knows ({KICAD_TAG})"
+        )
+        self.image(
+            f"kicad/kicad@sha256:{'c' * 64} # 9.0.9",
+            above="      # below-latest: the boards were drawn in KiCad 9\n",
+        )
+        self.assertFound("image:kicad/kicad:9.0.9 weakens a kit rule and has no waiver")
+        self.append(cq.WAIVERS, WAIVER.format(what="image:kicad/kicad:9.0.9"))
+        self.assertEqual(self.found(), [])
+
+    def test_a_flow_mapping_container_and_a_service_are_read(self) -> None:
+        self.image(f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}")
+        self.edit(
+            ".github/workflows/extra.yml",
+            f"    container:\n      image: kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}\n",
+            f"    container: {{image: 'kicad/kicad:{KICAD_TAG}', options: --user root}}\n"
+            "    services:\n      kicad:\n        image: kicad/kicad:10.0.7\n",
+        )
+        self.assertFound(
+            "extra.yml:14: [pins] image:kicad/kicad is pinned by tag only",
+            "extra.yml:17: [pins] image:kicad/kicad is pinned by tag only",
+        )
+
+    def test_an_image_named_in_a_script_is_not_a_pin(self) -> None:
+        self.image(f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}")
+        self.append(
+            ".github/workflows/extra.yml",
+            "      - run: |\n          echo 'image: kicad/kicad:9.0.9'\n",
+        )
+        self.assertEqual(self.found(), [])
+
+    def test_an_image_the_kit_does_not_know_is_left_alone(self) -> None:
+        self.image("example/tool:1.0")
+        self.assertEqual(self.found(), [])
+        self.image("${{ matrix.image }}")
+        self.assertEqual(self.found(), [])
+
 
 class KitKnowsItsOwnPinsTest(unittest.TestCase):
     """LATEST_* are the kit's own pins, so a bump of one is a bump of both."""
@@ -332,6 +403,19 @@ class LatestReleasesTest(unittest.TestCase):
             data[f"https://api.github.com/repos/{repo}/releases/latest"] = {
                 "tag_name": newer.get(url, tag)
             }
+        for name, (known_tag, known_digest) in cq.LATEST_IMAGES.items():
+            tag, digest = newer.get(name, known_tag), newer.get(f"{name}@", known_digest)
+            second = f"https://hub.docker.com/v2/repositories/{name}/tags?page=2"
+            data[lr.DOCKER_TAGS.format(name=name)] = {
+                "next": second,
+                "results": [
+                    {"name": "latest", "digest": digest},
+                    {"name": "9.0.9", "digest": f"sha256:{'9' * 64}"},
+                    {"name": "nightly-1.2.3", "digest": f"sha256:{'8' * 64}"},
+                ],
+            }
+            # The newest tag on the second page: every page is read.
+            data[second] = {"next": None, "results": [{"name": tag, "digest": digest}]}
         for name, version in lr.tool_pins().items():
             data[f"https://pypi.org/pypi/{name}/json"] = {
                 "info": {"version": newer.get(name, version)}
@@ -357,11 +441,27 @@ class LatestReleasesTest(unittest.TestCase):
             "actions/checkout": "v8.0.0",
             "https://github.com/crate-ci/typos": "v1.60.0",
             "ruff": "9.9.9",
+            "kicad/kicad": "10.1.0",
+            "kicad/kicad@": f"sha256:{'d' * 64}",
         }
         lines = lr.outdated(self.fake(self.upstream(newer)), binaries=False)
-        self.assertEqual(len(lines), 4, lines)
+        self.assertEqual(len(lines), 5, lines)
         self.assertIn("Python: the kit knows 3.15, latest 3.16", lines)
         self.assertIn("action actions/checkout: pinned v7.0.1, latest v8.0.0", lines)
+        self.assertIn(
+            f"image kicad/kicad: pinned {KICAD_TAG}, latest 10.1.0 (sha256:{'d' * 64})", lines
+        )
+
+    def test_an_image_tag_pushed_again_is_reported(self) -> None:
+        newer = {"kicad/kicad@": f"sha256:{'e' * 64}"}
+        lines = lr.outdated(self.fake(self.upstream(newer)), binaries=False)
+        self.assertEqual(
+            lines,
+            [
+                f"image kicad/kicad: {KICAD_TAG} now names sha256:{'e' * 64},"
+                f" the kit knows {KICAD_DIGEST}"
+            ],
+        )
 
     def test_a_repository_without_releases_falls_back_to_its_version_tags(self) -> None:
         data = self.upstream({})

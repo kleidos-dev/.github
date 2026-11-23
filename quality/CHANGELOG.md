@@ -7,11 +7,18 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
-## 2.1.0 (2026-11-23)
+## 2.2.0 (2026-11-23)
 
-The pin rule now sees the pins a repository takes from a git submodule. social installs brand's stack through `-r brand/requirements.txt`, and its submodule sat one brand commit behind, so social kept charset-normalizer 3.5.2 after brand moved to 3.5.3; no rule saw it. MINOR: every repository passes it at release (social is the one repository with a submodule, and it records brand's tip since social#12); it turns a repository red later only when the submodule's branch moves a pin the repository has not taken.
+The pin rule now sees the pins a repository takes from a git submodule. social installs brand's stack through `-r brand/requirements.txt`, and its submodule sat one brand commit behind, so social kept charset-normalizer 3.5.2 after brand moved to 3.5.3; no rule saw it. MINOR: every repository passes it at release (social is the one repository with a submodule, and it takes brand's tip with this release's sync); it turns a repository red later only when the submodule's branch moves a pin the repository has not taken.
 
 - `check_quality.py`, rule `pins`: a requirements or constraints file (any `*.in`, or a `*.txt` named for them or under `requirements/`) that includes (`-r`, `-c`) a file of a submodule must pin, through it and every file it includes, what that file pins at the tip of the submodule's branch (`.gitmodules`' `branch`, the repository's current branch for `branch = .`, else the default one). With the kit (the CI's `--kit`) it fetches the upstream into a scratch repository (depth 1, no blobs but the files read) and compares; a pin the tip adds, drops or moves is a finding, waivable with a `below-latest:` reason beside the include and `what = "submodule:<path>@<short commit>"`, and an upstream that cannot be fetched is a finding too. A pin under an environment marker is compared per marker; a `branch` that is not a plain branch name is refused, and the URL follows `--`, so nothing from `.gitmodules` reaches `git fetch` as an option. Offline, a submodule waiver is not reported unused. Offline (the pre-commit hook) it fetches nothing and notes it.
+
+## 2.1.0 (2026-11-23)
+
+Container images join the pin rule. Nothing turns a green repository red: the only image the kit knows, `kicad/kicad`, is already pinned by its 10.0.8 digest in boards and brand, and no other repository runs a known image.
+
+- `LATEST_IMAGES` (`check_quality.py`): the newest stable tag of `kicad/kicad`, 10.0.8, and the digest it names, `sha256:3f4a01786dfbe803a65f345c3342b765db9add913f5e9448f8356793714ddc34`. Every workflow `image:` (a job's `container:` or a service) or `container:` shorthand of a known image is pinned by that digest with its tag in a comment (`kicad/kicad@sha256:… # 10.0.8`); a tag alone, a digest with no tag and the newest tag with another digest are findings no waiver clears, and an older tag is held like any other pin (`below-latest:` and a waiver, `what = "image:<name>:<tag>"`).
+- The weekly `📦 Pinned versions current` job (`latest_releases.py`) also reads each known image's newest stable `x.y.z` tag on Docker Hub and the digest it names, and turns red on a newer tag or on the same tag pushed again. Dependabot cannot do it: its `docker` ecosystem reads Dockerfiles and Kubernetes manifests, not a workflow's `container:`.
 
 ## 2.0.0 (2026-11-23)
 
