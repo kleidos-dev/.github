@@ -14,6 +14,7 @@ The shared rules and analysis-tool configuration of every Kleidos repository. Re
 | [`check_quality.py`](check_quality.py) | The checker every repository copies: copies, blocks, kit workflow references, conformance, waivers; `--plant-mac` proves the MAC rules. |
 | [`spdx_headers.py`](spdx_headers.py) | The licensing header rule: check, and `--write` to add or repair the lines. |
 | [`md_nowrap.py`](md_nowrap.py) | Markdown prose is never hard-wrapped. |
+| [`mypy_groups.py`](mypy_groups.py) | The mypy runner the python profile copies: one run per group of folders a repository declares, or one bare `mypy`; the mypy hook and `reusable-mypy.yml` run it. |
 | [`fetch_tool.py`](fetch_tool.py), [`tools.lock`](tools.lock) | The release binaries (OSV-Scanner, gitleaks) pinned by SHA-256. |
 | [`requirements-tools.in`](requirements-tools.in), [`requirements-tools.txt`](requirements-tools.txt) | The PyPI tools, compiled with hashes; the workflows install them from the kit, and no repository copies them. |
 | `ruff/`, `mypy/`, `typos/`, `gitleaks/`, `markdownlint/`, `shellcheck/`, `zizmor/`, `eslint/`, `tsconfig/`, `clang-tidy/` | The tool configs and managed-block sources. |

@@ -54,6 +54,15 @@ source = "quality/ruff/ruff.toml"
 target = ".github/quality/ruff.toml"
 profile = "python"
 
+# The mypy runner: one run per [[tool.kleidos-quality.mypy-groups]] group a
+# repository declares in its pyproject.toml, or one bare mypy without any.
+# The mypy hook and reusable-mypy.yml run it; check_quality.py reads the
+# groups through it.
+[[copy]]
+source = "quality/mypy_groups.py"
+target = ".github/quality/mypy_groups.py"
+profile = "python"
+
 [[copy]]
 source = "quality/zizmor/zizmor.yml"
 target = ".github/zizmor.yml"

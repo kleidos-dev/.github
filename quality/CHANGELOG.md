@@ -7,6 +7,15 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 1.1.0 (2026-11-23)
+
+mypy groups, for a repository whose scripts sit in plain folders that repeat file names (a `score.py` in each video's folder), where one mypy run stops at "Duplicate module named". Nothing turns a green repository red: without groups every repository runs the same bare `mypy` as before, and the new duplicate-module check reports only what that run already fails on (the impact preview found nothing in boards, brand, social, cla, qa, agents and posts).
+
+- A repository may declare `[[tool.kleidos-quality.mypy-groups]]` in its `pyproject.toml`: each group a `name` and the `files` (folders, files, or globs such as `music/*.py`) of one mypy run. A group sets nothing else, so every run reads the same `[tool.mypy]` and the kit's strict block; with groups, `[tool.mypy]` sets no `files`.
+- `quality/mypy_groups.py`, copied by the python profile to `.github/quality/mypy_groups.py`, runs mypy once per group, each with a cache of its own, and every group even after one fails; without groups it runs a bare `mypy`. The mypy hook of the `pre-commit-python` block now runs it (`python3 .github/quality/mypy_groups.py`).
+- `reusable-mypy.yml` runs it with `--github`: a fold per group in the log, an error annotation per failing group, and a table of every group in the job summary.
+- `check_quality.py` holds every tracked Python file to exactly one group (or, without groups, to `files` as before), refuses a group key other than `name` and `files`, a bad name or path, `files` beside groups and any other `[tool.kleidos-quality]` key (no waiver), reports a group folder that holds no Python file, and reports two files of one mypy run that mypy would name the same module.
+
 ## 1.0.0 (2026-11-23)
 
 The first release, tagged `quality-v1.0.0` at its merge commit on `main`: `sync.py --write` records only a release tag on `main`. A repository that adopts it gets:

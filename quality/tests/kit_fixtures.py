@@ -23,6 +23,7 @@ if str(QUALITY) not in sys.path:
 import check_quality  # noqa: E402  found through the path set above
 import fetch_tool  # noqa: E402  found through the path set above
 import md_nowrap  # noqa: E402  found through the path set above
+import mypy_groups  # noqa: E402  found through the path set above
 import spdx_headers  # noqa: E402  found through the path set above
 import sync  # noqa: E402  found through the path set above
 
@@ -41,6 +42,7 @@ __all__ = [
     "header",
     "init",
     "md_nowrap",
+    "mypy_groups",
     "spdx_headers",
     "sync",
     "write",
