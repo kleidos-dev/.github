@@ -299,6 +299,17 @@ class GroupConformanceTest(unittest.TestCase):
         path.write_text(text.split("\n[[tool.kleidos-quality")[0] + 'files = ["."]\n')
         self.assertFound("is module 'score' like videos/one/score.py, in the same mypy run")
 
+    def test_a_namespace_folder_under_a_package_is_no_duplicate(self) -> None:
+        # mypy names these pkg.a.score and pkg.b.score: a folder with no
+        # __init__.py is a namespace package when the folder above is a package.
+        fx.write(self.root, "pkg/a/score.py", fx.header() + "X = 1\n")
+        fx.write(self.root, "pkg/b/score.py", fx.header() + "X = 1\n")
+        self.assertEqual(self.found(), [])
+        self.assertEqual(cq.mypy_module("pkg/a/score.py", {"pkg/__init__.py"}), "pkg.a.score")
+        self.assertEqual(cq.mypy_module("pkg/a/score.py", {"pkg/__init__.py"}, False), "score")
+        self.assertEqual(cq.mypy_module("pkg/video-01/score.py", {"pkg/__init__.py"}), "score")
+        self.assertEqual(cq.mypy_module("pkg/__init__.py", {"pkg/__init__.py"}), "pkg")
+
     def test_packages_and_stubs_are_no_duplicates(self) -> None:
         fx.write(self.root, "tools/sub/__init__.py", fx.header())
         fx.write(self.root, "tools/sub/score.py", fx.header() + "X = 1\n")

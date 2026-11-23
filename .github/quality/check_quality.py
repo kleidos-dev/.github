@@ -1261,27 +1261,46 @@ def mypy_covers(rel: str, roots: Iterable[str], patterns: list[re.Pattern[str]])
     return covered and not any(p.search(rel) for p in patterns)
 
 
-def mypy_module(rel: str, tracked: set[str]) -> str:
+def mypy_package(folder: PurePosixPath, tracked: set[str], namespaces: bool) -> list[str] | None:
+    """The package path mypy gives a folder, or None when the folder is no package.
+
+    mypy's own crawl up (find_sources.py): a folder with an __init__.py(i)
+    is a package; with namespace packages on (mypy's default), a folder
+    without one is a package too when its name is an identifier and the
+    folder above it is a package. The crawl stops at the repository root.
+    """
+    if not folder.name:
+        return None
+    name = folder.name.removesuffix("-stubs")
+    if {f"{folder}/__init__.py", f"{folder}/__init__.pyi"} & tracked:
+        return [*(mypy_package(folder.parent, tracked, namespaces) or []), name]
+    if not namespaces or not name.isidentifier():
+        return None
+    above = mypy_package(folder.parent, tracked, namespaces)
+    return None if above is None else [*above, name]
+
+
+def mypy_module(rel: str, tracked: set[str], namespaces: bool = True) -> str:
     """The module name mypy gives a file it finds: the packages above it, then its stem.
 
-    A folder counts as a package while it holds an __init__.py(i), so a script
-    in a plain folder is a top-level module named after its file.
+    A script in a plain folder, with no package above it, is a top-level
+    module named after its file alone.
     """
     path = PurePosixPath(rel)
-    parts = [] if path.stem == "__init__" else [path.stem]
-    folder = path.parent
-    while folder.name and {f"{folder}/__init__.py", f"{folder}/__init__.pyi"} & tracked:
-        parts.insert(0, folder.name)
-        folder = folder.parent
+    parts = mypy_package(path.parent, tracked, namespaces) or []
+    if path.stem != "__init__":
+        parts = [*parts, path.stem]
     return ".".join(parts)
 
 
-def check_mypy_duplicates(unit: str, rels: list[str], tracked: set[str], report: Report) -> None:
+def check_mypy_duplicates(
+    unit: str, rels: list[str], tracked: set[str], namespaces: bool, report: Report
+) -> None:
     """No two files of one mypy run share a module name (mypy stops at the second)."""
     seen: dict[str, str] = {}
     clashes: list[tuple[str, str, str]] = []
     for rel in rels:
-        module = mypy_module(rel, tracked)
+        module = mypy_module(rel, tracked, namespaces)
         first = seen.setdefault(module, rel)
         if (
             module
@@ -1382,9 +1401,10 @@ def check_mypy_coverage(
     if mypy.get("explicit_package_bases") is True:
         return  # module names then follow mypy_path, which this check does not model
     tracked = set(repo.files)
+    namespaces = mypy.get("namespace_packages") is not False
     for name, _roots in runs:
         unit = name if not groups else f"group {name}"
-        check_mypy_duplicates(unit, members[name], tracked, report)
+        check_mypy_duplicates(unit, members[name], tracked, namespaces, report)
 
 
 def python_comments(repo: Repo, rel: str) -> list[tuple[int, str]]:
