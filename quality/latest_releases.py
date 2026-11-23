@@ -56,6 +56,7 @@ IMAGE_TAG = re.compile(r"^\d+\.\d+\.\d+$")
 DOCKER_TAGS = (
     "https://hub.docker.com/v2/repositories/{name}/tags?page_size=100&ordering=last_updated"
 )
+DOCKER_PAGES = 50  # at most 5,000 tags read; kicad/kicad has two pages
 PIN = re.compile(r"^(?P<name>[A-Za-z0-9._-]+)(?:\[[^\]]*\])?==(?P<version>[^\s;#]+)")
 
 GetJson = Callable[[str], Any]
@@ -94,15 +95,19 @@ def newest_release(repo: str, get: GetJson) -> str:
 
 
 def newest_image(name: str, get: GetJson) -> tuple[str, str]:
-    """A Docker Hub image's newest stable x.y.z tag, and the digest it names.
-
-    The tags come newest-updated first, so a new release is on the first page.
-    """
-    tags = {
-        str(t["name"]): str(t["digest"])
-        for t in get(DOCKER_TAGS.format(name=name))["results"]
-        if IMAGE_TAG.match(str(t["name"])) and t.get("digest")
-    }
+    """A Docker Hub image's newest stable x.y.z tag, and the digest it names (every page read)."""
+    tags: dict[str, str] = {}
+    url: str | None = DOCKER_TAGS.format(name=name)
+    pages = 0
+    while url:
+        pages += 1
+        if pages > DOCKER_PAGES:
+            raise ValueError(f"{name} has more than {DOCKER_PAGES} pages of tags on Docker Hub")
+        page = get(url)
+        for t in page["results"]:
+            if IMAGE_TAG.match(str(t["name"])) and t.get("digest"):
+                tags[str(t["name"])] = str(t["digest"])
+        url = page.get("next")
     if not tags:
         raise ValueError(f"{name} has no x.y.z tag on Docker Hub")
     tag = max(tags, key=lambda t: cq.version_tuple(t) or ())

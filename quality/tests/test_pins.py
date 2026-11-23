@@ -331,6 +331,27 @@ class PinsTest(unittest.TestCase):
         self.append(cq.WAIVERS, WAIVER.format(what="image:kicad/kicad:9.0.9"))
         self.assertEqual(self.found(), [])
 
+    def test_a_flow_mapping_container_and_a_service_are_read(self) -> None:
+        self.image(f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}")
+        self.edit(
+            ".github/workflows/extra.yml",
+            f"    container:\n      image: kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}\n",
+            f"    container: {{image: 'kicad/kicad:{KICAD_TAG}', options: --user root}}\n"
+            "    services:\n      kicad:\n        image: kicad/kicad:10.0.7\n",
+        )
+        self.assertFound(
+            "extra.yml:14: [pins] image:kicad/kicad is pinned by tag only",
+            "extra.yml:17: [pins] image:kicad/kicad is pinned by tag only",
+        )
+
+    def test_an_image_named_in_a_script_is_not_a_pin(self) -> None:
+        self.image(f"kicad/kicad@{KICAD_DIGEST} # {KICAD_TAG}")
+        self.append(
+            ".github/workflows/extra.yml",
+            "      - run: |\n          echo 'image: kicad/kicad:9.0.9'\n",
+        )
+        self.assertEqual(self.found(), [])
+
     def test_an_image_the_kit_does_not_know_is_left_alone(self) -> None:
         self.image("example/tool:1.0")
         self.assertEqual(self.found(), [])
@@ -384,14 +405,17 @@ class LatestReleasesTest(unittest.TestCase):
             }
         for name, (known_tag, known_digest) in cq.LATEST_IMAGES.items():
             tag, digest = newer.get(name, known_tag), newer.get(f"{name}@", known_digest)
+            second = f"https://hub.docker.com/v2/repositories/{name}/tags?page=2"
             data[lr.DOCKER_TAGS.format(name=name)] = {
+                "next": second,
                 "results": [
                     {"name": "latest", "digest": digest},
-                    {"name": tag, "digest": digest},
                     {"name": "9.0.9", "digest": f"sha256:{'9' * 64}"},
                     {"name": "nightly-1.2.3", "digest": f"sha256:{'8' * 64}"},
-                ]
+                ],
             }
+            # The newest tag on the second page: every page is read.
+            data[second] = {"next": None, "results": [{"name": tag, "digest": digest}]}
         for name, version in lr.tool_pins().items():
             data[f"https://pypi.org/pypi/{name}/json"] = {
                 "info": {"version": newer.get(name, version)}

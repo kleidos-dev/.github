@@ -177,8 +177,8 @@ LATEST_HOOKS = {
 # digest that tag names on its registry (Docker Hub), as this kit release
 # knows them. No kit workflow runs in a container, so these are not the kit's
 # own pins: the weekly job compares them with the registry directly. A
-# workflow's image: (or container: shorthand) of one of them is pinned by
-# digest with its tag in a comment beside it (name@sha256:<digest> # <tag>):
+# job's container (its image: or the shorthand) or a service's image: of one
+# of them is pinned by digest with its tag in a comment beside it (name@sha256:<digest> # <tag>):
 # a tag alone, a digest with no tag and the latest tag with another digest
 # are findings no waiver clears; an older tag is held like any other pin.
 LATEST_IMAGES = {
@@ -209,9 +209,7 @@ KIT_USES = re.compile(
 )
 USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*(['\"]?)(?P<ref>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
 PINNED_REF = re.compile(r"^[\w.-]+/[\w.-]+(?:/[^@\s]+)?@[0-9a-f]{40}$")
-IMAGE_LINE = re.compile(
-    r"^\s*(?:-\s+)?(?P<key>image|container):\s*(['\"]?)(?P<ref>[^\s'\"#]+)\2\s*(?P<comment>#.*)?$"
-)
+IMAGE_LINE = re.compile(r"^\s*(?:-\s+)?(?:image|container):\s*(['\"]?)(?P<ref>[^\s'\"#{]+)\1")
 IMAGE_REF = re.compile(
     r"^(?:docker://)?(?:(?:docker\.io|index\.docker\.io|registry-1\.docker\.io)/)?"
     r"(?P<name>[a-z0-9][\w./-]*?)(?::(?P<tag>[\w][\w.-]*))?(?:@(?P<digest>sha256:[0-9a-f]{64}))?$"
@@ -2226,23 +2224,61 @@ def check_hook_pins(repo: Repo, report: Report) -> None:
         pin_below(report, rel, num, f"hook:{url}@{shown}", latest, reasoned)
 
 
+def workflow_images(wf: Any) -> list[str]:
+    """The images a workflow's jobs run in: each job's container and each service's image."""
+    images: list[str] = []
+    jobs = wf.get("jobs") if isinstance(wf, dict) else None
+    for job in (jobs or {}).values() if isinstance(jobs, dict) else ():
+        if not isinstance(job, dict):
+            continue
+        containers = [job.get("container")]
+        services = job.get("services")
+        if isinstance(services, dict):
+            containers += list(services.values())
+        for container in containers:
+            image = container.get("image") if isinstance(container, dict) else container
+            if isinstance(image, str) and image.strip():
+                images.append(image.strip())
+    return images
+
+
+def image_line(lines: list[str], ref: str, taken: set[int]) -> int:
+    """The index of the line that names an image: its image: or container: key, else any line."""
+    candidates = [i for i, line in enumerate(lines) if ref in line and i not in taken]
+    for i in candidates:
+        m = IMAGE_LINE.match(lines[i])
+        if m and m.group("ref") == ref:
+            return i
+    keyed = [i for i in candidates if re.search(r"\b(image|container)\s*:", lines[i])]
+    return (keyed or candidates or [-1])[0]
+
+
 def check_image_pins(repo: Repo, report: Report) -> None:
     """Every container image the kit knows, at its latest tag and pinned by that tag's digest."""
     for rel in workflow_files(repo):
         if rel in repo.foreign:
             continue
-        lines = repo.text(rel).splitlines()
-        for num, line in enumerate(lines, 1):
-            m = IMAGE_LINE.match(line)
-            if not m:
-                continue
-            ref = IMAGE_REF.match(m.group("ref"))
+        text = repo.text(rel)
+        try:
+            wf = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            continue
+        lines = text.splitlines()
+        taken: set[int] = set()
+        for image in workflow_images(wf):
+            ref = IMAGE_REF.match(image)
             if not ref:
                 continue
             name = ref.group("name").lower().removeprefix("library/")
             if name not in LATEST_IMAGES:
                 continue
+            index = image_line(lines, image, taken)
+            taken.add(index)
+            line = lines[index] if index >= 0 else ""
+            after = line[line.index(image) + len(image) :] if image in line else ""
+            comment = after[after.index("#") :] if "#" in after else ""
             latest, digest = LATEST_IMAGES[name]
+            num = index + 1
             where = f"{rel}:{num}"
             if not ref.group("digest"):
                 report.add(
@@ -2252,7 +2288,7 @@ def check_image_pins(repo: Repo, report: Report) -> None:
                     f" its tag in a comment ({name}@{digest} # {latest})",
                 )
                 continue
-            tag = ref.group("tag") or (m.group("comment") or "").strip("# ").split(" ")[0]
+            tag = ref.group("tag") or comment.strip("# ").split(" ")[0]
             have, want = version_tuple(tag), version_tuple(latest)
             if not tag or have is None or want is None:
                 report.add(
@@ -2263,7 +2299,7 @@ def check_image_pins(repo: Repo, report: Report) -> None:
                 )
                 continue
             if is_below(have, want):
-                reasoned = reason_beside(lines, num - 1)
+                reasoned = index >= 0 and reason_beside(lines, index)
                 pin_below(report, rel, num, f"image:{name}:{tag}", latest, reasoned)
                 continue
             if have == want and ref.group("digest") != digest:
