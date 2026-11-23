@@ -15,6 +15,8 @@ Kleidos is a hardware password manager, so the bar for a change is higher than "
 - **Ideas and feature requests**: [Ideas](https://github.com/orgs/kleidos-dev/discussions/categories/ideas). For anything larger than a bug fix, start there before writing code: Kleidos runs on nine boards with tight flash and power budgets, and a change that is easy on one can be impossible on another.
 - **Security problems**: never in public. Follow [SECURITY.md](SECURITY.md).
 
+Questions, ideas and pull requests all reach the maintainers; there is no need to mention anyone.
+
 Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## How a new board gets added
@@ -45,6 +47,8 @@ You can help by donating a device, by donating to the project, or by testing bui
 - Say what you tested and on what. If you have no hardware, say so; that is fine and it tells the reviewer what to check.
 - Update the documentation in the same change.
 - Do not bypass checks (`--no-verify`, force-pushes to shared branches).
+
+You do not need to mention or assign anyone: every pull request asks the maintainers (`@kleidos-dev/maintainers`) for a review on its own, through `CODEOWNERS`.
 
 ## License of contributions
 

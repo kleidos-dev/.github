@@ -10,3 +10,5 @@ SPDX-License-Identifier: GPL-3.0-or-later
 - **A vulnerability**: never in public. Follow [SECURITY.md](SECURITY.md).
 
 There is no support by email. Kleidos has one maintainer, and answers come when there is time for them.
+
+There is no need to mention anyone: the maintainers read every discussion.
