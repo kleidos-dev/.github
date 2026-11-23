@@ -9,6 +9,8 @@ One place holds the rules every Kleidos repository meets, the configuration of e
 
 The kit uses free tools only (owner, 2026-11-22). SonarCloud stays on every public repository; the kit runs its analysis job but never touches a project's settings.
 
+The agent instruction files every repository keeps, `AGENTS.md` and `CLAUDE.md`, have a standard of their own, [`agent-docs.md`](agent-docs.md); the kit carries its two mechanical parts, the organization rules block and the guard that checks the files.
+
 ## Contents
 
 - [How a repository consumes the kit](#how-a-repository-consumes-the-kit)
@@ -30,7 +32,7 @@ Four mechanisms, chosen per tool by what the tool can do:
 | Mechanism | What the repository holds | Used for |
 | --- | --- | --- |
 | Copy | The kit's file, byte for byte, recorded by SHA-256 | Tools that can point at another file (`ruff` `extend`, ESLint import, `tsconfig` `extends`, markdownlint `extends`, gitleaks `--config`, clang-tidy's parent config) and the kit's own scripts |
-| Managed block | A region of kit text inside a file the repository owns, between `# >>> kleidos-quality <id>` and `# <<< kleidos-quality <id>` | Tools that read one file and have no include: mypy (`[tool.mypy]` in `pyproject.toml`), typos (`[default]` in `.typos.toml`), pre-commit (the hook list) |
+| Managed block | A region of kit text inside a file the repository owns, between `# >>> kleidos-quality <id>` and `# <<< kleidos-quality <id>` (in Markdown, the same words in HTML comments: `<!-- >>> kleidos-quality <id> ... -->`, `<!-- <<< kleidos-quality <id> -->`) | Tools that read one file and have no include: mypy (`[tool.mypy]` in `pyproject.toml`), typos (`[default]` in `.typos.toml`), pre-commit (the hook list), coding agents (the organization rules in `AGENTS.md`, [`agent-docs.md`](agent-docs.md)) |
 | Reusable workflow | A thin caller job: `uses: kleidos-dev/.github/.github/workflows/reusable-<x>.yml@<kit commit>` | Every CI check |
 | Conformance rule | Nothing: `check_quality.py` reads the repository's own configs | Weakenings no copy or block can prevent (a local `select`, an ignore, a `-check`, a `continue-on-error`) |
 
@@ -42,7 +44,7 @@ Profiles say what applies: `base` (every repository), `python`, `actions`, `shel
 
 | Profile | Copies | Blocks | Seeded once |
 | --- | --- | --- | --- |
-| base | `check_quality.py`, `md_nowrap.py`, `spdx_headers.py`, `markdownlint.jsonc` (all in `.github/quality/`), `.gitleaks-mac.toml` | `pre-commit-base`, `typos` | `.gitleaks.toml`, `.github/quality/waivers.toml`, `.markdownlint-cli2.jsonc`, `quality-drift.yml`, the two commit-check callers |
+| base | `check_quality.py`, `md_nowrap.py`, `agent_docs.py`, `spdx_headers.py`, `markdownlint.jsonc` (all in `.github/quality/`), `.gitleaks-mac.toml` | `pre-commit-base`, `typos`, `organization-rules` (in `AGENTS.md`) | `.gitleaks.toml`, `.github/quality/waivers.toml`, `.markdownlint-cli2.jsonc`, `quality-drift.yml`, the two commit-check callers |
 | python | `.github/quality/ruff.toml`, `.github/quality/mypy_groups.py` | `pre-commit-python`, `mypy` | |
 | actions | `.github/zizmor.yml` | `pre-commit-actions` | |
 | shell | `.shellcheckrc` | `pre-commit-shell` | |
@@ -145,6 +147,7 @@ files = ["youtube/music-styles/keys/test-cue"]
 | Dependabot covers every manifest, each update with a cooldown | `check_quality.py` | A directory without its ecosystem never gets a security update; a week's cooldown gives a compromised or yanked release time to be noticed. |
 | Licensing: `reuse lint`, and the header lines | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml), hooks `reuse` and `kleidos-spdx-headers`, `check_quality.py` (a `.license` sidecar is a weakening, `tool = "reuse"`) | See [Licensing headers](#licensing-headers). |
 | Markdown prose is never hard-wrapped | hook `kleidos-md-nowrap` ([`quality/md_nowrap.py`](../quality/md_nowrap.py)) | Owner, 2026-11-16: one line per paragraph and per list item. |
+| Agent instruction files keep the standard: `AGENTS.md` and `CLAUDE.md` at the root, `CLAUDE.md` importing `AGENTS.md` first, `CLAUDE.local.md` ignored, the size limits, every named path and link real, every skill and subagent named, the organization rules block unedited | hook `kleidos-agent-docs` ([`quality/agent_docs.py`](../quality/agent_docs.py)), run from the kit by the lint job; the `organization-rules` block | Every agent reads `AGENTS.md`; a path that moved or a rule restated by hand misleads the next one. See [`agent-docs.md`](agent-docs.md). |
 | Markdown tables render: MD055, MD056, MD058 only | hook `markdownlint-cli2`, [`quality/markdownlint/base.jsonc`](../quality/markdownlint/base.jsonc) | Broken tables are the findings that matter; the rest of markdownlint's defaults measured as noise. |
 | The kit is intact | hook `kleidos-quality`, the lint job | Every copy and block is the bytes `SOURCE.json` records and, in CI, the bytes the kit holds at that commit (the CI fetches the checker from the kit, so an edited local checker cannot pass itself). `.github/quality/` holds nothing else, and `SOURCE.json` records only the kit's copy targets, each from its own source, offline too. |
 | Python repositories name their Python | `check_quality.py` (`.python-version`) | The kit's mypy and test workflows read it; without it the first CI run fails in setup-python. |
@@ -225,7 +228,7 @@ Every check a repository runs is a job of the kit, one workflow per concern, in 
 
 | Workflow | Job | Inputs | Caller permissions |
 | --- | --- | --- | --- |
-| [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) | The kit check (from the kit at the recorded commit), every pre-commit hook on every file (mypy, reuse and the header lines excepted: they have their own workflows), zizmor's online audits | `skip` (the repository's own hook ids that need a secret; a kit hook id fails the kit check), `python-version` | `contents: read` |
+| [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) | The kit check and the agent-docs guard (both from the kit at the recorded commit), every pre-commit hook on every file (mypy, reuse and the header lines excepted: they have their own workflows), zizmor's online audits | `skip` (the repository's own hook ids that need a secret; a kit hook id fails the kit check), `python-version` | `contents: read` |
 | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml) | `reuse lint`, then the header lines, on the whole history | | `contents: read` |
 | [`reusable-mypy.yml`](../.github/workflows/reusable-mypy.yml) | mypy with the repository's dependencies installed, through the kit's `mypy_groups.py`: one run per [mypy group](#mypy-groups), each folded in the log, an error annotation per failing group and a table of every group in the job summary (a bare `mypy` without groups) | `install`, `python-version-file`, `python-version` | `contents: read` |
 | [`reusable-python-tests.yml`](../.github/workflows/reusable-python-tests.yml) | The repository's tests, and `coverage.xml` as the `coverage` artifact for SonarCloud | `run` (required), `install`, `python-version`, `python-version-file`, `coverage-report`, `coverage-artifact`, `timeout-minutes` | `contents: read` |

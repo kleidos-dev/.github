@@ -7,6 +7,14 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 2.3.0 (2026-11-23)
+
+The agent instruction files join the kit ([`docs/agent-docs.md`](../docs/agent-docs.md), owner's decision of 2026-11-23 that the shared rules are a kit-managed block). Nothing turns a green repository red: the impact preview synced this release into boards, brand, social, cla, qa, videos, agents and posts and found no new problem from the kit check or the guard (meter has not adopted the kit yet, so its adoption sync meets the guard with everything else).
+
+- A Markdown managed block. A block of `kind = "markdown"` sits between two HTML comments, `<!-- >>> kleidos-quality <id> (...) -->` and `<!-- <<< kleidos-quality <id> -->`, which Claude Code strips before an agent reads the file, and is checked like the TOML and YAML blocks (its bytes, the kit's at the recorded commit).
+- The `organization-rules` block (base profile): the "Organization rules" section of every repository's root `AGENTS.md`, from [`agents/block.md`](agents/block.md). The sync replaces the section pasted by hand under that heading (numbered or not; a heading inside a fenced block or an HTML comment is not one) and keeps everything else; a repository without one gets the block before `## Other repositories`, else at the end; a repository without an `AGENTS.md` is reported until it writes one.
+- The agent-docs guard, [`agent_docs.py`](agent_docs.py), copied to `.github/quality/agent_docs.py` and run as the `kleidos-agent-docs` hook of the `pre-commit-base` block and, from the kit at the recorded commit, by `reusable-lint.yml`: the root `AGENTS.md` and `CLAUDE.md` exist, as readable files and not links, and every nested `AGENTS.md` has its `CLAUDE.md`; `CLAUDE.md` opens with `@AGENTS.md`; no other `@name` outside code; `CLAUDE.local.md` ignored beside every `AGENTS.md` and tracked nowhere; no rules file for one other tool at any level; 32 KiB for every chain of `AGENTS.md` files from the root down (a warning above 20 KiB for one file), 4 KiB under the import in `CLAUDE.md`, code included; every path a code span or a command names, and every relative link, exists; every skill and subagent is named; the organization block is there once, unedited, with no hand-written copy beside it.
+
 ## 2.2.0 (2026-11-23)
 
 The pin rule now sees the pins a repository takes from a git submodule. social installs brand's stack through `-r brand/requirements.txt`, and its submodule sat one brand commit behind, so social kept charset-normalizer 3.5.2 after brand moved to 3.5.3; no rule saw it. MINOR: every repository passes it at release (social is the one repository with a submodule, and it records brand's tip since social#13); it turns a repository red later only when the submodule's branch moves a pin the repository has not taken.

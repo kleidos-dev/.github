@@ -78,9 +78,10 @@ SPDX-License-Identifier = "MIT"
 
 # The quality kit's managed blocks: sync.py writes their text, byte for
 # byte, inside a table of another repository's pyproject.toml or
-# .typos.toml, so a header here would land in that file's middle.
+# .typos.toml, or a section of its AGENTS.md, so a header here would land
+# in that file's middle.
 [[annotations]]
-path = ["quality/*/block.toml"]
+path = ["quality/*/block.toml", "quality/*/block.md"]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 José M. Requena Plens"
 SPDX-License-Identifier = "MIT"
