@@ -165,7 +165,7 @@ reviews:
         License and holders come from REUSE.toml, never from the record.
     - path: "scripts/**"
       instructions: >-
-        Python standard library only (no third-party import), Python 3.11+
+        Python standard library only (no third-party import), Python 3.15+
         (tomllib). Every metadata value comes from fixed constants and the
         file's record: flag a date, machine name, tool version, environment
         read or randomness reaching the output. media_meta.py is the shared

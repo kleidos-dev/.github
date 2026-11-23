@@ -25,7 +25,7 @@ on:
       python-version:
         description: The Python that runs the tools
         type: string
-        default: "3.14"
+        default: "3.15"
       skip:
         description: >-
           Comma-separated ids of the repository's own hooks that cannot run here;

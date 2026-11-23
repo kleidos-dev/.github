@@ -22,6 +22,7 @@ if str(QUALITY) not in sys.path:
 
 import check_quality  # noqa: E402  found through the path set above
 import fetch_tool  # noqa: E402  found through the path set above
+import latest_releases  # noqa: E402  found through the path set above
 import md_nowrap  # noqa: E402  found through the path set above
 import mypy_groups  # noqa: E402  found through the path set above
 import spdx_headers  # noqa: E402  found through the path set above
@@ -41,6 +42,7 @@ __all__ = [
     "git",
     "header",
     "init",
+    "latest_releases",
     "md_nowrap",
     "mypy_groups",
     "spdx_headers",
@@ -107,8 +109,8 @@ def consumer(root: Path) -> Path:
         root,
         "pyproject.toml",
         header()
-        + '\n[tool.ruff]\nextend = ".github/quality/ruff.toml"\ntarget-version = "py311"\n'
-        + '\n[tool.mypy]\npython_version = "3.11"\nfiles = ["pkg"]\n',
+        + '\n[tool.ruff]\nextend = ".github/quality/ruff.toml"\ntarget-version = "py315"\n'
+        + '\n[tool.mypy]\npython_version = "3.15"\nfiles = ["pkg"]\n',
     )
     write(
         root,
@@ -129,7 +131,7 @@ def consumer(root: Path) -> Path:
         + "    schedule:\n      interval: weekly\n"
         + "    cooldown:\n      default-days: 7\n",
     )
-    write(root, ".python-version", "3.11\n")
+    write(root, ".python-version", "3.15\n")
     write(
         root, ".github/workflows/check.yml", (QUALITY / "templates/workflows/check.yml").read_text()
     )

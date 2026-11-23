@@ -7,7 +7,7 @@ Usage:
     fetch_tool.py NAME DEST_DIR     download NAME, check its SHA-256, install DEST_DIR/NAME
     fetch_tool.py --outdated        print each pinned tool whose upstream release is newer
 
-Standard library only (Python 3.11 or newer).
+Standard library only (Python 3.15 or newer).
 """
 
 from __future__ import annotations

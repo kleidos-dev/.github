@@ -34,7 +34,7 @@ commit "self".
         the drift notice: key=value lines naming the newest release and
         whether RECORDED_COMMIT's kit is behind it
 
-Python 3.11 or newer; PyYAML.
+Python 3.15 or newer; PyYAML.
 """
 
 from __future__ import annotations
