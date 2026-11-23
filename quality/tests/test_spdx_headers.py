@@ -144,6 +144,11 @@ class FixTextTest(unittest.TestCase):
         split = f"<!--\n{C} 2026 {H}\n-->\n\n# Title\n\n<!--\n{L} MIT\n-->\n"
         self.assertTrue(any("top" in p for p in sh.check_text("a.md", split, "2026")))
 
+    def test_only_shell_like_shebangs_take_hash_lines(self) -> None:
+        for shebang in ("#!/bin/sh", "#!/usr/bin/env bash", "#!/usr/bin/env python3", "#!/bin/zsh"):
+            self.assertIsNotNone(sh.style_for("tools/run", shebang + "\n"), shebang)
+        self.assertIsNone(sh.style_for("tools/run", "#!/usr/bin/env node\n"))
+
     def test_more_formats_take_comments(self) -> None:
         for rel in (
             ".git-blame-ignore-revs",

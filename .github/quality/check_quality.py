@@ -925,12 +925,23 @@ def trigger_gap(event: str, config: Any) -> str | None:
         if key in config:
             return f"its {event} trigger has a {key} filter"
     branches = config.get("branches")
-    if branches is not None and not any(fnmatch.fnmatch("main", str(b)) for b in branches):
+    if branches is not None and not branch_filter_matches_main(branches):
         return f"its {event} trigger does not include main"
     ignored = config.get("branches-ignore") or []
     if any(fnmatch.fnmatch("main", str(b)) for b in ignored):
         return f"its {event} trigger ignores main"
     return None
+
+
+def branch_filter_matches_main(patterns: Any) -> bool:
+    """Whether a `branches:` list selects main (the last matching pattern wins, ! negates)."""
+    selected = False
+    for raw in [patterns] if isinstance(patterns, str) else list(patterns):
+        pattern = str(raw)
+        negated = pattern.startswith("!")
+        if fnmatch.fnmatch("main", pattern.removeprefix("!")):
+            selected = not negated
+    return selected
 
 
 def caller_gap(caller: Caller, events: tuple[str, ...]) -> str | None:
@@ -951,7 +962,9 @@ def caller_gap(caller: Caller, events: tuple[str, ...]) -> str | None:
         job = caller.jobs.get(job_id)
         if not isinstance(job, dict):
             continue
-        if "if" in job and normalized_if(job["if"]) not in ALLOWED_JOB_IFS:
+        # A scheduled caller (the drift notice) may not skip the schedule.
+        allowed = () if "schedule" in events else ALLOWED_JOB_IFS
+        if "if" in job and normalized_if(job["if"]) not in allowed:
             who = "it" if job_id == caller.job_id else f"the job it needs, {job_id},"
             shown = str(job["if"]).lower() if isinstance(job["if"], bool) else job["if"]
             return f"{who} carries the condition `if: {shown}`"

@@ -251,6 +251,10 @@ class ConformanceTest(unittest.TestCase):
                 "leaves out synchronize, reopened",
             ),
             ("on:\n  pull_request:\n  push:\n    tags: ['*']\n", "runs on tags only"),
+            (
+                "on:\n  pull_request:\n  push:\n    branches: ['**', '!main']\n",
+                "push trigger does not include main",
+            ),
         ):
             head, _, rest = original.partition("\non:\n")
             body = rest[rest.index("\npermissions:") :]
@@ -258,6 +262,13 @@ class ConformanceTest(unittest.TestCase):
             self.assertFound(why)
         (self.root / wf).write_text(original, encoding="utf-8")
         self.assertEqual(self.found(), [])
+
+    def test_the_drift_caller_may_not_skip_the_schedule(self) -> None:
+        wf = self.root / ".github/workflows/quality-drift.yml"
+        text = wf.read_text(encoding="utf-8")
+        at = text.index("    uses: kleidos-dev")
+        wf.write_text(text[:at] + "    if: github.event_name != 'schedule'\n" + text[at:])
+        self.assertFound("calls reusable-quality-drift.yml but it carries the condition")
 
     def test_the_lint_caller_skips_only_hooks_of_its_own(self) -> None:
         wf = self.root / ".github/workflows/check.yml"

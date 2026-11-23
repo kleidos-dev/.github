@@ -200,6 +200,14 @@ class Style:
         return ["<!--\n", f"{c}\n", f"{lic}\n", "-->\n"]
 
 
+# Interpreters whose scripts take # comments after the shebang (a Node.js
+# script does not: its file stays with REUSE.toml unless its name says .js).
+HASH_SHEBANG = re.compile(
+    r"#!\s*\S*?(?:/env\s+(?:-\S+\s+)*)?(?:\S*/)?(?:bash|zsh|ksh|dash|sh)\b"
+    r"|#!\s*\S*?(?:/env\s+(?:-\S+\s+)*)?(?:\S*/)?(?:python[\d.]*|perl|ruby|tclsh)\b"
+)
+
+
 def style_for(rel: str, text: str | None = None) -> Style | None:
     """The comment syntax of a path, or None when its format has none.
 
@@ -207,7 +215,7 @@ def style_for(rel: str, text: str | None = None) -> Style | None:
     takes # comments.
     """
     style = _style_by_name(rel)
-    if style is None and text is not None and text.startswith("#!"):
+    if style is None and text is not None and HASH_SHEBANG.match(text):
         return Style("line", LINE["#"])
     return style
 
@@ -531,6 +539,8 @@ def _lift_astro_header(text: str, license_expr: str | None) -> tuple[str, str | 
     found = head.copyright_lines + head.license_lines
     if not any(header_misplaced(lines, style, i) for i, _v in found):
         return text, license_expr
+    if any(HOLDER not in v for _i, v in head.copyright_lines):
+        return text, license_expr  # another holder's notice: a person moves it
     if head.license_lines:
         license_expr = head.license_lines[0][1]
     drop = {i for i, _v in found}

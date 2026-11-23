@@ -429,11 +429,11 @@ def write(
         rel = str(entry.get("path", ""))
         if rel in kept or not (cq.is_kit_target(rel) or rel in RETIRED_COPIES):
             continue
-        target = (repo / rel).resolve()
-        if ".." in PurePosixPath(rel).parts or not target.is_relative_to(repo):
+        target = repo / rel
+        if ".." in PurePosixPath(rel).parts or not target.parent.resolve().is_relative_to(repo):
             continue
-        if target.is_file():
-            target.unlink()
+        if target.is_symlink() or target.is_file():
+            target.unlink()  # a symlink itself, never the file it points to
         log.append(f"removed {rel}: the kit no longer copies it")
     year = str(dt.datetime.now(tz=dt.UTC).year)
     replaced: list[str] = []
