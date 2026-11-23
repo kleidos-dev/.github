@@ -19,8 +19,11 @@ commit. This script checks, from the repository's root:
                markdownlint, tsconfig, ESLint, clang-tidy, inline
                suppressions) unless .github/quality/waivers.toml records why
   pins         every Python target, kit-known action and kit-known hook rev
-               is at the latest stable release this kit knows, unless a
-               "below-latest:" comment beside it and a waiver say why
+               is at the latest stable release this kit knows, and every
+               requirements file a submodule supplies (-r, -c) pins what
+               the submodule's branch tip pins (with the kit only: it
+               fetches), unless a "below-latest:" comment beside it and a
+               waiver say why
   waivers      every waiver has a reason, matches a weakening, and is live
 
 Usage:
@@ -45,6 +48,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -54,7 +58,7 @@ import tokenize
 import tomllib
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -186,6 +190,17 @@ LOWER_BOUND = re.compile(r"(?:>=|~=|===?|>)\s*(\d+\.\d+(?:\.\d+)?)")
 BLOCK_SCALAR = re.compile(r"^[|>][+-]?\d*$")
 HOOK_REPO = re.compile(r"^\s*-\s+repo:\s*(['\"]?)(?P<url>[^\s'\"#]+)\1")
 HOOK_REV = re.compile(r"^\s*rev:\s*(['\"]?)(?P<rev>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
+# A requirements file that includes (-r) or constrains by (-c) a file of a
+# git submodule inherits that file's pins at the commit the submodule is
+# recorded at, so that commit is a pin as well: the included files must pin
+# what they pin at the tip of the submodule's branch.
+REQ_INCLUDE = re.compile(
+    r"^\s*(?:-r|-c|--requirement|--constraint)(?:\s*=\s*|\s*)(?P<path>[^\s#]+)"
+)
+REQ_PIN = re.compile(
+    r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*===?\s*(?P<version>[^\s;#\\,]+)"
+)
+GIT_TIMEOUT = 180
 
 MARK_START = re.compile(r"^(?P<indent>[ \t]*)# >>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$")
 MARK_END = re.compile(r"^[ \t]*# <<< kleidos-quality (?P<id>[a-z0-9-]+)[ \t]*$")
@@ -2204,10 +2219,264 @@ def check_hook_pins(repo: Repo, report: Report) -> None:
         pin_below(report, rel, num, f"hook:{url}@{shown}", latest, reasoned)
 
 
-def check_pins(repo: Repo, report: Report) -> None:
+@dataclass(frozen=True)
+class Submodule:
+    """One submodule as .gitmodules names it and the index records it."""
+
+    path: str
+    url: str
+    branch: str  # "" for the remote's default branch
+    commit: str
+
+
+class SubmoduleFetchError(Exception):
+    """A submodule's upstream could not be reached or lacks a commit."""
+
+
+def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        timeout=GIT_TIMEOUT,
+    )
+
+
+def resolve_submodule_url(repo: Repo, url: str) -> str:
+    """A .gitmodules URL; a relative one (../brand.git) against the origin's URL."""
+    if not url.startswith(("./", "../")):
+        return url
+    origin = _git("-C", str(repo.root), "remote", "get-url", "origin").stdout.strip()
+    if not origin:
+        return url
+    base = origin.rstrip("/").split("/")
+    for part in url.split("/"):
+        if part == "..":
+            base.pop()
+        elif part not in ("", "."):
+            base.append(part)
+    return "/".join(base)
+
+
+def submodules(repo: Repo) -> list[Submodule]:
+    """The submodules .gitmodules names that the index records a commit for."""
+    if not (repo.root / ".gitmodules").is_file():
+        return []
+    listed = _git(
+        "-C",
+        str(repo.root),
+        "config",
+        "-f",
+        ".gitmodules",
+        "--null",
+        "--get-regexp",
+        r"^submodule\..*\.(path|url|branch)$",
+    )
+    entries: dict[str, dict[str, str]] = {}
+    for item in listed.stdout.split("\0"):
+        key, _, value = item.partition("\n")
+        if not key.startswith("submodule."):
+            continue
+        name, _, attr = key[len("submodule.") :].rpartition(".")
+        entries.setdefault(name, {})[attr] = value
+    staged = _git("-C", str(repo.root), "ls-files", "-s", "-z").stdout
+    gitlinks = {}
+    for item in staged.split("\0"):
+        meta, _, path = item.partition("\t")
+        fields = meta.split()
+        if len(fields) == 3 and fields[0] == "160000":
+            gitlinks[path] = fields[1]
+    out = []
+    for attrs in entries.values():
+        path = attrs.get("path", "").strip("/")
+        if path in gitlinks and attrs.get("url"):
+            url = resolve_submodule_url(repo, attrs["url"])
+            branch = attrs.get("branch", "")
+            out.append(Submodule(path, url, "" if branch == "." else branch, gitlinks[path]))
+    return out
+
+
+class SubmoduleUpstream:
+    """A scratch bare repository that fetches commits of one submodule's upstream."""
+
+    def __init__(self, url: str, scratch: Path) -> None:
+        self.url, self.git_dir = url, scratch
+        made = _git("init", "-q", "--bare", str(scratch))
+        if made.returncode != 0:
+            raise SubmoduleFetchError(made.stderr.strip() or "git init failed")
+
+    def _fetch(self, ref: str) -> None:
+        got = _git(
+            f"--git-dir={self.git_dir}",
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            self.url,
+            ref,
+        )
+        if got.returncode != 0:
+            said = got.stderr.strip().splitlines()
+            raise SubmoduleFetchError(said[-1] if said else f"git fetch {ref} failed")
+
+    def tip(self, branch: str) -> str:
+        """The commit at the tip of a branch (the remote's default one when empty)."""
+        self._fetch(branch or "HEAD")
+        return _git(f"--git-dir={self.git_dir}", "rev-parse", "FETCH_HEAD").stdout.strip()
+
+    def ensure(self, commit: str) -> None:
+        present = _git(f"--git-dir={self.git_dir}", "cat-file", "-e", f"{commit}^{{commit}}")
+        if present.returncode != 0:
+            self._fetch(commit)
+
+    def read(self, commit: str, path: str) -> str | None:
+        shown = _git(f"--git-dir={self.git_dir}", "show", f"{commit}:{path}")
+        return shown.stdout if shown.returncode == 0 else None
+
+    def reader(self, commit: str) -> Callable[[str], str | None]:
+        """read() bound to one commit."""
+        return lambda path: self.read(commit, path)
+
+
+def is_requirements_file(rel: str) -> bool:
+    """A pip requirements or constraints file, by its name or its folder."""
+    pure = PurePosixPath(rel)
+    if pure.suffix not in (".txt", ".in"):
+        return False
+    return any(word in pure.name for word in ("requirements", "constraints")) or (
+        "requirements" in pure.parts[:-1]
+    )
+
+
+def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str, str] | None:
+    """name -> version of the == pins of a requirements file and the files it includes.
+
+    `read(path)` gives a file's text, None when it is absent; includes are
+    followed while they stay inside the same tree. None when `start` is absent.
+    """
+    pins: dict[str, str] = {}
+    seen: set[str] = set()
+    todo = [start]
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        text = read(path)
+        if text is None:
+            if path == start:
+                return None
+            continue
+        for line in text.splitlines():
+            m = REQ_INCLUDE.match(line)
+            if m:
+                nested = posixpath.normpath(posixpath.join(posixpath.dirname(path), m["path"]))
+                if not nested.startswith("../"):
+                    todo.append(nested)
+                continue
+            m = REQ_PIN.match(line)
+            if m:
+                pins[re.sub(r"[-_.]+", "-", m["name"]).lower()] = m["version"]
+    return pins
+
+
+def pin_changes(have: dict[str, str], want: dict[str, str]) -> list[str]:
+    """What the tip pins differently: name==tip (here: recorded), in name order."""
+    out = []
+    for name in sorted(have.keys() | want.keys()):
+        if have.get(name) == want.get(name):
+            continue
+        if name not in want:
+            out.append(f"no {name} (here {name}=={have[name]})")
+        elif name not in have:
+            out.append(f"{name}=={want[name]} (here none)")
+        else:
+            out.append(f"{name}=={want[name]} (here {have[name]})")
+    return out
+
+
+def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
+    """Every requirements file a submodule supplies pins what its branch tip pins."""
+    subs = submodules(repo)
+    if not subs:
+        return
+    # (submodule, requirements file, its lines, line number, included path inside it)
+    found: list[tuple[Submodule, str, list[str], int, str]] = []
+    for rel in repo.files:
+        if rel in repo.foreign or not is_requirements_file(rel):
+            continue
+        try:
+            lines = repo.text(rel).splitlines()
+        except OSError, UnicodeDecodeError:
+            continue
+        for num, line in enumerate(lines, 1):
+            m = REQ_INCLUDE.match(line)
+            if not m:
+                continue
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), m["path"]))
+            found.extend(
+                (sub, rel, lines, num, target[len(sub.path) + 1 :])
+                for sub in subs
+                if target.startswith(sub.path + "/")
+            )
+    if not found:
+        return
+    if not online:
+        report.notes.append("offline: the pins a submodule supplies are not compared")
+        return
+    with tempfile.TemporaryDirectory(prefix="kleidos-quality-") as tmp:
+        for index, sub in enumerate(subs):
+            uses = [f for f in found if f[0] == sub]
+            if not uses:
+                continue
+            branch = sub.branch or "default branch"
+            try:
+                upstream = SubmoduleUpstream(sub.url, Path(tmp) / str(index))
+                tip = upstream.tip(sub.branch)
+                if tip == sub.commit:
+                    continue
+                upstream.ensure(sub.commit)
+            except (SubmoduleFetchError, subprocess.TimeoutExpired) as exc:
+                for _, rel, _, num, _ in uses:
+                    report.add(
+                        "pins",
+                        f"{rel}:{num}",
+                        f"submodule {sub.path} ({sub.url}) could not be fetched to compare"
+                        f" the pins it supplies with its {branch}: {exc}",
+                    )
+                continue
+            for _, rel, lines, num, inner in uses:
+                have = requirement_pins(upstream.reader(sub.commit), inner)
+                want = requirement_pins(upstream.reader(tip), inner)
+                if have is None:
+                    continue  # pip itself fails on a missing include
+                changes = pin_changes(have, want) if want is not None else [f"no {inner} any more"]
+                if not changes:
+                    continue
+                what = f"submodule:{sub.path}@{sub.commit[:7]}"
+                if reason_beside(lines, num - 1):
+                    report.weaken("pins", what, rel)
+                    continue
+                report.add(
+                    "pins",
+                    f"{rel}:{num}",
+                    f"{what} supplies {sub.path}/{inner}, but the tip of its {branch}"
+                    f" ({tip[:7]}) pins {', '.join(changes)}: move the submodule to"
+                    f" {tip[:7]}, or write why beside the include (# below-latest: <why>)"
+                    ' and waive it (tool = "pins")',
+                )
+
+
+def check_pins(repo: Repo, report: Report, online: bool = False) -> None:
     check_python_pins(repo, report)
     check_action_pins(repo, report)
     check_hook_pins(repo, report)
+    check_submodule_pins(repo, report, online)
 
 
 # --------------------------------------------------------------------------
@@ -2390,7 +2659,7 @@ def run(
     check_markdownlint(repo, kit, report)
     check_reuse(repo, report)
     check_typos(repo, report)
-    check_pins(repo, report)
+    check_pins(repo, report, online=kit is not None)
     if not repo.exists(WAIVERS):
         report.add("waivers", WAIVERS, "missing (sync.py --write seeds an empty one)")
     if "python" in profiles:
