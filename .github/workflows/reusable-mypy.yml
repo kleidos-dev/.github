@@ -1,9 +1,13 @@
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
-# The quality kit's type gate: a bare `mypy`, configured by the repository's
+# The quality kit's type gate: mypy, configured by the repository's
 # [tool.mypy] (the kit's strict block plus its own files and overrides),
 # with the repository's dependencies installed so every import is typed.
+# A repository that declares [[tool.kleidos-quality.mypy-groups]] gets one
+# mypy run per group, each folded in the log, a failing group annotated and
+# a table of every group in the job summary; the job fails if any group
+# does, after all of them ran. Without groups it is one bare `mypy`.
 # Owner, 2026-11-22: every error is fixed, no baseline. Called as:
 #
 #   types:
@@ -78,5 +82,9 @@ jobs:
         env:
           INSTALL: ${{ inputs.install }}
         run: bash -euo pipefail -c "${INSTALL}"
-      - name: mypy
-        run: mypy
+      # The runner of the kit at the recorded commit (the repository's copy is
+      # the same bytes, which the lint job checks).
+      - name: mypy, once per group
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python "${KIT}/quality/mypy_groups.py" --github

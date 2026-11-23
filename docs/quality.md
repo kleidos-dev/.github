@@ -43,7 +43,7 @@ Profiles say what applies: `base` (every repository), `python`, `actions`, `shel
 | Profile | Copies | Blocks | Seeded once |
 | --- | --- | --- | --- |
 | base | `check_quality.py`, `md_nowrap.py`, `spdx_headers.py`, `markdownlint.jsonc` (all in `.github/quality/`), `.gitleaks-mac.toml` | `pre-commit-base`, `typos` | `.gitleaks.toml`, `.github/quality/waivers.toml`, `.markdownlint-cli2.jsonc`, `quality-drift.yml`, the two commit-check callers |
-| python | `.github/quality/ruff.toml` | `pre-commit-python`, `mypy` | |
+| python | `.github/quality/ruff.toml`, `.github/quality/mypy_groups.py` | `pre-commit-python`, `mypy` | |
 | actions | `.github/zizmor.yml` | `pre-commit-actions` | |
 | shell | `.shellcheckrc` | `pre-commit-shell` | |
 | ts | `.github/quality/eslint.base.mjs`, `.github/quality/tsconfig.base.json` | | |
@@ -76,7 +76,7 @@ One owner per file. kleidos-dev/agents owns the checker, `check_commit_msg.py`, 
 5. `.github/dependabot.yml`: every manifest directory has its ecosystem; every update has a `cooldown` (`default-days: 7`, which zizmor's `dependabot-cooldown` audit also asks for); `github-actions` ignores `kleidos-dev/.github*` (the sync moves those references); no `pre-commit` ecosystem (hook versions come with the sync); nothing under `.github/quality/`. Turn on Dependabot security updates: `gh api -X PUT repos/<owner>/<repo>/automated-security-fixes`.
 6. A repository with the `python` profile has a `.python-version` (the kit's mypy and test workflows read it; the checker reports its absence). boards, qa, agents, meter and posts have none today.
 7. The commit-message gate: where the sync replaced kleidos-dev/agents' two workflow copies, it also drops them from `.github/commit-check/SOURCE.json` and says so; edit the repository's own digest test (`tests/ci/test_commit_check_copy.py` in qa and meter) so its path set is the checker alone, in the same pull request. kleidos-dev/agents' `sync_commit_check.py` then copies only the checker (its `FILES` reduced to `check_commit_msg.py`, and its `--check` no longer reporting the two workflows): that change lands in agents' own sync, which goes first in wave 3, before qa's and meter's ([The commit-message gate](#the-commit-message-gate)).
-8. Fix everything the tools report, in the same pull request: `pre-commit run --all-files`, `mypy`, `python3 .github/quality/spdx_headers.py --write` for the licensing headers, `reuse lint`. A waiver only where [Overrides](#overrides) allows one. A first `ruff format` of the whole tree is its own commit, listed in `.git-blame-ignore-revs`.
+8. Fix everything the tools report, in the same pull request: `pre-commit run --all-files`, `python3 .github/quality/mypy_groups.py` (mypy, per group where the repository declares [mypy groups](#mypy-groups)), `python3 .github/quality/spdx_headers.py --write` for the licensing headers, `reuse lint`. A waiver only where [Overrides](#overrides) allows one. A first `ruff format` of the whole tree is its own commit, listed in `.git-blame-ignore-revs`.
 9. Install the hooks (`pre-commit install --hook-type pre-commit --hook-type commit-msg`), commit signed, and merge once CI is green.
 
 The checker, offline, is the pre-commit hook `kleidos-quality`; with the kit beside it, `python3 ../.github/quality/sync.py --check .` compares the copies with the kit's working tree.
@@ -93,9 +93,32 @@ Each rule below is enforced by the tool named, with the kit's configuration; the
 | One formatting: `ruff format` | hook `ruff-format` | No style review; diffs show only changes. |
 | A local `select` is refused; a local `include` needs a waiver | `check_quality.py` | `select` would replace the kit's list instead of adding to it (use `extend-select`); `include` replaces ruff's file list and can narrow it to nothing. |
 | mypy strict, `ignore-without-code` | mypy block, [`reusable-mypy.yml`](../.github/workflows/reusable-mypy.yml) | Owner, 2026-11-22: mypy, as in phonometry, with every error fixed and no baseline. The block is phonometry's floor: `strict = true`, `enable_error_code = ["ignore-without-code"]`. |
-| mypy checks every tracked Python file | `check_quality.py` (`files` minus `exclude` must cover every `*.py`) | A checker that skips a directory reports nothing about it, and that silence reads as green. |
+| mypy checks every tracked Python file | `check_quality.py` (`files` minus `exclude`, or the [mypy groups](#mypy-groups), must cover every `*.py`) | A checker that skips a directory reports nothing about it, and that silence reads as green. |
+| One mypy run never holds a module name twice | `check_quality.py` (the name mypy gives each file: its packages, then its stem) | mypy stops at "Duplicate module named" and checks nothing more, so two loose `score.py` in one run hide every error of the run. The fix is [mypy groups](#mypy-groups). |
 | No mypy suppression beyond missing types | `check_quality.py`, no waiver | `[tool.mypy]` takes an allowlist: the facts about the repository (`python_version`, `platform`, `files`, `mypy_path`, `exclude`, `plugins`, `namespace_packages`, `explicit_package_bases`, `python_executable`, extra `enable_error_code`, `overrides`), the settings that only change how mypy reports (`pretty`, `show_*`, `cache_dir`, ...), stricter flags set true (`strict_*`, `warn_*`, `disallow_*`, `check_untyped_defs`, `no_implicit_*`, `extra_checks`, `local_partial_types`), `implicit_reexport`, `implicit_optional` and `follow_untyped_imports` set false, and `follow_imports` as `normal` or `error`. Anything else is refused: `ignore_errors`, `disable_error_code`, `always_false` and `always_true` (they hide whole branches), `untyped_calls_exclude`, `follow_imports = skip`, `allow_*`, a strict flag set false. So are an inline `# mypy:` configuration and an override that sets anything but `ignore_missing_imports`. |
 | An inline `# type: ignore[code]  # reason` | `check_quality.py`, mypy's `warn_unused_ignores` | Names what it silences, says why, and dies when it silences nothing. |
+
+#### mypy groups
+
+mypy names a file in a folder with no `__init__.py` after the file alone, so a repository of loose scripts whose folders repeat file names (a `score.py` per video) cannot pass one mypy run over the tree. It declares groups instead, in `pyproject.toml` beside its `[tool.mypy]`, and each group is one mypy run:
+
+```toml
+[[tool.kleidos-quality.mypy-groups]]
+name = "video-01"
+files = ["youtube/video-01/source"]
+
+[[tool.kleidos-quality.mypy-groups]]
+name = "keys"
+files = ["youtube/music-styles/keys/*.py"]   # the folder's files, not its test-cue/ subfolder
+
+[[tool.kleidos-quality.mypy-groups]]
+name = "keys-cue"
+files = ["youtube/music-styles/keys/test-cue"]
+```
+
+- A group is a `name` (`[a-z0-9][a-z0-9._-]*`, unique) and its `files`: folders, files, or globs as mypy's own `files` reads them. It sets nothing else, so every run reads the same `[tool.mypy]`, the kit's strict block included, and no group can weaken it; `[tool.mypy]` sets no `files` beside groups. `check_quality.py` refuses any other key, in a group or in `[tool.kleidos-quality]`, with no waiver.
+- Every tracked Python file is in exactly one group, after `[tool.mypy] exclude`: a file in none, or in two, is reported, and so is a group folder or glob that holds no Python file. Within a group no two files may be the same module.
+- [`mypy_groups.py`](../quality/mypy_groups.py) runs them: one mypy per group, in its own cache directory (`<cache_dir>/<group>`, as two groups may each hold a `score`), every group even after one fails, passing mypy the group's paths and nothing else. Without groups it runs a bare `mypy`. Locally the `mypy` hook runs it; `python3 .github/quality/mypy_groups.py --group video-01` runs one group. Exit status 1 when mypy found errors, 2 for a bad declaration, mypy missing, or a run mypy could not finish.
 
 ### Workflows and shell (profiles `actions`, `shell`)
 
@@ -178,7 +201,7 @@ Every check a repository runs is a job of the kit, one workflow per concern, in 
 | --- | --- | --- | --- |
 | [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) | The kit check (from the kit at the recorded commit), every pre-commit hook on every file (mypy, reuse and the header lines excepted: they have their own workflows), zizmor's online audits | `skip` (the repository's own hook ids that need a secret; a kit hook id fails the kit check), `python-version` | `contents: read` |
 | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml) | `reuse lint`, then the header lines, on the whole history | | `contents: read` |
-| [`reusable-mypy.yml`](../.github/workflows/reusable-mypy.yml) | A bare `mypy` with the repository's dependencies installed | `install`, `python-version-file`, `python-version` | `contents: read` |
+| [`reusable-mypy.yml`](../.github/workflows/reusable-mypy.yml) | mypy with the repository's dependencies installed, through the kit's `mypy_groups.py`: one run per [mypy group](#mypy-groups), each folded in the log, an error annotation per failing group and a table of every group in the job summary (a bare `mypy` without groups) | `install`, `python-version-file`, `python-version` | `contents: read` |
 | [`reusable-python-tests.yml`](../.github/workflows/reusable-python-tests.yml) | The repository's tests, and `coverage.xml` as the `coverage` artifact for SonarCloud | `run` (required), `install`, `python-version`, `python-version-file`, `coverage-report`, `coverage-artifact`, `timeout-minutes` | `contents: read` |
 | [`reusable-eslint.yml`](../.github/workflows/reusable-eslint.yml) | `npm ci`, ESLint with no warning allowed, and `tsc --noEmit` on each project | `working-directory`, `projects`, `node-version` | `contents: read` |
 | [`reusable-osv.yml`](../.github/workflows/reusable-osv.yml) | OSV-Scanner, failing on any known vulnerability | | `contents: read` |
@@ -211,7 +234,7 @@ A notice is a red scheduled run, not an issue: issues are off in most kleidos-de
 3. **Some things cannot be waived:** a mypy suppression beyond missing types (owner: every error fixed, no baseline), a gitleaks global allowlist or `disabledRules`, an inline suppression without its code, an edited copy or managed block, and any SonarCloud suppression (owner: an issue is fixed with a real change or left open).
 4. **Inline suppressions** carry their code and a reason: `# noqa: S603  <why>`, `# type: ignore[arg-type]  # <why>`, `# zizmor: ignore[<rule>]` with the reason on the line above, `// NOLINT(<check>): <why>`, `// eslint-disable-next-line <rule> -- <why>`. `RUF100` and mypy's `warn_unused_ignores` remove dead ones.
 5. **A weakening every repository needs moves into the kit**, in one pull request here, with its reason in the kit file (as `S603`, `S607` and `self-repository` are).
-6. **Facts are not weakenings**: `python_version`, `target-version`, `files` and `mypy_path` (while coverage holds), `HeaderFilterRegex`, naming conventions, `known-first-party`, tsconfig `types` and `include`, typos exceptions for words that are right.
+6. **Facts are not weakenings**: `python_version`, `target-version`, `files`, `mypy_path` and the mypy groups (while coverage holds), `HeaderFilterRegex`, naming conventions, `known-first-party`, tsconfig `types` and `include`, typos exceptions for words that are right.
 
 ## Versions
 
