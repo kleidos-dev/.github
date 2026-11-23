@@ -182,6 +182,8 @@ TOML_PY_KEY = re.compile(
 YAML_KEY = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>[\w-]+)\s*:\s*(?P<value>[^#]*)")
 # python-version: ${{ matrix.<key> }} makes <key> a Python pin too.
 MATRIX_PY_REF = re.compile(r"python-version\s*:\s*['\"]?\$\{\{\s*matrix\.([\w-]+)\s*\}\}")
+LOWER_BOUND = re.compile(r"(?:>=|~=|===?|>)\s*(\d+\.\d+(?:\.\d+)?)")
+BLOCK_SCALAR = re.compile(r"^[|>][+-]?\d*$")
 HOOK_REPO = re.compile(r"^\s*-\s+repo:\s*(['\"]?)(?P<url>[^\s'\"#]+)\1")
 HOOK_REV = re.compile(r"^\s*rev:\s*(['\"]?)(?P<rev>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
 
@@ -2101,8 +2103,13 @@ def check_python_pins(repo: Repo, report: Report) -> None:
         if name.endswith(".toml"):
             for num, line in enumerate(lines, 1):
                 m = TOML_PY_KEY.match(line)
-                if m:
-                    scan(rel, lines, num, m.group("value"))
+                if not m:
+                    continue
+                value = m.group("value")
+                if m.group("key") == "requires-python":
+                    # Only the lower bound is a pin (">=3.15,!=3.13.0" excludes 3.13.0).
+                    value = " ".join(LOWER_BOUND.findall(value))
+                scan(rel, lines, num, value)
             continue
         # A matrix key is a Python pin only in the job whose python-version reads it.
         keys_at = [{"python-version"} for _ in lines]
@@ -2114,11 +2121,20 @@ def check_python_pins(repo: Repo, report: Report) -> None:
             m = YAML_KEY.match(line)
             if not m or m.group("key") not in keys_at[num - 1]:
                 continue
-            if m.group("value").strip():
-                scan(rel, lines, num, m.group("value"))
+            value = m.group("value").strip()
+            indent = len(m.group("indent"))
+            if value and not BLOCK_SCALAR.match(value):
+                scan(rel, lines, num, value)
+                continue
+            if value:
+                # A literal or folded scalar (| or >): the deeper lines below are its text.
+                for text_num in range(num + 1, len(lines) + 1):
+                    text = lines[text_num - 1]
+                    if text.strip() and len(text) - len(text.lstrip()) <= indent:
+                        break
+                    scan(rel, lines, text_num, text.split("#")[0])
                 continue
             # A block list under the key: its items, deeper than the key.
-            indent = len(m.group("indent"))
             for item_num in range(num + 1, len(lines) + 1):
                 item = lines[item_num - 1]
                 stripped = item.strip()

@@ -122,6 +122,17 @@ class PinsTest(unittest.TestCase):
         )
         self.assertFound("python:py311 is below", "python:3.12 is below", "python:3.11 is below")
 
+    def test_requires_python_pins_only_its_lower_bound(self) -> None:
+        self.append(
+            "pyproject.toml",
+            '\n[project]\nname = "demo"\nversion = "1"\nrequires-python = ">=3.15,!=3.13.0"\n',
+        )
+        self.assertEqual(self.found(), [])
+
+    def test_a_folded_python_version_is_read(self) -> None:
+        self.workflow(python=">-\n            3.13")
+        self.assertFound("extra.yml:25: [pins] python:3.13 is below")
+
     def test_an_inline_reason_on_a_toml_line_counts(self) -> None:
         self.edit(
             "pyproject.toml",
