@@ -199,8 +199,12 @@ REQ_INCLUDE = re.compile(
 )
 REQ_PIN = re.compile(
     r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*===?\s*(?P<version>[^\s;#\\,]+)"
+    r"[^;#]*(?:;(?P<marker>[^#\\]*))?"
 )
 GIT_TIMEOUT = 180
+# .gitmodules is the checked repository's text: a branch it names reaches
+# git fetch only when it is a plain branch name (never an option).
+SAFE_BRANCH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]*$")
 
 MARK_START = re.compile(r"^(?P<indent>[ \t]*)# >>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$")
 MARK_END = re.compile(r"^[ \t]*# <<< kleidos-quality (?P<id>[a-z0-9-]+)[ \t]*$")
@@ -316,6 +320,9 @@ class Report:
     waived: list[tuple[Weakening, dict[str, Any]]] = field(default_factory=list)
     suppressions: Counter[str] = field(default_factory=Counter)
     notes: list[str] = field(default_factory=list)
+    # Waiver "what" prefixes this run could not judge (offline): their
+    # waivers are not reported unused.
+    unjudged: set[str] = field(default_factory=set)
 
     def add(self, rule: str, where: str, message: str) -> None:
         self.problems.append(Finding(rule, where, message))
@@ -2317,6 +2324,7 @@ class SubmoduleUpstream:
             "--depth",
             "1",
             "--filter=blob:none",
+            "--",
             self.url,
             ref,
         )
@@ -2326,10 +2334,14 @@ class SubmoduleUpstream:
 
     def tip(self, branch: str) -> str:
         """The commit at the tip of a branch (the remote's default one when empty)."""
+        if branch and not SAFE_BRANCH.match(branch):
+            raise SubmoduleFetchError(f"branch {branch!r} is not a plain branch name")
         self._fetch(branch or "HEAD")
         return _git(f"--git-dir={self.git_dir}", "rev-parse", "FETCH_HEAD").stdout.strip()
 
     def ensure(self, commit: str) -> None:
+        if not SHA40.match(commit):
+            raise SubmoduleFetchError(f"recorded commit {commit!r} is not a full SHA")
         present = _git(f"--git-dir={self.git_dir}", "cat-file", "-e", f"{commit}^{{commit}}")
         if present.returncode != 0:
             self._fetch(commit)
@@ -2366,6 +2378,9 @@ def is_requirements_file(rel: str) -> bool:
 def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str, str] | None:
     """name -> version of the == pins of a requirements file and the files it includes.
 
+    A pin under an environment marker is keyed "name ; marker", so the same
+    package pinned per platform keeps one entry per platform.
+
     `read(path)` gives a file's text, None when it is absent; includes are
     followed while they stay inside the same tree. None when `start` is absent.
     """
@@ -2391,22 +2406,30 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
                 continue
             m = REQ_PIN.match(line)
             if m:
-                pins[re.sub(r"[-_.]+", "-", m["name"]).lower()] = m["version"]
+                # One package may be pinned once per environment marker.
+                key = re.sub(r"[-_.]+", "-", m["name"]).lower()
+                marker = " ".join((m["marker"] or "").split())
+                pins[f"{key} ; {marker}" if marker else key] = m["version"]
     return pins
 
 
 def pin_changes(have: dict[str, str], want: dict[str, str]) -> list[str]:
     """What the tip pins differently: name==tip (here: recorded), in name order."""
+
+    def shown(key: str, version: str) -> str:
+        name, _, marker = key.partition(" ; ")
+        return f"{name}=={version}" + (f" ; {marker}" if marker else "")
+
     out = []
-    for name in sorted(have.keys() | want.keys()):
-        if have.get(name) == want.get(name):
+    for key in sorted(have.keys() | want.keys()):
+        if have.get(key) == want.get(key):
             continue
-        if name not in want:
-            out.append(f"no {name} (here {name}=={have[name]})")
-        elif name not in have:
-            out.append(f"{name}=={want[name]} (here none)")
+        if key not in want:
+            out.append(f"no {key.partition(' ; ')[0]} (here {shown(key, have[key])})")
+        elif key not in have:
+            out.append(f"{shown(key, want[key])} (here none)")
         else:
-            out.append(f"{name}=={want[name]} (here {have[name]})")
+            out.append(f"{shown(key, want[key])} (here {have[key]})")
     return out
 
 
@@ -2438,6 +2461,7 @@ def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
         return
     if not online:
         report.notes.append("offline: the pins a submodule supplies are not compared")
+        report.unjudged.add("submodule:")
         return
     with tempfile.TemporaryDirectory(prefix="kleidos-quality-") as tmp:
         for index, sub in enumerate(subs):
@@ -2548,7 +2572,8 @@ def apply_waivers(repo: Repo, report: Report, today: dt.date) -> None:
             used[match] = True
             report.waived.append((weak, waivers[match]))
     for i, w in enumerate(waivers):
-        if not used[i] and w.get("tool") in WAIVABLE_TOOLS:
+        unjudged = any(str(w.get("what", "")).startswith(p) for p in report.unjudged)
+        if not used[i] and w.get("tool") in WAIVABLE_TOOLS and not unjudged:
             report.add(
                 "waivers",
                 f"{WAIVERS} waiver[{i}] {w.get('tool')}:{w.get('what')}",

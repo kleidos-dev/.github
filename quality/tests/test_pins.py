@@ -483,11 +483,31 @@ class SubmodulePinsTest(unittest.TestCase):
             path.read_text(encoding="utf-8") + SUB_WAIVER.format(what=what), encoding="utf-8"
         )
         self.assertEqual(self.found(), [])
+        # Offline nothing is compared, and the waiver is not called unused.
+        self.assertEqual(self.found(online=False), [])
 
     def test_offline_it_compares_nothing_and_says_so(self) -> None:
         self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
         self.assertFalse(any("submodule:" in f for f in self.found(online=False)))
         self.assertIn("offline: the pins a submodule supplies are not compared", self.notes)
+
+    def test_a_branch_that_reads_as_an_option_is_refused(self) -> None:
+        marker = self.root / "ran"
+        self.append_gitmodules(f"\tbranch = --upload-pack=touch {marker}\n")
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        found = self.found()
+        self.assertTrue(any("is not a plain branch name" in f for f in found), found)
+        self.assertFalse(marker.exists())
+
+    def test_a_pin_per_platform_is_compared_per_platform(self) -> None:
+        win = "charset-normalizer==3.5.1 ; sys_platform == 'win32'\n"
+        self.upstream_commit("more.txt", win + SUB_MORE.format(charset="3.5.2"))
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit(
+            "more.txt", win.replace("3.5.1", "3.5.3") + SUB_MORE.format(charset="3.5.2")
+        )
+        found = "\n".join(self.found())
+        self.assertIn("charset-normalizer==3.5.3 ; sys_platform == 'win32' (here 3.5.1)", found)
 
     def test_an_unreachable_upstream_is_reported(self) -> None:
         fx.write(
@@ -513,7 +533,7 @@ class SubmoduleHelpersTest(unittest.TestCase):
             "extra.txt": "qux==3\nloose>=1\n",
         }
         pins = cq.requirement_pins(files.get, "requirements.txt")
-        self.assertEqual(pins, {"foo-bar": "1.2", "baz": "2.0", "qux": "3"})
+        self.assertEqual(pins, {"foo-bar": "1.2", "baz ; python_version > '3'": "2.0", "qux": "3"})
         self.assertIsNone(cq.requirement_pins(files.get, "missing.txt"))
 
     def test_requirements_files_by_name_or_folder(self) -> None:
