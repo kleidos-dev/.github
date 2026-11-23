@@ -505,6 +505,254 @@ class LatestReleasesTest(unittest.TestCase):
         self.assertEqual(lines, [f"hook {url}: pinned v0.24.2, latest v0.30.0"])
 
 
+SUB_REQS = "# The drawing stack.\n-r more.txt\nplaywright==1.65.1\n"
+SUB_MORE = "charset-normalizer=={charset}\n"
+SUB_WAIVER = (
+    '\n[[waiver]]\ntool = "pins"\nwhat = "{what}"\n'
+    'reason = "The pictures are redrawn with the next commit first"\n'
+    'decided = "owner 2026-11-23"\n'
+)
+
+
+class SubmodulePinsTest(unittest.TestCase):
+    """Pins a requirements file takes from a submodule (-r brand/requirements.txt)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.upstream = fx.init(tmp / "brand")
+        fx.write(self.upstream, "requirements.txt", SUB_REQS)
+        fx.write(self.upstream, "more.txt", SUB_MORE.format(charset="3.5.2"))
+        fx.commit(self.upstream, "Pin the stack")
+        self.old = fx.git(self.upstream, "rev-parse", "HEAD").strip()
+        self.root = fx.consumer(tmp / "repo")
+        sync.write(self.root, commit=fx.FAKE_COMMIT)
+        fx.write(
+            self.root,
+            ".gitmodules",
+            f'[submodule "brand"]\n\tpath = brand\n\turl = {self.upstream}\n',
+        )
+        fx.write(
+            self.root,
+            "requirements.txt",
+            fx.header() + "-r brand/requirements.txt\npyyaml==6.0.4\n",
+        )
+        self.point_at(self.old)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def point_at(self, commit: str) -> None:
+        fx.git(self.root, "update-index", "--add", "--cacheinfo", f"160000,{commit},brand")
+
+    def upstream_commit(self, rel: str, text: str) -> str:
+        fx.write(self.upstream, rel, text)
+        fx.commit(self.upstream, f"Change {rel}")
+        return fx.git(self.upstream, "rev-parse", "HEAD").strip()
+
+    def found(self, online: bool = True) -> list[str]:
+        kit = cq.DirKit(fx.CENTRAL) if online else None
+        report = cq.run(self.root, kit=kit, today=TODAY)
+        self.notes = report.notes
+        return [f"{p.where}: [{p.rule}] {p.message}" for p in report.problems]
+
+    def test_a_submodule_at_its_tip_is_clean(self) -> None:
+        self.assertEqual(self.found(), [])
+
+    def test_a_pin_the_tip_moved_is_reported_through_a_nested_include(self) -> None:
+        tip = self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        found = self.found()
+        self.assertEqual(len(found), 1, found)
+        self.assertIn(f"requirements.txt:3: [pins] submodule:brand@{self.old[:7]}", found[0])
+        self.assertIn("charset-normalizer==3.5.3 (here 3.5.2)", found[0])
+        self.assertIn(f"move the submodule to {tip[:7]}", found[0])
+        self.point_at(tip)
+        self.assertEqual(self.found(), [])
+
+    def test_a_tip_that_changes_no_pin_is_clean(self) -> None:
+        self.upstream_commit("README.md", "The brand.\n")
+        self.assertEqual(self.found(), [])
+
+    def test_added_and_dropped_pins_are_reported(self) -> None:
+        self.upstream_commit("requirements.txt", "-r more.txt\nfonttools==4.60.0\n")
+        found = "\n".join(self.found())
+        self.assertIn("fonttools==4.60.0 (here none)", found)
+        self.assertIn("no playwright (here playwright==1.65.1)", found)
+
+    def test_an_included_file_the_tip_removed_is_reported(self) -> None:
+        fx.git(self.upstream, "mv", "requirements.txt", "stack.txt")
+        fx.commit(self.upstream, "Rename the stack")
+        self.assertTrue(any("no requirements.txt any more" in f for f in self.found()))
+
+    def test_a_named_branch_is_followed(self) -> None:
+        fx.git(self.upstream, "checkout", "-q", "-b", "stable")
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        fx.git(self.upstream, "checkout", "-q", "main")
+        self.assertEqual(self.found(), [])
+        self.append_gitmodules("\tbranch = stable\n")
+        self.assertTrue(any("tip of its stable" in f for f in self.found()))
+
+    def append_gitmodules(self, text: str) -> None:
+        path = self.root / ".gitmodules"
+        path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
+
+    def test_branch_dot_follows_the_parent_branch(self) -> None:
+        fx.git(self.upstream, "checkout", "-q", "-b", "release")
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        fx.git(self.upstream, "checkout", "-q", "main")
+        self.append_gitmodules("\tbranch = .\n")
+        self.assertEqual(self.found(), [])
+        fx.git(self.root, "checkout", "-q", "-b", "release")
+        self.assertTrue(any("tip of its release" in f for f in self.found()))
+
+    def test_a_reason_beside_the_include_needs_a_waiver(self) -> None:
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        what = f"submodule:brand@{self.old[:7]}"
+        fx.write(
+            self.root,
+            "requirements.txt",
+            fx.header()
+            + "# below-latest: the pictures are redrawn with the next commit first\n"
+            + "-r brand/requirements.txt\npyyaml==6.0.4\n",
+        )
+        self.assertTrue(any(f"{what} weakens a kit rule" in f for f in self.found()))
+        path = self.root / cq.WAIVERS
+        path.write_text(
+            path.read_text(encoding="utf-8") + SUB_WAIVER.format(what=what), encoding="utf-8"
+        )
+        self.assertEqual(self.found(), [])
+        # Offline nothing is compared, and the waiver is not called unused.
+        self.assertEqual(self.found(online=False), [])
+
+    def test_offline_it_compares_nothing_and_says_so(self) -> None:
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        self.assertFalse(any("submodule:" in f for f in self.found(online=False)))
+        self.assertIn("offline: the pins a submodule supplies are not compared", self.notes)
+
+    def test_a_branch_that_reads_as_an_option_is_refused(self) -> None:
+        marker = self.root / "ran"
+        self.append_gitmodules(f"\tbranch = --upload-pack=touch {marker}\n")
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        found = self.found()
+        self.assertTrue(any("is not a plain branch name" in f for f in found), found)
+        self.assertFalse(marker.exists())
+
+    def test_a_pin_per_platform_is_compared_per_platform(self) -> None:
+        win = "charset-normalizer==3.5.1 ; sys_platform == 'win32'\n"
+        self.upstream_commit("more.txt", win + SUB_MORE.format(charset="3.5.2"))
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit(
+            "more.txt", win.replace("3.5.1", "3.5.3") + SUB_MORE.format(charset="3.5.2")
+        )
+        found = "\n".join(self.found())
+        self.assertIn('charset-normalizer==3.5.3 ; sys_platform == "win32" (here 3.5.1)', found)
+
+    def test_a_respelled_marker_changes_no_pin(self) -> None:
+        self.upstream_commit("more.txt", "foo==1 ; sys_platform == 'win32'\n")
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", 'foo==1;sys_platform=="win32"\n')
+        self.assertEqual(self.found(), [])
+
+    def test_an_include_chain_of_the_repository_reaches_the_submodule(self) -> None:
+        fx.write(self.root, "requirements.txt", fx.header() + "-r deps/base.txt\n")
+        fx.write(self.root, "deps/base.txt", "-r ../brand/requirements.txt\n")
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        found = self.found()
+        self.assertTrue(
+            any(f.startswith("deps/base.txt:1: [pins] submodule:brand@") for f in found), found
+        )
+
+    def test_a_quoted_include_is_followed(self) -> None:
+        fx.write(self.root, "requirements.txt", fx.header() + '-r "brand/requirements.txt"\n')
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        self.assertTrue(any("requirements.txt:3: [pins] submodule:" in f for f in self.found()))
+
+    def test_an_indented_long_include_inside_the_submodule_is_followed(self) -> None:
+        self.upstream_commit("requirements.txt", "  --requirement=more.txt\n")
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        self.assertTrue(any("charset-normalizer==3.5.3 (here 3.5.2)" in f for f in self.found()))
+
+    def test_a_continued_marker_and_hashes_are_one_pin(self) -> None:
+        text = (
+            "foo==1 ; python_version >= '3' and \\\n"
+            "    sys_platform == '{platform}' \\\n"
+            "    --hash=sha256:{digest}\n"
+        )
+        self.upstream_commit("more.txt", text.format(platform="win32", digest="a" * 64))
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", text.format(platform="win32", digest="b" * 64))
+        self.assertEqual(self.found(), [])
+        self.upstream_commit("more.txt", text.format(platform="linux", digest="a" * 64))
+        found = "\n".join(self.found())
+        self.assertIn(
+            'foo==1 ; python_version >= "3" and sys_platform == "linux" (here none)', found
+        )
+
+    def test_a_space_inside_a_quoted_marker_value_counts(self) -> None:
+        self.upstream_commit("more.txt", "foo==1 ; platform_version == 'build 1'\n")
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", "foo==1 ; platform_version == 'build1'\n")
+        self.assertTrue(any('platform_version == "build1"' in f for f in self.found()))
+
+    def test_a_relative_url_resolves_against_the_origin(self) -> None:
+        cases = {
+            "git@github.com:owner/repo.git": "git@github.com:other/brand.git",
+            "https://github.com/owner/repo.git": "https://github.com/other/brand.git",
+            "ssh://git@github.com/owner/repo": "ssh://git@github.com/other/brand.git",
+            "/srv/git/owner/repo.git": "/srv/git/other/brand.git",
+            "file:///srv/git/owner/repo.git": "file:///srv/git/other/brand.git",
+        }
+        repo = cq.Repo(self.root)
+        for origin, expected in cases.items():
+            if fx.git(self.root, "remote").strip():
+                fx.git(self.root, "remote", "remove", "origin")
+            fx.git(self.root, "remote", "add", "origin", origin)
+            self.assertEqual(
+                cq.resolve_submodule_url(repo, "../../other/brand.git"), expected, origin
+            )
+
+    def test_an_unreachable_upstream_is_reported(self) -> None:
+        fx.write(
+            self.root,
+            ".gitmodules",
+            f'[submodule "brand"]\n\tpath = brand\n\turl = {self.upstream}-gone\n',
+        )
+        self.assertTrue(any("could not be fetched" in f for f in self.found()))
+
+    def test_a_requirements_file_without_a_submodule_include_fetches_nothing(self) -> None:
+        fx.write(self.root, "requirements.txt", fx.header() + "pyyaml==6.0.4\n")
+        fx.write(
+            self.root, ".gitmodules", '[submodule "brand"]\n\tpath = brand\n\turl = /nowhere\n'
+        )
+        self.assertEqual(self.found(), [])
+
+
+class SubmoduleHelpersTest(unittest.TestCase):
+    def test_requirement_pins_normalizes_names_and_stays_inside_the_tree(self) -> None:
+        files = {
+            "requirements.txt": "-r sub/more.txt\n-c ../outside.txt\nFoo_Bar[x]==1.2  # why\n",
+            "sub/more.txt": "--requirement=../extra.txt\nbaz===2.0 ; python_version > '3'\n"
+            "-r /etc/other.txt\n-r https://example.invalid/r.txt\n-r ..\n",
+            "extra.txt": "qux==3\nloose>=1\n",
+        }
+        pins = cq.requirement_pins(files.get, "requirements.txt")
+        self.assertEqual(pins, {"foo-bar": "1.2", 'baz ; python_version > "3"': "2.0", "qux": "3"})
+        self.assertIsNone(cq.requirement_pins(files.get, "missing.txt"))
+
+    def test_requirements_files_by_name_or_folder(self) -> None:
+        for rel in (
+            "requirements.txt",
+            "requirements-dev.in",
+            "deps.in",
+            "ci/constraints.txt",
+            "requirements/base.txt",
+        ):
+            self.assertTrue(cq.is_requirements_file(rel), rel)
+        for rel in ("README.txt", "requirements.toml", "notes/list.txt"):
+            self.assertFalse(cq.is_requirements_file(rel), rel)
+
+
 class HelpersTest(unittest.TestCase):
     def test_versions_compare_by_number(self) -> None:
         self.assertTrue(cq.is_below((1, 9), (1, 10)))
