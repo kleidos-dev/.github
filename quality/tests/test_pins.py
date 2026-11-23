@@ -616,7 +616,13 @@ class SubmodulePinsTest(unittest.TestCase):
             "more.txt", win.replace("3.5.1", "3.5.3") + SUB_MORE.format(charset="3.5.2")
         )
         found = "\n".join(self.found())
-        self.assertIn("charset-normalizer==3.5.3 ; sys_platform == 'win32' (here 3.5.1)", found)
+        self.assertIn('charset-normalizer==3.5.3 ; sys_platform=="win32" (here 3.5.1)', found)
+
+    def test_a_respelled_marker_changes_no_pin(self) -> None:
+        self.upstream_commit("more.txt", "foo==1 ; sys_platform == 'win32'\n")
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", 'foo==1;sys_platform=="win32"\n')
+        self.assertEqual(self.found(), [])
 
     def test_an_unreachable_upstream_is_reported(self) -> None:
         fx.write(
@@ -642,7 +648,7 @@ class SubmoduleHelpersTest(unittest.TestCase):
             "extra.txt": "qux==3\nloose>=1\n",
         }
         pins = cq.requirement_pins(files.get, "requirements.txt")
-        self.assertEqual(pins, {"foo-bar": "1.2", "baz ; python_version > '3'": "2.0", "qux": "3"})
+        self.assertEqual(pins, {"foo-bar": "1.2", 'baz ; python_version>"3"': "2.0", "qux": "3"})
         self.assertIsNone(cq.requirement_pins(files.get, "missing.txt"))
 
     def test_requirements_files_by_name_or_folder(self) -> None:

@@ -2530,9 +2530,11 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
                 continue
             m = REQ_PIN.match(line)
             if m:
-                # One package may be pinned once per environment marker.
+                # One package may be pinned once per environment marker; the
+                # marker is keyed without spaces and with one kind of quote,
+                # so respelling it changes no pin.
                 key = re.sub(r"[-_.]+", "-", m["name"]).lower()
-                marker = " ".join((m["marker"] or "").split())
+                marker = re.sub(r"\s+", "", m["marker"] or "").replace("'", '"')
                 pins[f"{key} ; {marker}" if marker else key] = m["version"]
     return pins
 
