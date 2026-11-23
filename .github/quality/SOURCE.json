@@ -13,7 +13,7 @@
     {
       "path": ".github/quality/check_quality.py",
       "source_path": "quality/check_quality.py",
-      "sha256": "acc9630bd7b83d7768633ec9b72b6a299165017e28f8d67c5615f432c1e618a6"
+      "sha256": "b30744d159aec45e7d93fffbde89db3360aa2d369d6e762975cf51a40d583d72"
     },
     {
       "path": ".github/quality/md_nowrap.py",
@@ -23,7 +23,7 @@
     {
       "path": ".github/quality/spdx_headers.py",
       "source_path": "quality/spdx_headers.py",
-      "sha256": "1593dfe6ade2acb7f860a30bb4e42f950dd95d8052b1532e21e4fa33bcf6519f"
+      "sha256": "5b8cb9bb3125efe72cea69fcc7fec319a8a8541af9163dc94e179bd79adacbd4"
     },
     {
       "path": ".github/quality/markdownlint.jsonc",

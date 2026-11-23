@@ -115,6 +115,8 @@ class ConformanceTest(unittest.TestCase):
             'target-version = "py311"\ninclude = ["nothing/*.py"]\n',
         )
         self.assertFound("include:nothing/*.py weakens a kit rule")
+        self.edit("pyproject.toml", 'include = ["nothing/*.py"]', "include = []")
+        self.assertFound("include:(empty) weakens a kit rule")
 
     def test_an_expired_or_unreasoned_waiver_fails(self) -> None:
         self.append("pyproject.toml", '\n[tool.ruff.lint]\nignore = ["E501"]\n')
@@ -244,6 +246,11 @@ class ConformanceTest(unittest.TestCase):
                 "on:\n  pull_request:\n    branches: [dev]\n  push:\n",
                 "trigger does not include main",
             ),
+            (
+                "on:\n  pull_request:\n    types: [opened]\n  push:\n",
+                "leaves out synchronize, reopened",
+            ),
+            ("on:\n  pull_request:\n  push:\n    tags: ['*']\n", "runs on tags only"),
         ):
             head, _, rest = original.partition("\non:\n")
             body = rest[rest.index("\npermissions:") :]
@@ -272,7 +279,9 @@ class ConformanceTest(unittest.TestCase):
     def test_pre_commit_globals_cannot_switch_the_kit_hooks_off(self) -> None:
         self.edit(".pre-commit-config.yaml", "repos:\n", "exclude: '^pkg/'\nrepos:\n")
         self.assertFound("exclude:^pkg/ weakens a kit rule")
-        self.edit(".pre-commit-config.yaml", "exclude: '^pkg/'\n", "default_stages: [manual]\n")
+        self.edit(".pre-commit-config.yaml", "exclude: '^pkg/'\n", "files: '^$'\n")
+        self.assertFound("files:^$ weakens a kit rule")
+        self.edit(".pre-commit-config.yaml", "files: '^$'\n", "default_stages: [manual]\n")
         self.assertFound("default_stages without pre-commit")
         self.edit(
             ".pre-commit-config.yaml",
@@ -356,6 +365,12 @@ class ConformanceTest(unittest.TestCase):
             + "    timeout-minutes: 5\n    steps:\n      - run: clang-tidy -p build src/a.cpp\n",
         )
         self.assertFalse(any("the cpp profile runs clang-tidy" in f for f in self.found()))
+        self.edit(
+            ".github/workflows/tidy.yml",
+            "      - run: clang-tidy",
+            "      - if: false\n        run: clang-tidy",
+        )
+        self.assertFound("the cpp profile runs clang-tidy")
 
     # --- suppressions in other languages -------------------------------------
 

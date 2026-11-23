@@ -900,10 +900,27 @@ def normalized_if(value: Any) -> str:
     return re.sub(r"\s+", " ", text.replace('"', "'")).strip()
 
 
+# The pull_request activity types a check must run on: a new pull request,
+# every push to it, and a reopened one (GitHub's default set).
+PR_TYPES = ("opened", "synchronize", "reopened")
+
+
 def trigger_gap(event: str, config: Any) -> str | None:
-    """Why a trigger may skip the default branch, or None."""
+    """Why a trigger may skip the default branch or a pull request's commits, or None."""
     if not isinstance(config, dict):
         return None
+    types = config.get("types")
+    if event == "pull_request" and types is not None:
+        listed = [types] if isinstance(types, str) else [str(t) for t in types]
+        missing = [t for t in PR_TYPES if t not in listed]
+        if missing:
+            return f"its pull_request trigger leaves out {', '.join(missing)}"
+    if (
+        event == "push"
+        and ("tags" in config or "tags-ignore" in config)
+        and ("branches" not in config and "branches-ignore" not in config)
+    ):
+        return "its push trigger runs on tags only"
     for key in ("paths", "paths-ignore"):
         if key in config:
             return f"its {event} trigger has a {key} filter"
@@ -1008,9 +1025,12 @@ def check_pre_commit_globals(repo: Repo, report: Report) -> None:
         return  # check_hook_block_live reports it
     if not isinstance(cfg, dict):
         return
-    for key in ("exclude", "files"):
-        if cfg.get(key) not in (None, "", "^$"):
-            report.weaken("pre-commit", f"{key}:{cfg[key]}", rel)
+    # exclude '^$' is pre-commit's own default (it excludes nothing); for
+    # files, any value narrows, '^$' to nothing at all.
+    if cfg.get("exclude") not in (None, "", "^$"):
+        report.weaken("pre-commit", f"exclude:{cfg['exclude']}", rel)
+    if cfg.get("files") not in (None, ""):
+        report.weaken("pre-commit", f"files:{cfg['files']}", rel)
     stages = cfg.get("default_stages")
     if stages is not None and "pre-commit" not in [str(x) for x in stages]:
         report.add(
@@ -1100,8 +1120,9 @@ def ruff_weakenings(rel: str, table: dict[str, Any], report: Report) -> None:
         for pattern in table.get(key) or []:
             report.weaken("ruff", f"exclude:{pattern}", rel)
     # `include` replaces ruff's file list, so it can narrow it to nothing.
-    for pattern in table.get("include") or []:
-        report.weaken("ruff", f"include:{pattern}", rel)
+    if "include" in table:
+        for pattern in table.get("include") or ["(empty)"]:
+            report.weaken("ruff", f"include:{pattern}", rel)
     if table.get("force-exclude") is False:
         report.weaken("ruff", "force-exclude", rel)
     length = table.get("line-length")
@@ -1713,12 +1734,16 @@ def check_cpp_analysis(repo: Repo, report: Report) -> None:
             wf = yaml.safe_load(repo.text(rel)) or {}
         except yaml.YAMLError:
             continue
-        if not isinstance(wf, dict) or "pull_request" not in workflow_triggers(wf):
+        triggers = workflow_triggers(wf) if isinstance(wf, dict) else {}
+        if "pull_request" not in triggers or trigger_gap("pull_request", triggers["pull_request"]):
             continue
         for job in (wf.get("jobs") or {}).values():
-            for step in (job or {}).get("steps") or [] if isinstance(job, dict) else []:
-                run = str((step or {}).get("run", "")) if isinstance(step, dict) else ""
-                if any(tool in run for tool in CPP_ANALYZERS):
+            if not isinstance(job, dict) or never_runs(job):
+                continue
+            for step in job.get("steps") or []:
+                if not isinstance(step, dict) or never_runs(step):
+                    continue
+                if any(tool in str(step.get("run", "")) for tool in CPP_ANALYZERS):
                     return
     report.add(
         "workflows",
@@ -1727,6 +1752,14 @@ def check_cpp_analysis(repo: Repo, report: Report) -> None:
         " repository's own on every pull request (the kit has no reusable job for it:"
         " clang-tidy needs the repository's build)",
     )
+
+
+def never_runs(item: dict[str, Any]) -> bool:
+    """A job or step whose condition is a literal false."""
+    if "if" not in item:
+        return False
+    cond = item["if"]
+    return cond is False or normalized_if(cond).strip().lower() in ("false", "0", "''")
 
 
 def check_python_version(repo: Repo, report: Report) -> None:

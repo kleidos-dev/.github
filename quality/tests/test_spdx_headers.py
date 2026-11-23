@@ -134,6 +134,15 @@ class FixTextTest(unittest.TestCase):
         self.assertTrue(
             any("front matter" in p for p in sh.check_text("C.astro", html_comment, "2026"))
         )
+        moved, why = sh.fix_text("C.astro", html_comment, "2026", None)
+        self.assertIsNone(why)
+        self.assertNotIn("<!--", moved)
+        self.assertEqual(sh.check_text("C.astro", moved, "2026"), [])
+        self.assertIn("<article>{title}</article>", moved)
+
+    def test_every_header_line_sits_at_the_top(self) -> None:
+        split = f"<!--\n{C} 2026 {H}\n-->\n\n# Title\n\n<!--\n{L} MIT\n-->\n"
+        self.assertTrue(any("top" in p for p in sh.check_text("a.md", split, "2026")))
 
     def test_more_formats_take_comments(self) -> None:
         for rel in (

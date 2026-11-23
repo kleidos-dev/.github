@@ -486,11 +486,12 @@ def check_text(rel: str, text: str, year: str | None, *, copy: bool = False) -> 
             f"no copyright line names {HOLDER} (a third-party file is stated in REUSE.toml"
             ' with precedence "override")'
         )
-    tags = [i for i, _v in head.copyright_lines + head.license_lines]
-    if style is not None and tags:
-        why = header_misplaced(lines, style, min(tags))
-        if why:
-            problems.append(why)
+    if style is not None:
+        for index in sorted({i for i, _v in head.copyright_lines + head.license_lines}):
+            why = header_misplaced(lines, style, index)
+            if why:
+                problems.append(why)
+                break
     return problems
 
 
@@ -517,11 +518,34 @@ def _sibling_line(line: str, tag: str, text: str) -> str:
     return f"{prefix}{text}\n"
 
 
+def _lift_astro_header(text: str, license_expr: str | None) -> tuple[str, str | None]:
+    """Remove header lines an Astro file carries outside its front matter.
+
+    Returns the text without them (and without an HTML comment they leave
+    empty) and the license they named, so the writer puts both lines back
+    at the top of the front matter.
+    """
+    lines = text.splitlines(keepends=True)
+    head = read_header(lines)
+    style = Style("astro", LINE["//"])
+    found = head.copyright_lines + head.license_lines
+    if not any(header_misplaced(lines, style, i) for i, _v in found):
+        return text, license_expr
+    if head.license_lines:
+        license_expr = head.license_lines[0][1]
+    drop = {i for i, _v in found}
+    kept = "".join(ln for i, ln in enumerate(lines) if i not in drop)
+    kept = re.sub(r"<!--\s*-->\n?", "", kept)
+    return kept, license_expr
+
+
 def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[str, str | None]:
     """The text with a correct header, and why it could not be fixed (or None)."""
     style = style_for(rel, text)
     if style is None:
         return text, "its format has no comment syntax: state it in REUSE.toml"
+    if style.kind == "astro":
+        text, license_expr = _lift_astro_header(text, license_expr)
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
