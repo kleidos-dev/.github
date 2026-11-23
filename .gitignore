@@ -10,3 +10,7 @@ coverage.xml
 # The analysis tools' caches.
 .ruff_cache/
 .mypy_cache/
+# One person's agent preferences for this repository (AGENTS.md); never committed.
+CLAUDE.local.md
+# The local virtual environment AGENTS.md installs the tools into.
+.venv/
