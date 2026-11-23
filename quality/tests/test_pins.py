@@ -645,7 +645,7 @@ class SubmodulePinsTest(unittest.TestCase):
             "more.txt", win.replace("3.5.1", "3.5.3") + SUB_MORE.format(charset="3.5.2")
         )
         found = "\n".join(self.found())
-        self.assertIn('charset-normalizer==3.5.3 ; sys_platform=="win32" (here 3.5.1)', found)
+        self.assertIn('charset-normalizer==3.5.3 ; sys_platform == "win32" (here 3.5.1)', found)
 
     def test_a_respelled_marker_changes_no_pin(self) -> None:
         self.upstream_commit("more.txt", "foo==1 ; sys_platform == 'win32'\n")
@@ -662,11 +662,32 @@ class SubmodulePinsTest(unittest.TestCase):
             any(f.startswith("deps/base.txt:1: [pins] submodule:brand@") for f in found), found
         )
 
+    def test_a_quoted_include_is_followed(self) -> None:
+        fx.write(self.root, "requirements.txt", fx.header() + '-r "brand/requirements.txt"\n')
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        self.assertTrue(any("requirements.txt:3: [pins] submodule:" in f for f in self.found()))
+
+    def test_a_continued_marker_and_hashes_are_one_pin(self) -> None:
+        text = (
+            "foo==1 ; python_version >= '3' and \\\n"
+            "    sys_platform == '{platform}' \\\n"
+            "    --hash=sha256:{digest}\n"
+        )
+        self.upstream_commit("more.txt", text.format(platform="win32", digest="a" * 64))
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", text.format(platform="win32", digest="b" * 64))
+        self.assertEqual(self.found(), [])
+        self.upstream_commit("more.txt", text.format(platform="linux", digest="a" * 64))
+        found = "\n".join(self.found())
+        self.assertIn(
+            'foo==1 ; python_version >= "3" and sys_platform == "linux" (here none)', found
+        )
+
     def test_a_space_inside_a_quoted_marker_value_counts(self) -> None:
         self.upstream_commit("more.txt", "foo==1 ; platform_version == 'build 1'\n")
         self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
         self.upstream_commit("more.txt", "foo==1 ; platform_version == 'build1'\n")
-        self.assertTrue(any('platform_version=="build1"' in f for f in self.found()))
+        self.assertTrue(any('platform_version == "build1"' in f for f in self.found()))
 
     def test_a_relative_url_resolves_against_the_origin(self) -> None:
         cases = {
@@ -709,7 +730,7 @@ class SubmoduleHelpersTest(unittest.TestCase):
             "extra.txt": "qux==3\nloose>=1\n",
         }
         pins = cq.requirement_pins(files.get, "requirements.txt")
-        self.assertEqual(pins, {"foo-bar": "1.2", 'baz ; python_version>"3"': "2.0", "qux": "3"})
+        self.assertEqual(pins, {"foo-bar": "1.2", 'baz ; python_version > "3"': "2.0", "qux": "3"})
         self.assertIsNone(cq.requirement_pins(files.get, "missing.txt"))
 
     def test_requirements_files_by_name_or_folder(self) -> None:

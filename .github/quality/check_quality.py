@@ -210,8 +210,13 @@ HOOK_REV = re.compile(r"^\s*rev:\s*(['\"]?)(?P<rev>[^\s'\"#]+)\1\s*(?P<comment>#
 # recorded at, so that commit is a pin as well: the included files must pin
 # what they pin at the tip of the submodule's branch.
 REQ_INCLUDE = re.compile(
-    r"^\s*(?:-r|-c|--requirement|--constraint)(?:\s*=\s*|\s*)(?P<path>[^\s#]+)"
+    r"^\s*(?:-r|-c|--requirement|--constraint)(?:\s*=\s*|\s*)"
+    r"(?:\"(?P<dq>[^\"]+)\"|'(?P<sq>[^']+)'|(?P<bare>[^\s#]+))"
 )
+# The tokens of an environment marker: quoted values, names, operators, parentheses.
+MARKER_TOKEN = re.compile(r"'[^']*'|\"[^\"]*\"|[A-Za-z_][\w.]*|[<>=!~]=?=?|[()]")
+# An option of a requirement line (--hash=sha256:...), which says nothing of the pin.
+REQ_OPTION = re.compile(r"\s+--[\w-]+(?:=\S+)?")
 REQ_PIN = re.compile(
     r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*===?\s*(?P<version>[^\s;#\\,]+)"
     r"[^;#]*(?:;(?P<marker>[^#\\]*))?"
@@ -2514,6 +2519,32 @@ def is_requirements_file(rel: str) -> bool:
     )
 
 
+def include_path(m: re.Match[str]) -> str:
+    """The path of a REQ_INCLUDE match, without the quotes pip allows around it."""
+    return m["dq"] or m["sq"] or m["bare"]
+
+
+def logical_lines(text: str) -> list[tuple[int, str]]:
+    """pip's lines: a line ending in a backslash goes on with the next one.
+
+    Each comes with the number of its first physical line.
+    """
+    out: list[tuple[int, str]] = []
+    start, parts = 0, list[str]()
+    for num, line in enumerate(text.splitlines(), 1):
+        if not parts:
+            start = num
+        if line.rstrip().endswith("\\"):
+            parts.append(line.rstrip()[:-1])
+            continue
+        parts.append(line)
+        out.append((start, " ".join(parts)))
+        parts = []
+    if parts:
+        out.append((start, " ".join(parts)))
+    return out
+
+
 def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str, str] | None:
     """name -> version of the == pins of a requirements file and the files it includes.
 
@@ -2536,10 +2567,13 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
             if path == start:
                 return None
             continue
-        for line in text.splitlines():
+        for _, joined in logical_lines(text):
+            line = REQ_OPTION.sub("", joined)
             m = REQ_INCLUDE.match(line)
             if m:
-                nested = posixpath.normpath(posixpath.join(posixpath.dirname(path), m["path"]))
+                nested = posixpath.normpath(
+                    posixpath.join(posixpath.dirname(path), include_path(m))
+                )
                 if not nested.startswith("../"):
                     todo.append(nested)
                 continue
@@ -2555,25 +2589,13 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
 
 
 def marker_key(marker: str) -> str:
-    """An environment marker without the spaces between its tokens, quoted with ".
+    """An environment marker as its tokens, one space apart, values quoted with ".
 
-    Spaces inside a quoted value are kept: 'build 1' and 'build1' differ.
+    Respacing or requoting it gives the same key; spaces inside a quoted value
+    are kept ('build 1' and 'build1' differ).
     """
-    out: list[str] = []
-    quote = ""
-    for ch in marker:
-        if quote:
-            if ch == quote:
-                quote = ""
-                out.append('"')
-            else:
-                out.append(ch)
-        elif ch in "'\"":
-            quote = ch
-            out.append('"')
-        elif not ch.isspace():
-            out.append(ch)
-    return "".join(out)
+    tokens = MARKER_TOKEN.findall(marker)
+    return " ".join(f'"{t[1:-1]}"' if t[:1] in "'\"" else t for t in tokens)
 
 
 def pin_changes(have: dict[str, str], want: dict[str, str]) -> list[str]:
@@ -2618,11 +2640,11 @@ def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
             lines = repo.text(rel).splitlines()
         except OSError, UnicodeDecodeError:
             continue
-        for num, line in enumerate(lines, 1):
+        for num, line in logical_lines("\n".join(lines)):
             m = REQ_INCLUDE.match(line)
             if not m:
                 continue
-            target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), m["path"]))
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), include_path(m)))
             inside = [sub for sub in subs if target.startswith(sub.path + "/")]
             found.extend((sub, rel, lines, num, target[len(sub.path) + 1 :]) for sub in inside)
             if not inside and target in tracked:
