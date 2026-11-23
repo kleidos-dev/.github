@@ -624,6 +624,37 @@ class SubmodulePinsTest(unittest.TestCase):
         self.upstream_commit("more.txt", 'foo==1;sys_platform=="win32"\n')
         self.assertEqual(self.found(), [])
 
+    def test_an_include_chain_of_the_repository_reaches_the_submodule(self) -> None:
+        fx.write(self.root, "requirements.txt", fx.header() + "-r deps/base.txt\n")
+        fx.write(self.root, "deps/base.txt", "-r ../brand/requirements.txt\n")
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        found = self.found()
+        self.assertTrue(
+            any(f.startswith("deps/base.txt:1: [pins] submodule:brand@") for f in found), found
+        )
+
+    def test_a_space_inside_a_quoted_marker_value_counts(self) -> None:
+        self.upstream_commit("more.txt", "foo==1 ; platform_version == 'build 1'\n")
+        self.point_at(fx.git(self.upstream, "rev-parse", "HEAD").strip())
+        self.upstream_commit("more.txt", "foo==1 ; platform_version == 'build1'\n")
+        self.assertTrue(any('platform_version=="build1"' in f for f in self.found()))
+
+    def test_a_relative_url_resolves_against_the_origin(self) -> None:
+        cases = {
+            "git@github.com:owner/repo.git": "git@github.com:other/brand.git",
+            "https://github.com/owner/repo.git": "https://github.com/other/brand.git",
+            "ssh://git@github.com/owner/repo": "ssh://git@github.com/other/brand.git",
+            "/srv/git/owner/repo.git": "/srv/git/other/brand.git",
+        }
+        repo = cq.Repo(self.root)
+        for origin, expected in cases.items():
+            if fx.git(self.root, "remote").strip():
+                fx.git(self.root, "remote", "remove", "origin")
+            fx.git(self.root, "remote", "add", "origin", origin)
+            self.assertEqual(
+                cq.resolve_submodule_url(repo, "../../other/brand.git"), expected, origin
+            )
+
     def test_an_unreachable_upstream_is_reported(self) -> None:
         fx.write(
             self.root,

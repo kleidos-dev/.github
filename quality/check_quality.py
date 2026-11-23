@@ -2367,13 +2367,22 @@ def resolve_submodule_url(repo: Repo, url: str) -> str:
     origin = _git("-C", str(repo.root), "remote", "get-url", "origin").stdout.strip()
     if not origin:
         return url
-    base = origin.rstrip("/").split("/")
+    # Keep what names the host (https://host, ssh://host, or scp-like
+    # user@host:) and resolve the relative URL against the path after it.
+    m = re.match(r"^(?P<host>[a-z][a-z0-9+.-]*://[^/]+|[^/:]+:(?!//))(?P<path>.*)$", origin)
+    host, path = (m["host"], m["path"]) if m else ("", origin)
+    base = [part for part in path.rstrip("/").split("/") if part]
+    rooted = path.startswith("/")
     for part in url.split("/"):
         if part == "..":
-            base.pop()
+            if base:
+                base.pop()
         elif part not in ("", "."):
             base.append(part)
-    return "/".join(base)
+    joined = "/".join(base)
+    if host.endswith(":"):
+        return host + joined
+    return host + ("/" if host or rooted else "") + joined
 
 
 def submodules(repo: Repo) -> list[Submodule]:
@@ -2534,9 +2543,31 @@ def requirement_pins(read: Callable[[str], str | None], start: str) -> dict[str,
                 # marker is keyed without spaces and with one kind of quote,
                 # so respelling it changes no pin.
                 key = re.sub(r"[-_.]+", "-", m["name"]).lower()
-                marker = re.sub(r"\s+", "", m["marker"] or "").replace("'", '"')
+                marker = marker_key(m["marker"] or "")
                 pins[f"{key} ; {marker}" if marker else key] = m["version"]
     return pins
+
+
+def marker_key(marker: str) -> str:
+    """An environment marker without the spaces between its tokens, quoted with ".
+
+    Spaces inside a quoted value are kept: 'build 1' and 'build1' differ.
+    """
+    out: list[str] = []
+    quote = ""
+    for ch in marker:
+        if quote:
+            if ch == quote:
+                quote = ""
+                out.append('"')
+            else:
+                out.append(ch)
+        elif ch in "'\"":
+            quote = ch
+            out.append('"')
+        elif not ch.isspace():
+            out.append(ch)
+    return "".join(out)
 
 
 def pin_changes(have: dict[str, str], want: dict[str, str]) -> list[str]:
@@ -2564,11 +2595,19 @@ def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
     subs = submodules(repo)
     if not subs:
         return
-    # (submodule, requirements file, its lines, line number, included path inside it)
+    # (submodule, file with the include, its lines, line number, included path inside it).
+    # The repository's own includes are followed too, whatever the included
+    # file is named, so a chain (requirements.txt -> deps/base.txt -> brand/...)
+    # reaches the submodule as well.
     found: list[tuple[Submodule, str, list[str], int, str]] = []
-    for rel in repo.files:
-        if rel in repo.foreign or not is_requirements_file(rel):
+    tracked = set(repo.files)
+    todo = [rel for rel in repo.files if rel not in repo.foreign and is_requirements_file(rel)]
+    seen: set[str] = set()
+    while todo:
+        rel = todo.pop()
+        if rel in seen:
             continue
+        seen.add(rel)
         try:
             lines = repo.text(rel).splitlines()
         except OSError, UnicodeDecodeError:
@@ -2578,11 +2617,10 @@ def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
             if not m:
                 continue
             target = posixpath.normpath(posixpath.join(posixpath.dirname(rel), m["path"]))
-            found.extend(
-                (sub, rel, lines, num, target[len(sub.path) + 1 :])
-                for sub in subs
-                if target.startswith(sub.path + "/")
-            )
+            inside = [sub for sub in subs if target.startswith(sub.path + "/")]
+            found.extend((sub, rel, lines, num, target[len(sub.path) + 1 :]) for sub in inside)
+            if not inside and target in tracked:
+                todo.append(target)
     if not found:
         return
     if not online:
