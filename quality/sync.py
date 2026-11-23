@@ -67,6 +67,8 @@ SKELETONS = {
 }
 
 
+# Copies earlier kit versions made and this one does not: a sync removes them.
+RETIRED_COPIES = (".github/quality/requirements-tools.txt",)
 TAG_PREFIX = "quality-v"
 MAIN_REF = "refs/remotes/origin/main"
 # What a repository receives from the kit: a change here is a kit release.
@@ -425,11 +427,14 @@ def write(
     kept = {str(f["path"]) for f in files_rec}
     for entry in old.get("files") or []:
         rel = str(entry.get("path", ""))
-        target = repo / rel
-        if rel and rel not in kept and (cq.is_kit_target(rel) or rel.startswith(cq.KIT_DIR)):
-            if target.is_file():
-                target.unlink()
-            log.append(f"removed {rel}: the kit no longer copies it")
+        if rel in kept or not (cq.is_kit_target(rel) or rel in RETIRED_COPIES):
+            continue
+        target = (repo / rel).resolve()
+        if ".." in PurePosixPath(rel).parts or not target.is_relative_to(repo):
+            continue
+        if target.is_file():
+            target.unlink()
+        log.append(f"removed {rel}: the kit no longer copies it")
     year = str(dt.datetime.now(tz=dt.UTC).year)
     replaced: list[str] = []
     for s in seeds:

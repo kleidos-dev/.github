@@ -69,6 +69,10 @@ jobs:
         run: |
           set -euo pipefail
           read -r -a projects <<< "${PROJECTS}"
+          if [ "${#projects[@]}" -eq 0 ]; then
+            echo "::error::projects names no tsconfig: tsc checks at least one project"
+            exit 1
+          fi
           for project in "${projects[@]}"; do
             echo "tsc --noEmit -p ${project}"
             npx --no-install tsc --noEmit -p "${project}"

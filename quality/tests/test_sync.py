@@ -186,6 +186,20 @@ class WriteTest(unittest.TestCase):
         self.assertTrue(any("no longer copies" in line for line in log), log)
         self.assertEqual(problems(self.root), [])
 
+    def test_a_retired_copy_never_reaches_outside_the_kit_targets(self) -> None:
+        self.sync()
+        outside = self.root.parent / "victim.txt"
+        outside.write_text("keep\n", encoding="utf-8")
+        own = fx.write(self.root, "pkg/data.txt", "keep\n")
+        path = self.root / cq.SOURCE_JSON
+        record = json.loads(path.read_text(encoding="utf-8"))
+        for rel in (".github/quality/../../victim.txt", "pkg/data.txt"):
+            record["files"].append({"path": rel, "source_path": "x", "sha256": "0"})
+        path.write_text(json.dumps(record), encoding="utf-8")
+        self.sync()
+        self.assertTrue(outside.is_file())
+        self.assertTrue(own.is_file())
+
     def test_a_seeded_file_carries_the_year_it_is_written(self) -> None:
         self.sync()
         year = str(dt.datetime.now(tz=dt.UTC).year)
