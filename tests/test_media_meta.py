@@ -12,6 +12,7 @@ import ast
 import base64
 import hashlib
 import json
+import re
 import shutil
 import struct
 import subprocess
@@ -186,6 +187,11 @@ class ModuleTest(unittest.TestCase):
             with self.assertRaises(mm.MetaError):
                 mm.root_attributes(f"<svg {letters}>")
             self.assertLess(time.perf_counter() - start, HOSTILE_SECONDS)
+        with self.subTest("stamp_svg, root tags that never close"):
+            start = time.perf_counter()
+            with self.assertRaises(mm.MetaError):
+                mm.stamp_svg("<svg " * HOSTILE_LENGTH, EXAMPLE, "kl-x")
+            self.assertLess(time.perf_counter() - start, HOSTILE_SECONDS)
 
     def test_deny_list_finds_an_address_anywhere(self) -> None:
         for value in ("a@b.example", "by <a.b+c@d-e.example>", "x@y z@w.example", "(q@r.st)"):
@@ -257,6 +263,19 @@ class ModuleTest(unittest.TestCase):
                 mm.root_attributes(tag)
         with self.assertRaises(mm.MetaError):
             mm.stamp_svg(SVG_LEGACY.replace('role="img"', "role='img'"), EXAMPLE, "kl-x")
+
+    def test_root_tag_is_the_first_whole_one(self) -> None:
+        for text, span in (
+            ("<svg>", (0, 5)),
+            ("<?xml?>\n<svg a='1'/>", (8, 20)),
+            ("<svgx><svg-y>", (6, 13)),
+            ("<svg_a><svg\n>", (7, 13)),
+            ("<svg <svg>", (0, 10)),
+        ):
+            self.assertEqual(mm.root_tag_span(text), span, text)
+        for text in ("", "<g>", "<svg", "a><svg", "<svgx>"):
+            with self.subTest(text), self.assertRaises(mm.MetaError):
+                mm.root_tag_span(text)
 
     def test_glob(self) -> None:
         self.assertTrue(mm._glob_match("profile/assets/*.svg", "profile/assets/a.svg"))
@@ -347,6 +366,30 @@ class CheckerTest(unittest.TestCase):
         self.save_manifest()
         self.assertIn("M003", self.rules())
 
+    def test_m003_license_tag_outside_markers(self) -> None:
+        """A tag is REUSE information even when no expression follows it.
+
+        REUSE reads an empty expression from such a line, and the banners'
+        ``aggregate`` precedence hides that from ``reuse lint``.
+        """
+        tag = "SPDX-" + "License-Identifier:"
+        for precedence in ("aggregate", "closest"):
+            (self.root / "REUSE.toml").write_text(
+                REUSE_TOML.replace("aggregate", precedence), encoding="utf-8"
+            )
+            for statement in (
+                f"<!-- {tag} MIT -->",
+                f"<!-- {tag} -->",
+                f"<!-- {tag}-->",
+                f"<style>/* {tag} */</style>",
+                f"<style>/* {tag}*/</style>",
+                f"<!--\n{tag}\n-->",
+            ):
+                with self.subTest(precedence=precedence, statement=statement):
+                    self.write(SVG_LEGACY.replace("</svg>", statement + "\n</svg>"))
+                    self.restamp()
+                    self.assertEqual(self.rules(), {"M003"})
+
     def test_m003_own_license(self) -> None:
         self.record["own_license"] = "MIT"
         self.save_manifest()
@@ -385,6 +428,38 @@ class CheckerTest(unittest.TestCase):
             )
             self.save_manifest()
             self.assertEqual(self.rules(), expected)
+
+    def test_spans(self) -> None:
+        comment = re.compile("<!--")
+        for text, pieces in (
+            ("", []),
+            ("<!---->", ["<!---->"]),
+            ("<!-->", []),
+            ("<!--a--><g/><!-- b\n-->", ["<!--a-->", "<!-- b\n-->"]),
+            ("<!-- <!-- a --> -->", ["<!-- <!-- a -->"]),
+            ("<!--a--><!-- b", ["<!--a-->"]),
+        ):
+            found = [text[i:j] for i, j in check_metadata.spans(text, comment, "-->")]
+            self.assertEqual(found, pieces, text)
+
+    def test_hostile_drawing_costs_linear_time(self) -> None:
+        """A well-formed drawing full of openers that never close."""
+        for opener in ("<!--", "<metadata ", "<svg ", "xmlns:", "data:", "<title>"):
+            with self.subTest(opener):
+                style = f"<style><![CDATA[{opener * HOSTILE_LENGTH}]]></style>"
+                self.write(SVG_LEGACY.replace("<rect", style + "<rect"))
+                self.restamp()
+                start = time.perf_counter()
+                self.assertEqual(self.rules(), set())
+                self.assertLess(time.perf_counter() - start, HOSTILE_SECONDS)
+
+    def test_m006_root_tag(self) -> None:
+        """A root tag that cannot be written back is the file's fault."""
+        self.write(self.read().replace('lang="en"', "lang='en'"))
+        self.save_manifest()
+        findings = [f.message for f in check_metadata.check(self.root, None, [])]
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0].startswith("the file cannot be stamped: the root <svg> tag"))
 
     def test_m006_malformed(self) -> None:
         self.write(self.read().replace("</svg>", ""))

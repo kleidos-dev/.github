@@ -234,10 +234,10 @@ def _as_list(value: str | list[str] | tuple[str, ...] | None) -> list[str]:
 
 
 def in_file_license(line: str) -> str:
-    """The license expression a line states, or nothing.
+    """The license expression after a line's license tag.
 
     The expression ends where the comment that holds it closes (``*/`` or
-    ``-->``) or with the line.
+    ``-->``) or with the line. It is empty when nothing is stated.
     """
     expression = line.partition(_IN_FILE_LICENSE)[2]
     for closing in ("*/", "-->"):
@@ -250,7 +250,8 @@ def in_file_reuse(path: Path) -> tuple[list[str], list[str]]:
 
     It reads what the REUSE tool reads in a text file: ``SPDX-*`` tags and
     the lines that hold a notice (the word or the sign), outside any region
-    between the two ignore markers.
+    between the two ignore markers. A license tag counts even when no
+    expression follows it: REUSE reads an empty expression there.
     """
     data = path.read_bytes()
     if b"\0" in data[:8192]:
@@ -261,9 +262,8 @@ def in_file_reuse(path: Path) -> tuple[list[str], list[str]]:
     for line in text.splitlines():
         if _IN_FILE_COPYRIGHT.search(line):
             copyrights.append(line.strip())
-        license_expression = in_file_license(line)
-        if license_expression:
-            licenses.append(license_expression)
+        if _IN_FILE_LICENSE in line:
+            licenses.append(in_file_license(line))
     return copyrights, licenses
 
 
@@ -532,7 +532,7 @@ def fnmatch_any(path: str, patterns: list[str]) -> bool:
 #: Where this repository keeps its media records and their digests.
 MANIFEST = "profile/assets/assets.json"
 
-_ROOT_TAG = re.compile(r"<svg\b[^>]*>", re.S)
+_ROOT_OPEN = re.compile(r"<svg\b")
 _HEAD = re.compile(
     r"(?:\s*(?:<!--.*?-->|<title\b[^>]*>.*?</title>|<desc\b[^>]*>.*?</desc>"
     r"|<metadata\b[^>]*>.*?</metadata>))*\s*",
@@ -558,6 +558,19 @@ def meta_from_record(path: str, record: dict[str, Any], root: Path = ROOT) -> Me
         description_es=record.get("description_es"),
         notice=record.get("notice"),
     )
+
+
+def root_tag_span(text: str) -> tuple[int, int]:
+    """Where the root ``<svg>`` start tag begins and ends.
+
+    It ends at the first ``>`` after the first ``<svg``: when the text holds
+    no such ``>``, no later ``<svg`` has one either.
+    """
+    found = _ROOT_OPEN.search(text)
+    end = text.find(">", found.end()) if found else -1
+    if found is None or end < 0:
+        raise MetaError("no root <svg> element")
+    return found.start(), end + 1
 
 
 def root_attributes(tag: str) -> list[tuple[str, str]]:
@@ -590,17 +603,15 @@ def stamp_svg(text: str, meta: MediaMeta, svg_id: str) -> str:
     that follows it are rewritten; every byte after that run is kept.
     Stamping a stamped file gives the same bytes back.
     """
-    found = _ROOT_TAG.search(text)
-    if found is None:
-        raise MetaError("no root <svg> element")
-    tag = found.group(0)
+    start, end = root_tag_span(text)
+    tag = text[start:end]
     attributes = root_attributes(tag)
     wanted = svg_root_attributes(svg_id, meta.language)
     kept = [(k, wanted.pop(k) if k in wanted else v) for k, v in attributes]
     kept += list(wanted.items())
     closing = "/>" if tag.endswith("/>") else ">"
     new_tag = "<svg " + " ".join(f'{k}="{v}"' for k, v in kept) + closing
-    rest = text[found.end() :]
+    rest = text[end:]
     head = _HEAD.match(rest)  # matches every string: each part of it is optional
     drawing = rest[head.end() :] if head else rest
-    return text[: found.start()] + new_tag + svg_block(meta, svg_id) + drawing
+    return text[:start] + new_tag + svg_block(meta, svg_id) + drawing

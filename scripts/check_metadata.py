@@ -79,7 +79,8 @@ MEDIA_EXTENSIONS = frozenset(
 #: Chunks an image embedded in a published SVG may hold: pixels only.
 BARE_PNG_CHUNKS = frozenset({b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND"})
 
-_COMMENT = re.compile(r"<!--(.*?)-->", re.S)
+_COMMENT_OPEN = re.compile(r"<!--")
+_METADATA_OPEN = re.compile(r"<metadata\b")
 _DATA_URI = re.compile(r"data:([a-z0-9.+/-]+);base64,([A-Za-z0-9+/=\s]+)")
 
 
@@ -120,6 +121,23 @@ def _png_chunks(data: bytes) -> list[bytes]:
         chunks.append(data[i + 4 : i + 8])
         i += 12 + length
     return chunks
+
+
+def spans(text: str, opener: re.Pattern[str], closer: str) -> list[tuple[int, int]]:
+    """Where each piece from an opener to the next closer begins and ends.
+
+    The search stops at the first opener that no closer follows: no later
+    one has a closer either, so the text is read once.
+    """
+    found: list[tuple[int, int]] = []
+    position = 0
+    while start := opener.search(text, position):
+        end = text.find(closer, start.end())
+        if end < 0:
+            break
+        position = end + len(closer)
+        found.append((start.start(), position))
+    return found
 
 
 def check_svg(root: Path, path: str, record: dict[str, Any], identity: list[str]) -> list[Finding]:
@@ -186,8 +204,8 @@ def check_svg(root: Path, path: str, record: dict[str, Any], identity: list[str]
 
     # M011: the metadata between the REUSE ignore markers.
     start, end = text.find(mm.IGNORE_START), text.find(mm.IGNORE_END)
-    for m in re.finditer(r"<metadata\b.*?</metadata>", text, re.S):
-        if not (0 <= start < m.start() and m.end() < end):
+    for m_start, m_end in spans(text, _METADATA_OPEN, "</metadata>"):
+        if not (0 <= start < m_start and m_end < end):
             add("M011", "a <metadata> block lies outside the REUSE ignore markers")
 
     # M012: the digital source type.
@@ -204,7 +222,10 @@ def check_svg(root: Path, path: str, record: dict[str, Any], identity: list[str]
             add("M012", f"unknown DigitalSourceType {value!r}")
 
     # M004: every metadata value and every comment.
-    values = [c.strip() for c in _COMMENT.findall(text)]
+    values = [
+        text[c_start:c_end].removeprefix("<!--").removesuffix("-->").strip()
+        for c_start, c_end in spans(text, _COMMENT_OPEN, "-->")
+    ]
     for node in [root_title, root_desc, *metadata_elements]:
         if node is not None:
             values += [t for t in node.itertext() if t.strip()]
@@ -246,7 +267,7 @@ def check_svg(root: Path, path: str, record: dict[str, Any], identity: list[str]
     try:
         expected = mm.stamp_svg(text, meta, svg_id).encode("utf-8")
     except mm.MetaError as error:
-        add("M006", f"record: {error}")
+        add("M006", f"the file cannot be stamped: {error}")
         return findings
     if expected != raw:
         add(
