@@ -138,6 +138,33 @@ class PinsTest(unittest.TestCase):
         self.assertTrue(any("extra.yml:19: [pins] python:3.14" in f for f in found), found)
         self.assertFalse(any("matrix" in f for f in found), found)
 
+    def test_a_matrix_key_python_version_reads_is_a_pin(self) -> None:
+        self.workflow()
+        self.edit(
+            ".github/workflows/extra.yml",
+            "      matrix:\n",
+            '      matrix:\n        python: ["3.15", "3.13"]\n'
+            '        include:\n          - python: "3.12"\n',
+        )
+        self.edit(
+            ".github/workflows/extra.yml",
+            "${{ matrix.python-version }}",
+            "${{ matrix.python }}",
+        )
+        self.assertFound("[pins] python:3.13 is below", "[pins] python:3.12 is below")
+
+    def test_the_documented_reason_inside_with_counts(self) -> None:
+        self.workflow(python='"3.9"')
+        self.edit(
+            ".github/workflows/extra.yml",
+            '          python-version: "3.9"',
+            "          # below-latest: the skills' scripts run on the python3 macOS ships (3.9)\n"
+            '          python-version: "3.9"',
+        )
+        self.assertFound("python:3.9 weakens a kit rule and has no waiver")
+        self.append(cq.WAIVERS, WAIVER.format(what="python:3.9"))
+        self.assertEqual(self.found(), [])
+
     def test_an_action_below_its_latest_release_is_reported(self) -> None:
         self.workflow(checkout="v6.0.2")
         self.assertFound("extra.yml:21: [pins] action:actions/checkout@v6.0.2 is below", "(v7.0.1)")
@@ -171,6 +198,17 @@ class PinsTest(unittest.TestCase):
             "    hooks:\n      - id: typos\n",
         )
         self.assertFound("hook:https://github.com/crate-ci/typos@v1.40.0 is below", "(v1.52.2)")
+
+    def test_a_known_hook_pinned_by_a_bare_commit_is_reported(self) -> None:
+        self.append(
+            ".pre-commit-config.yaml",
+            "  - repo: https://github.com/crate-ci/typos\n"
+            f"    rev: {OLD_SHA}\n"
+            "    hooks:\n      - id: typos\n",
+        )
+        self.assertFound(
+            "hook:https://github.com/crate-ci/typos pins a commit and names no release"
+        )
 
     def test_a_hook_reason_above_its_repo_line(self) -> None:
         self.append(
@@ -242,7 +280,9 @@ class LatestReleasesTest(unittest.TestCase):
     def fake(self, data: dict[str, object]) -> lr.GetJson:
         def get(url: str) -> object:
             if url not in data:
-                raise urllib.error.HTTPError(url, 404, "Not Found", Message(), None)
+                missing = urllib.error.HTTPError(url, 404, "Not Found", Message(), None)
+                missing.close()  # its empty body is never read
+                raise missing
             return data[url]
 
         return get

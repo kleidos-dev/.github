@@ -155,16 +155,16 @@ files = ["youtube/music-styles/keys/test-cue"]
 
 Owner, 2026-11-23: every pinned version is the latest stable release, and whatever cannot move has its blocker fixed; only what truly cannot move stays lower, with its reason beside the pin. `check_quality.py` holds every repository to the newest releases this kit release knows, the kit's own pins (a kit test keeps them equal):
 
-- **Python** (`LATEST_PYTHON`, 3.15): the first version line of every `.python-version`; `target-version`, `python_version` and `requires-python` (its lower bound) in `pyproject.toml`, `ruff.toml` and `.ruff.toml`; every `python-version:` in a workflow, inline or as a matrix list (an expression such as `${{ matrix.python-version }}` is not a pin).
+- **Python** (`LATEST_PYTHON`, 3.15): the first version line of every `.python-version`; `target-version`, `python_version` and `requires-python` (its lower bound) in `pyproject.toml`, `ruff.toml` and `.ruff.toml`; every `python-version:` in a workflow, inline or as a block list, and the matrix key a `python-version: ${{ matrix.<key> }}` reads (its inline list, block list or `include:` entries).
 - **Actions** (`LATEST_ACTIONS`): every `uses:` of an action the kit itself pins, by the version in its comment (`# v7.0.1`); an action the kit does not use is left to Dependabot.
-- **Hook revisions** (`LATEST_HOOKS`): every `rev:` of a hook repository the kit's blocks use, by its `# frozen: vX.Y.Z` comment (or the rev, when it is a tag).
+- **Hook revisions** (`LATEST_HOOKS`): every `rev:` of a hook repository the kit's blocks use, by its `# frozen: vX.Y.Z` comment (or the rev, when it is a tag); a bare commit SHA with no tag beside it is reported, since nothing says which release it is.
 
 A pin below them is a finding. When it truly cannot move, write the reason beside it, on its line or in the comment lines right above it (for a hook, above its `- repo:` line too), after the marker `below-latest:`:
 
 ```yaml
-      # below-latest: the skills' scripts run on the python3 macOS ships (3.9)
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
+          # below-latest: the skills' scripts run on the python3 macOS ships (3.9)
           python-version: "3.9"
 ```
 

@@ -179,7 +179,9 @@ PY_TARGET = re.compile(r"\bpy(\d)(\d{1,2})\b")
 TOML_PY_KEY = re.compile(
     r"^\s*(?P<key>target-version|python_version|requires-python)\s*=\s*(?P<value>[^#]*)"
 )
-YAML_PY_KEY = re.compile(r"^(?P<indent>\s*)(?:-\s+)?python-version\s*:\s*(?P<value>[^#]*)")
+YAML_KEY = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>[\w-]+)\s*:\s*(?P<value>[^#]*)")
+# python-version: ${{ matrix.<key> }} makes <key> a Python pin too.
+MATRIX_PY_REF = re.compile(r"python-version\s*:\s*['\"]?\$\{\{\s*matrix\.([\w-]+)\s*\}\}")
 HOOK_REPO = re.compile(r"^\s*-\s+repo:\s*(['\"]?)(?P<url>[^\s'\"#]+)\1")
 HOOK_REV = re.compile(r"^\s*rev:\s*(['\"]?)(?P<rev>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
 
@@ -2077,9 +2079,10 @@ def check_python_pins(repo: Repo, report: Report) -> None:
                 if m:
                     scan(rel, lines, num, m.group("value"))
             continue
+        keys = {"python-version", *MATRIX_PY_REF.findall("\n".join(lines))}
         for num, line in enumerate(lines, 1):
-            m = YAML_PY_KEY.match(line)
-            if not m:
+            m = YAML_KEY.match(line)
+            if not m or m.group("key") not in keys:
                 continue
             if m.group("value").strip():
                 scan(rel, lines, num, m.group("value"))
@@ -2136,9 +2139,16 @@ def check_hook_pins(repo: Repo, report: Report) -> None:
         comment = m.group("comment") or ""
         rev = m.group("rev")
         named = comment.split("frozen:", 1)[1] if "frozen:" in comment else rev
-        have = None if SHA40.match(named.strip()) else version_tuple(named)
         latest = LATEST_HOOKS[url]
-        want = version_tuple(latest)
+        if SHA40.match(named.strip()):
+            report.add(
+                "pins",
+                f"{rel}:{num}",
+                f"hook:{url} pins a commit and names no release: add its tag"
+                f" (# frozen: vX.Y.Z), so it can be held to {latest}",
+            )
+            continue
+        have, want = version_tuple(named), version_tuple(latest)
         if have is None or want is None or not is_below(have, want):
             continue
         shown = named.strip().split()[0]
