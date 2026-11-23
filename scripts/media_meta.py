@@ -37,7 +37,6 @@ CREDIT = "José M. Requena Plens"
 BASE_KEYWORDS = ("Kleidos", "hardware password manager", "open source")
 RIGHTS_URL = "https://github.com/kleidos-dev/.github/blob/main/LICENSE"
 
-DST_BASE = "http://cv.iptc.org/newscodes/digitalsourcetype/"
 #: IPTC NewsCodes ``digitalsourcetype`` this profile accepts (standard 3.5).
 DIGITAL_SOURCE_TYPES = (
     "digitalCapture",
@@ -67,15 +66,44 @@ COPYRIGHT_MAX_BYTES = 128
 KEYWORDS_MAX = 12
 KEYWORD_MAX_BYTES = 64
 
-NS_SVG = "http://www.w3.org/2000/svg"
-NS_XLINK = "http://www.w3.org/1999/xlink"
-NS_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-NS_DC = "http://purl.org/dc/elements/1.1/"
-NS_CC = "http://creativecommons.org/ns#"
-NS_IPTC_EXT = "http://iptc.org/std/Iptc4xmpExt/2008-02-29/"
-NS_XML = "http://www.w3.org/XML/1998/namespace"
+#: The vocabularies the profile names, as XML declares them: a prefix bound
+#: to a namespace name. A namespace name is an identifier that is compared
+#: character by character (Namespaces in XML 1.0, section 2.3), never an
+#: address that is fetched, so each one is spelled as its vocabulary spells it.
+NAMESPACE_DECLARATIONS = (
+    'xmlns:svg="http://www.w3.org/2000/svg"',
+    'xmlns:xlink="http://www.w3.org/1999/xlink"',
+    'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"',
+    'xmlns:dc="http://purl.org/dc/elements/1.1/"',
+    'xmlns:cc="http://creativecommons.org/ns#"',
+    'xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/"',
+    'xmlns:xml="http://www.w3.org/XML/1998/namespace"',
+    'xmlns:digsrctype="http://cv.iptc.org/newscodes/digitalsourcetype/"',
+)
+
+
+def namespace_names(declarations: tuple[str, ...]) -> dict[str, str]:
+    """The namespace name each declaration binds its prefix to."""
+    names: dict[str, str] = {}
+    for declaration in declarations:
+        attribute, _, name = declaration.partition("=")
+        names[attribute.removeprefix("xmlns:")] = name.strip('"')
+    return names
+
+
+_NAMES = namespace_names(NAMESPACE_DECLARATIONS)
+NS_SVG = _NAMES["svg"]
+NS_XLINK = _NAMES["xlink"]
+NS_RDF = _NAMES["rdf"]
+NS_DC = _NAMES["dc"]
+NS_CC = _NAMES["cc"]
+NS_IPTC_EXT = _NAMES["Iptc4xmpExt"]
+NS_XML = _NAMES["xml"]
 #: The namespaces a published SVG may use, and nothing else.
 SVG_NAMESPACES = (NS_SVG, NS_XLINK, NS_RDF, NS_DC, NS_CC, NS_IPTC_EXT, NS_XML)
+#: IPTC's vocabulary of digital source types (its own alias is ``digsrctype``);
+#: a term's identifier is this name with the term after it.
+DST_BASE = _NAMES["digsrctype"]
 
 #: The REUSE tool skips what lies between these two markers. The words are
 #: split here so the tool does not read this file's own lines as markers.
@@ -162,13 +190,18 @@ _IN_FILE_COPYRIGHT = re.compile(
     + COPYRIGHT_SIGN
     + ")"
 )
-_IN_FILE_LICENSE = re.compile("SPDX-" + r"License-Identifier:\s*(.+?)\s*(\*/|-->|$)")
+_IN_FILE_LICENSE = "SPDX-" + "License-Identifier:"
 _IGNORED = re.compile(_MARK + r"Start.*?(" + _MARK + r"End|\Z)", re.S)
 
 
 def strip_email(holder: str) -> str:
     """A copyright holder with any ``<address>`` removed (standard 2.4)."""
-    return re.sub(r"\s*<[^>]*>", "", holder).strip()
+    *closed, tail = holder.split(">")
+    kept = []
+    for piece in closed:
+        before, opened, _ = piece.partition("<")
+        kept.append(before.rstrip() if opened else piece + ">")
+    return ("".join(kept) + tail).strip()
 
 
 def _glob_match(pattern: str, path: str) -> bool:
@@ -200,6 +233,18 @@ def _as_list(value: str | list[str] | tuple[str, ...] | None) -> list[str]:
     return [value] if isinstance(value, str) else list(value)
 
 
+def in_file_license(line: str) -> str:
+    """The license expression a line states, or nothing.
+
+    The expression ends where the comment that holds it closes (``*/`` or
+    ``-->``) or with the line.
+    """
+    expression = line.partition(_IN_FILE_LICENSE)[2]
+    for closing in ("*/", "-->"):
+        expression = expression.partition(closing)[0]
+    return expression.strip()
+
+
 def in_file_reuse(path: Path) -> tuple[list[str], list[str]]:
     """The notices and license expressions a file states itself.
 
@@ -216,9 +261,9 @@ def in_file_reuse(path: Path) -> tuple[list[str], list[str]]:
     for line in text.splitlines():
         if _IN_FILE_COPYRIGHT.search(line):
             copyrights.append(line.strip())
-        found = _IN_FILE_LICENSE.search(line)
-        if found:
-            licenses.append(found.group(1))
+        license_expression = in_file_license(line)
+        if license_expression:
+            licenses.append(license_expression)
     return copyrights, licenses
 
 
@@ -407,7 +452,9 @@ def svg_block(meta: MediaMeta, svg_id: str) -> str:
 _LOCAL_ROOTS = ("Users", "home", "private", "var/folders", "tmp", "Volumes")
 
 DENY: dict[str, tuple[str, ...]] = {
-    "e-mail": (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",),
+    # The lookbehind starts a match only where a run of address characters
+    # starts, so a run that holds no "@" is read once.
+    "e-mail": (r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",),
     "local path": (
         *(f"/{re.escape(root)}/" for root in _LOCAL_ROOTS),
         r"file://",
@@ -486,7 +533,6 @@ def fnmatch_any(path: str, patterns: list[str]) -> bool:
 MANIFEST = "profile/assets/assets.json"
 
 _ROOT_TAG = re.compile(r"<svg\b[^>]*>", re.S)
-_ATTRIBUTE = re.compile(r'([^\s=]+)="([^"]*)"')
 _HEAD = re.compile(
     r"(?:\s*(?:<!--.*?-->|<title\b[^>]*>.*?</title>|<desc\b[^>]*>.*?</desc>"
     r"|<metadata\b[^>]*>.*?</metadata>))*\s*",
@@ -514,6 +560,28 @@ def meta_from_record(path: str, record: dict[str, Any], root: Path = ROOT) -> Me
     )
 
 
+def root_attributes(tag: str) -> list[tuple[str, str]]:
+    """The attributes of the root start tag, in order.
+
+    Between one double quote and the next the tag alternates a name with its
+    ``=`` and a value. A tag that reads otherwise (a single-quoted value, a
+    bare name, a ``>`` inside a value) is refused: writing it back would lose
+    part of it.
+    """
+    pieces = tag.removeprefix("<svg").removesuffix(">").removesuffix("/").split('"')
+    names = [piece.strip() for piece in pieces[0::2]]
+    values = pieces[1::2]
+    if names.pop() or len(names) != len(values):
+        raise MetaError("the root <svg> tag holds something that is not an attribute")
+    attributes = []
+    for name, value in zip(names, values, strict=True):
+        key = name.removesuffix("=").rstrip()
+        if key == name or not key or any(c.isspace() or c in "='<" for c in key):
+            raise MetaError(f"the root <svg> tag holds {name!r}, not an attribute")
+        attributes.append((key, value))
+    return attributes
+
+
 def stamp_svg(text: str, meta: MediaMeta, svg_id: str) -> str:
     """An SVG with its profile metadata written, the drawing left as it is.
 
@@ -526,7 +594,7 @@ def stamp_svg(text: str, meta: MediaMeta, svg_id: str) -> str:
     if found is None:
         raise MetaError("no root <svg> element")
     tag = found.group(0)
-    attributes = _ATTRIBUTE.findall(tag)
+    attributes = root_attributes(tag)
     wanted = svg_root_attributes(svg_id, meta.language)
     kept = [(k, wanted.pop(k) if k in wanted else v) for k, v in attributes]
     kept += list(wanted.items())

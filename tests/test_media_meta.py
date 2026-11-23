@@ -8,6 +8,7 @@ runs only where the ``reuse`` tool is installed (CI installs it).
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import json
@@ -16,7 +17,9 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import xml.etree.ElementTree as ET
 import zlib
 from dataclasses import replace
 from pathlib import Path
@@ -71,6 +74,13 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 José M. Requena Plens <someone@example.org>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 """
+
+
+#: How many characters a hostile value has, and the seconds reading it may
+#: take. Linear code needs a few milliseconds and a pattern that backtracks
+#: over the whole value for each character needs well over the bound.
+HOSTILE_LENGTH = 50_000
+HOSTILE_SECONDS = 1.0
 
 
 def png(chunks: list[tuple[bytes, bytes]]) -> bytes:
@@ -131,7 +141,122 @@ class ModuleTest(unittest.TestCase):
             mm.license_url("WTFPL")
 
     def test_strip_email(self) -> None:
-        self.assertEqual(mm.strip_email("2026 A B <a@b.c>"), "2026 A B")
+        for holder, expected in (
+            ("2026 A B <a@b.c>", "2026 A B"),
+            ("2026 A B", "2026 A B"),
+            (" A <a@b.c> B  <d@e.f> ", "A B"),
+            ("<a@b.c>", ""),
+            ("A <b <c> D", "A D"),
+            ("A > B <c>> D", "A > B> D"),
+            ("A <unclosed", "A <unclosed"),
+        ):
+            self.assertEqual(mm.strip_email(holder), expected, holder)
+
+    def test_in_file_license(self) -> None:
+        tag = "SPDX-" + "License-Identifier:"
+        for line, expected in (
+            (f"# {tag} MIT", "MIT"),
+            (f"/* {tag}  MIT OR Apache-2.0  */", "MIT OR Apache-2.0"),
+            (f"<!-- {tag} GPL-3.0-or-later --> text", "GPL-3.0-or-later"),
+            (f"<!-- {tag}MIT-->", "MIT"),
+            (f"/* {tag} */", ""),
+            (f"# {tag}", ""),
+            ("# no tag", ""),
+        ):
+            self.assertEqual(mm.in_file_license(line), expected, line)
+
+    def test_hostile_values_cost_linear_time(self) -> None:
+        """A long run that never becomes a match is read once."""
+        spaces, letters = " " * HOSTILE_LENGTH, "a" * HOSTILE_LENGTH
+        tag = "SPDX-" + "License-Identifier:"
+        cases = (
+            ("strip_email, spaces", lambda: mm.strip_email("A" + spaces + "B")),
+            ("strip_email, brackets", lambda: mm.strip_email("A" + "<" * HOSTILE_LENGTH)),
+            ("in_file_license", lambda: mm.in_file_license(f"{tag} A{spaces}B")),
+            ("deny_hits, e-mail", lambda: mm.deny_hits([letters])),
+            ("root_attributes", lambda: mm.root_attributes(f'<svg {letters}="{letters}">')),
+        )
+        for name, read in cases:
+            with self.subTest(name):
+                start = time.perf_counter()
+                read()
+                self.assertLess(time.perf_counter() - start, HOSTILE_SECONDS)
+        with self.subTest("root_attributes, no value"):
+            start = time.perf_counter()
+            with self.assertRaises(mm.MetaError):
+                mm.root_attributes(f"<svg {letters}>")
+            self.assertLess(time.perf_counter() - start, HOSTILE_SECONDS)
+
+    def test_deny_list_finds_an_address_anywhere(self) -> None:
+        for value in ("a@b.example", "by <a.b+c@d-e.example>", "x@y z@w.example", "(q@r.st)"):
+            with self.subTest(value):
+                self.assertTrue(mm.deny_hits([value])[0].startswith("e-mail ("))
+        self.assertEqual(mm.deny_hits(["by a.b+c@d-e.example"]), ["e-mail ('a.b+c@d-e.example')"])
+        self.assertEqual(mm.deny_hits(["@kleidos-dev", "a@b", "a @b.example"]), [])
+
+    def test_namespace_names(self) -> None:
+        """The names are the vocabularies' own; every byte of them counts."""
+        self.assertEqual(
+            mm.SVG_NAMESPACES,
+            (
+                "http://www.w3.org/2000/svg",
+                "http://www.w3.org/1999/xlink",
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+                "http://purl.org/dc/elements/1.1/",
+                "http://creativecommons.org/ns#",
+                "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+                "http://www.w3.org/XML/1998/namespace",
+            ),
+        )
+        self.assertEqual(mm.DST_BASE, "http://cv.iptc.org/newscodes/digitalsourcetype/")
+
+    def test_namespace_declarations_are_xml(self) -> None:
+        """An XML parser reads from each declaration the name the module uses."""
+        for declaration in mm.NAMESPACE_DECLARATIONS:
+            prefix = declaration.partition("=")[0].removeprefix("xmlns:")
+            element = ET.fromstring(f"<{prefix}:x {declaration}/>")  # noqa: S314  the module's own constants
+            self.assertEqual(
+                element.tag,
+                f"{{{mm.namespace_names((declaration,))[prefix]}}}x",
+            )
+
+    def test_no_string_of_the_tools_is_a_cleartext_address(self) -> None:
+        """A string that is an http URL reads as an address to fetch: the
+        tools fetch nothing, and name a vocabulary only in a declaration."""
+        for path in sorted((ROOT / "scripts").glob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    self.assertFalse(
+                        node.value.startswith(("http://", "ftp://", "telnet://")),
+                        f"{path.name}:{node.lineno}",
+                    )
+
+    def test_root_attributes(self) -> None:
+        for tag, expected in (
+            ("<svg>", []),
+            ("<svg/>", []),
+            (
+                '<svg a="1" b:c="x=y &quot; z" d="">',
+                [("a", "1"), ("b:c", "x=y &quot; z"), ("d", "")],
+            ),
+            ('<svg\n  a = "1"\n  b="2" />', [("a", "1"), ("b", "2")]),
+        ):
+            self.assertEqual(mm.root_attributes(tag), expected, tag)
+
+    def test_root_tag_that_would_lose_something_is_refused(self) -> None:
+        for tag in (
+            "<svg a='1'>",
+            "<svg a='1' b=\"2\">",
+            '<svg hidden a="1">',
+            '<svg a="1" hidden>',
+            '<svg a="1>',
+            '<svg ="1">',
+            '<svg a=b="1">',
+        ):
+            with self.subTest(tag), self.assertRaises(mm.MetaError):
+                mm.root_attributes(tag)
+        with self.assertRaises(mm.MetaError):
+            mm.stamp_svg(SVG_LEGACY.replace('role="img"', "role='img'"), EXAMPLE, "kl-x")
 
     def test_glob(self) -> None:
         self.assertTrue(mm._glob_match("profile/assets/*.svg", "profile/assets/a.svg"))
