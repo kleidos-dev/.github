@@ -2076,10 +2076,10 @@ def check_python_pins(repo: Repo, report: Report) -> None:
     """The Python a repository names (.python-version, ruff, mypy, requires-python, CI)."""
     latest = ".".join(str(n) for n in LATEST_PYTHON)
 
-    def scan(rel: str, lines: list[str], num: int, value: str) -> None:
+    def scan(rel: str, lines: list[str], num: int, value: str, key_num: int = 0) -> None:
         for text, version in python_versions(value):
             if is_below(version, LATEST_PYTHON):
-                reasoned = reason_beside(lines, num - 1)
+                reasoned = reason_beside(lines, num - 1, (key_num or num) - 1)
                 pin_below(report, rel, num, f"python:{text}", latest, reasoned)
 
     for rel in repo.files:
@@ -2127,12 +2127,14 @@ def check_python_pins(repo: Repo, report: Report) -> None:
                 scan(rel, lines, num, value)
                 continue
             if value:
-                # A literal or folded scalar (| or >): the deeper lines below are its text.
+                # A literal or folded scalar (| or >): its text is the lines below
+                # indented deeper than the key itself (after any "- " before it).
+                column = m.start("key")
                 for text_num in range(num + 1, len(lines) + 1):
                     text = lines[text_num - 1]
-                    if text.strip() and len(text) - len(text.lstrip()) <= indent:
+                    if text.strip() and len(text) - len(text.lstrip()) <= column:
                         break
-                    scan(rel, lines, text_num, text.split("#")[0])
+                    scan(rel, lines, text_num, text.split("#")[0], key_num=num)
                 continue
             # A block list under the key: its items, deeper than the key.
             for item_num in range(num + 1, len(lines) + 1):

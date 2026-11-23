@@ -132,6 +132,26 @@ class PinsTest(unittest.TestCase):
     def test_a_folded_python_version_is_read(self) -> None:
         self.workflow(python=">-\n            3.13")
         self.assertFound("extra.yml:25: [pins] python:3.13 is below")
+        self.edit(
+            ".github/workflows/extra.yml",
+            "          python-version: >-",
+            "          # below-latest: the image ships 3.13\n          python-version: >-",
+        )
+        self.append(cq.WAIVERS, WAIVER.format(what="python:3.13"))
+        self.assertEqual(self.found(), [])
+
+    def test_a_folded_matrix_entry_ends_at_its_neighbor_key(self) -> None:
+        self.workflow()
+        self.edit(
+            ".github/workflows/extra.yml",
+            "      matrix:\n",
+            "      matrix:\n        include:\n          - python: >-\n              3.15\n"
+            '            library: "1.0"\n',
+        )
+        self.edit(
+            ".github/workflows/extra.yml", "${{ matrix.python-version }}", "${{ matrix.python }}"
+        )
+        self.assertEqual(self.found(), [])
 
     def test_an_inline_reason_on_a_toml_line_counts(self) -> None:
         self.edit(
