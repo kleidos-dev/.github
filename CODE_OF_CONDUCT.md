@@ -32,11 +32,13 @@ Community leaders have the right and responsibility to remove, edit, or reject c
 
 ## Scope
 
-This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces. Examples of representing our community include using an official e-mail address, posting via an official social media account, or acting as an appointed representative at an online or offline event.
+This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces. For Kleidos, community spaces are every repository of the [kleidos-dev](https://github.com/kleidos-dev) organization (issues, pull requests, reviews, discussions and commit messages), the Kleidos firmware repository, and the Kleidos accounts on other platforms (such as Mastodon, Bluesky and YouTube). Examples of representing our community include using an official e-mail address, posting via an official social media account, or acting as an appointed representative at an online or offline event.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at mail@kleidos.dev. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement by email to [mail@kleidos.dev](mailto:mail@kleidos.dev). Email is not encrypted on its own, so to keep a report private on its way, encrypt it if you can to the Kleidos OpenPGP key, `9476 5B19 FB50 5392 C68A  ED60 0535 C714 FCEF 3BC3` (`Kleidos <mail@kleidos.dev>`). Your OpenPGP client can fetch it by the address alone from the Web Key Directory of kleidos.dev (`gpg --locate-keys mail@kleidos.dev`), and it is also on [keys.openpgp.org](https://keys.openpgp.org/vks/v1/by-fingerprint/94765B19FB505392C68AED600535C714FCEF3BC3). Check the fingerprint before you use it. A first message can also simply ask for a reply, with no details.
+
+All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
