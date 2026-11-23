@@ -645,6 +645,7 @@ class SubmodulePinsTest(unittest.TestCase):
             "https://github.com/owner/repo.git": "https://github.com/other/brand.git",
             "ssh://git@github.com/owner/repo": "ssh://git@github.com/other/brand.git",
             "/srv/git/owner/repo.git": "/srv/git/other/brand.git",
+            "file:///srv/git/owner/repo.git": "file:///srv/git/other/brand.git",
         }
         repo = cq.Repo(self.root)
         for origin, expected in cases.items():

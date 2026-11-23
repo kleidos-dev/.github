@@ -2369,7 +2369,7 @@ def resolve_submodule_url(repo: Repo, url: str) -> str:
         return url
     # Keep what names the host (https://host, ssh://host, or scp-like
     # user@host:) and resolve the relative URL against the path after it.
-    m = re.match(r"^(?P<host>[a-z][a-z0-9+.-]*://[^/]+|[^/:]+:(?!//))(?P<path>.*)$", origin)
+    m = re.match(r"^(?P<host>[a-z][a-z0-9+.-]*://[^/]*|[^/:]+:(?!//))(?P<path>.*)$", origin)
     host, path = (m["host"], m["path"]) if m else ("", origin)
     base = [part for part in path.rstrip("/").split("/") if part]
     rooted = path.startswith("/")
