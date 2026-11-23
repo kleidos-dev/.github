@@ -8,7 +8,8 @@ repository adopts it with one command, and takes every later kit release
 with the same command in a sync pull request:
 
     sync.py --write REPO [--profiles base,python,...] [--test-dir tests]
-        writes the copies, the managed blocks, the files seeded once
+        writes the copies, the managed blocks (the organization rules in
+        AGENTS.md among them), the files seeded once
         (.gitleaks.toml, waivers.toml, .markdownlint-cli2.jsonc, the drift
         caller), points every call to a kit workflow at this checkout's
         commit, and records it all in REPO/.github/quality/SOURCE.json
@@ -282,14 +283,17 @@ def place_block(path: Path, entry: dict[str, Any], inner: str) -> list[str]:
     if text and not text.endswith("\n"):
         text += "\n"
     lines = text.splitlines(keepends=True)
-    indent = "  " if entry.get("kind") == "pre-commit" else ""
-    start_marker, end_marker = cq.block_markers(block_id, str(entry["source"]), indent)
+    kind = str(entry.get("kind") or "")
+    indent = "  " if kind == "pre-commit" else ""
+    start_marker, end_marker = cq.block_markers(block_id, str(entry["source"]), indent, kind)
     removed: list[str] = []
     found = cq.find_block(text, block_id)
     if found is not None:
         start, end, _old = found
         lines[start : end + 1] = [start_marker, inner, end_marker]
-    elif entry.get("kind") == "pre-commit":
+    elif kind == "markdown":
+        lines, removed = _place_markdown(lines, [start_marker, inner, end_marker], inner)
+    elif kind == "pre-commit":
         at = _pre_commit_insert_point(lines)
         lines[at:at] = [start_marker, inner, end_marker]
     else:
@@ -307,6 +311,59 @@ def place_block(path: Path, entry: dict[str, Any], inner: str) -> list[str]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(lines), encoding="utf-8")
     return removed
+
+
+def _section_end(lines: list[str], start: int) -> int:
+    """The line after a `## ` section that opens at start: the next `#`/`##` heading or the end."""
+    fenced = False
+    for i in range(start + 1, len(lines)):
+        if re.match(r"^\s*(```|~~~)", lines[i]):
+            fenced = not fenced
+        elif not fenced and re.match(r"^#{1,2}\s", lines[i]):
+            return i
+    return len(lines)
+
+
+def _place_markdown(lines: list[str], block: list[str], inner: str) -> tuple[list[str], list[str]]:
+    """Put a Markdown block in place of the section it replaces, else before a later one.
+
+    A section with the block's own heading (`## Organization rules`, numbered
+    or not, pasted by hand before the kit managed it) is replaced and returned
+    as removed; without one the block goes before the heading the standard
+    puts after it (`## Other repositories`), else at the end. One blank line
+    separates it from its neighbors.
+    """
+    heading = next((ln for ln in inner.splitlines() if ln.startswith("#")), None)
+    same = None
+    if heading:
+        level, _, title = heading.partition(" ")
+        # The same heading, numbered or not (`## 5. Organization rules`).
+        same = re.compile(rf"^{level}\s+(?:\d+\.\s+)?{re.escape(title.strip())}\s*$")
+    at = next((i for i, ln in enumerate(lines) if same and same.match(ln.rstrip("\n"))), None)
+    removed: list[str] = []
+    if at is not None:
+        end = _section_end(lines, at)
+        removed = [ln.rstrip("\n") for ln in lines[at:end] if ln.strip()]
+        del lines[at:end]
+    else:
+        at = next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if re.match(r"^##\s+(?:\d+\.\s+)?Other repositories\s*$", ln)
+            ),
+            len(lines),
+        )
+    before, after = lines[:at], lines[at:]
+    while before and not before[-1].strip():
+        before.pop()
+    while after and not after[0].strip():
+        after.pop(0)
+    out = [*before, "\n"] if before else []
+    out += block
+    if after:
+        out += ["\n", *after]
+    return out, removed
 
 
 def _pre_commit_insert_point(lines: list[str]) -> int:
@@ -409,12 +466,20 @@ def write(
     blocks_rec = []
     for b in blocks:
         inner = cq.canonical_block(kit, b)
-        removed = place_block(repo / str(b["target"]), b, inner)
-        log.append(f"block {b['id']} in {b['target']}")
-        log.extend(
-            f"  moved into the block, removed from {b['target']}: {line.strip()}"
-            for line in removed
-        )
+        if b.get("kind") == "markdown" and not (repo / str(b["target"])).is_file():
+            # The repository writes its own AGENTS.md (docs/agent-docs.md); the
+            # check reports the block missing until it does.
+            log.append(f"skipped block {b['id']}: there is no {b['target']} (docs/agent-docs.md)")
+        else:
+            removed = place_block(repo / str(b["target"]), b, inner)
+            log.append(f"block {b['id']} in {b['target']}")
+            if b.get("kind") == "markdown" and removed:
+                log.append(f"  replaced the hand-written section {removed[0].strip()!r}")
+            else:
+                log.extend(
+                    f"  moved into the block, removed from {b['target']}: {line.strip()}"
+                    for line in removed
+                )
         rec: dict[str, Any] = {
             "id": b["id"],
             "path": b["target"],

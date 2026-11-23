@@ -89,6 +89,7 @@ AGENTS_COPY_MARK = "Vendored from kleidos-dev/agents"
 KIT_COPIES = {
     ".github/quality/check_quality.py": "quality/check_quality.py",
     ".github/quality/md_nowrap.py": "quality/md_nowrap.py",
+    ".github/quality/agent_docs.py": "quality/agent_docs.py",
     ".github/quality/spdx_headers.py": "quality/spdx_headers.py",
     ".github/quality/markdownlint.jsonc": "quality/markdownlint/base.jsonc",
     ".gitleaks-mac.toml": "quality/gitleaks/mac.toml",
@@ -226,8 +227,15 @@ GIT_TIMEOUT = 180
 # git fetch only when it is a plain branch name (never an option).
 SAFE_BRANCH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._/-]*$")
 
-MARK_START = re.compile(r"^(?P<indent>[ \t]*)# >>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$")
-MARK_END = re.compile(r"^[ \t]*# <<< kleidos-quality (?P<id>[a-z0-9-]+)[ \t]*$")
+# The markers of a managed block: `# ...` lines in YAML and TOML, an HTML
+# comment in Markdown (which Claude Code strips before an agent reads the file).
+MARK_START = re.compile(
+    r"^(?P<indent>[ \t]*)(?:# |<!-- )>>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$"
+)
+MARK_END = re.compile(r"^[ \t]*(?:# |<!-- )<<< kleidos-quality (?P<id>[a-z0-9-]+)(?: -->)?[ \t]*$")
+# The block kinds whose kit text is a region of the same id in the source file
+# (the kit's canonical hook list); any other kind's source is the whole text.
+REGION_KINDS = ("pre-commit",)
 KIT_USES = re.compile(
     r"kleidos-dev/\.github/\.github/workflows/(?P<file>[\w.-]+\.ya?ml)@(?P<ref>[^\s#'\"]+)"
 )
@@ -429,13 +437,14 @@ def find_block(text: str, block_id: str) -> tuple[int, int, str] | None:
     return start, end, "".join(lines[start + 1 : end])
 
 
-def block_markers(block_id: str, source: str, indent: str = "") -> tuple[str, str]:
-    """The two marker lines sync.py writes around a block."""
-    return (
-        f"{indent}# >>> kleidos-quality {block_id}"
-        f" (synced from {KIT_REPO} {source}; do not edit)\n",
-        f"{indent}# <<< kleidos-quality {block_id}\n",
-    )
+def block_markers(
+    block_id: str, source: str, indent: str = "", kind: str | None = None
+) -> tuple[str, str]:
+    """The two marker lines sync.py writes around a block (HTML comments in Markdown)."""
+    note = f"kleidos-quality {block_id} (synced from {KIT_REPO} {source}; do not edit)"
+    if kind == "markdown":
+        return f"<!-- >>> {note} -->\n", f"<!-- <<< kleidos-quality {block_id} -->\n"
+    return f"{indent}# >>> {note}\n", f"{indent}# <<< kleidos-quality {block_id}\n"
 
 
 def toml_table_of_line(lines: list[str], index: int) -> str | None:
@@ -533,7 +542,7 @@ class GitKit(Kit):
 def canonical_block(kit: Kit, entry: dict[str, Any]) -> str:
     """The text a managed block holds, from the kit."""
     text = kit.read(str(entry["source"])).decode("utf-8")
-    if entry.get("kind") == "pre-commit":
+    if entry.get("kind") in REGION_KINDS:
         found = find_block(text, str(entry["id"]))
         if found is None:
             raise SetupError(f"the kit's {entry['source']} has no block {entry['id']}")

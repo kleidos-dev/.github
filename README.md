@@ -33,6 +33,7 @@ This repository holds the kleidos-dev organization's profile, its community defa
 | [`docs/discussion-categories.md`](docs/discussion-categories.md) | The Discussions categories and the pinned welcome post. |
 | [`docs/sonarcloud.md`](docs/sonarcloud.md) | What is set by hand in the SonarQube Cloud organization and its projects, and how to add a project. |
 | [`docs/quality.md`](docs/quality.md) | The quality kit: the rules every kleidos-dev repository meets, why, how a repository adopts the kit, overrides a rule and takes a new release. |
+| [`docs/agent-docs.md`](docs/agent-docs.md) | The standard for every repository's `AGENTS.md` and `CLAUDE.md`, the organization rules they share and the guard that checks them. |
 | [`docs/quality-firmware-adoption.md`](docs/quality-firmware-adoption.md) | The plan for bringing the firmware repository onto the kit. |
 | [`quality/`](quality/) | The kit itself: the shared tool configs, the sync script and the checkers every repository copies, their tests, and the tool versions. |
 | [`scripts/`](scripts/), [`tests/`](tests/) | The media metadata tools (`media_meta.py`, `stamp_media_meta.py`, `check_metadata.py`) and their tests. |

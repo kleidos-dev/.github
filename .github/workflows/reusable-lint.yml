@@ -10,13 +10,14 @@
 #     permissions:
 #       contents: read
 #
-# One job, cheapest first: the kit check (check_quality.py fetched from
-# kleidos-dev/.github at the commit SOURCE.json records, so a local copy
-# cannot judge itself), then every pre-commit hook on every file (the kit's
-# blocks and the repository's own), then zizmor's online audits. Hooks that
-# need a secret or a local environment are named in `skip`; mypy (which
-# installs the repository's dependencies), reuse lint and the header lines
-# (which need the whole history) have workflows of their own.
+# One job, cheapest first: the kit check and the agent-docs guard
+# (check_quality.py and agent_docs.py fetched from kleidos-dev/.github at the
+# commit SOURCE.json records, so a local copy cannot judge itself), then
+# every pre-commit hook on every file (the kit's blocks and the repository's
+# own), then zizmor's online audits. Hooks that need a secret or a local
+# environment are named in `skip`; mypy (which installs the repository's
+# dependencies), reuse lint and the header lines (which need the whole
+# history) have workflows of their own.
 name: Quality kit lint
 
 on:
@@ -81,6 +82,12 @@ jobs:
           KIT: ${{ steps.kit.outputs.dir }}
           EXTRA_SKIP: ${{ inputs.skip }}
         run: python "${KIT}/quality/check_quality.py" --kit "${KIT}" --lint-skip "${EXTRA_SKIP}" --summary "${GITHUB_STEP_SUMMARY}"
+      # The agent-docs guard from the kit too, so a local copy cannot judge
+      # itself (docs/agent-docs.md); the hook of the same id is skipped below.
+      - name: Agent instruction files (AGENTS.md, CLAUDE.md)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python "${KIT}/quality/agent_docs.py" --repo . --github
       - name: Cache the hook environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -90,10 +97,11 @@ jobs:
         env:
           EXTRA_SKIP: ${{ inputs.skip }}
         run: |
-          # The kit check ran above from the kit itself; mypy, reuse lint and the
-          # header lines have workflows of their own (reusable-mypy.yml,
-          # reusable-reuse.yml, which fetches the history the years need).
-          export SKIP="kleidos-quality,mypy,reuse,kleidos-spdx-headers${EXTRA_SKIP:+,${EXTRA_SKIP}}"
+          # The kit check and the agent-docs guard ran above from the kit itself;
+          # mypy, reuse lint and the header lines have workflows of their own
+          # (reusable-mypy.yml, reusable-reuse.yml, which fetches the history
+          # the years need).
+          export SKIP="kleidos-quality,kleidos-agent-docs,mypy,reuse,kleidos-spdx-headers${EXTRA_SKIP:+,${EXTRA_SKIP}}"
           pre-commit run --all-files --show-diff-on-failure --color always
       - name: zizmor, online audits included
         env:

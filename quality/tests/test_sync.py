@@ -52,7 +52,14 @@ class WriteTest(unittest.TestCase):
             self.assertEqual(cq.sha256(data), entry["sha256"], entry["path"])
         self.assertEqual(
             {b["id"] for b in record["blocks"]},
-            {"pre-commit-base", "pre-commit-python", "pre-commit-actions", "mypy", "typos"},
+            {
+                "pre-commit-base",
+                "pre-commit-python",
+                "pre-commit-actions",
+                "mypy",
+                "typos",
+                "organization-rules",
+            },
         )
 
     def test_a_second_write_changes_nothing(self) -> None:
@@ -242,6 +249,96 @@ class WriteTest(unittest.TestCase):
         self.assertTrue((self.root / ".shellcheckrc").is_file())
 
 
+class MarkdownBlockTest(unittest.TestCase):
+    """The organization rules: a Markdown block in AGENTS.md, between HTML comments."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = fx.consumer(Path(self._tmp.name) / "repo")
+        self.agents = self.root / "AGENTS.md"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def sync(self) -> list[str]:
+        return sync.write(self.root, commit=fx.FAKE_COMMIT)
+
+    def block(self) -> str:
+        return (fx.CENTRAL / "quality/agents/block.md").read_text(encoding="utf-8")
+
+    def test_the_block_goes_before_other_repositories(self) -> None:
+        self.sync()
+        text = self.agents.read_text(encoding="utf-8")
+        start = "<!-- >>> kleidos-quality organization-rules (synced from kleidos-dev/.github"
+        self.assertIn("- Run the tests in `pkg/`.\n\n" + start, text)
+        found = cq.find_block(text, "organization-rules")
+        assert found is not None
+        self.assertEqual(found[2], self.block())
+        self.assertIn(
+            "<!-- <<< kleidos-quality organization-rules -->\n\n## Other repositories", text
+        )
+        self.assertEqual(problems(self.root), [])
+
+    def test_a_hand_written_section_is_replaced(self) -> None:
+        fx.agent_files(
+            self.root,
+            rules="- Mine.\n\n## Organization rules\n\nAn old copy.\n\n- Old rule.\n",
+        )
+        log = self.sync()
+        text = self.agents.read_text(encoding="utf-8")
+        self.assertNotIn("Old rule", text)
+        self.assertEqual(text.count("## Organization rules"), 1)
+        self.assertIn("- Mine.\n\n<!-- >>> kleidos-quality organization-rules", text)
+        self.assertTrue(any("replaced the hand-written section" in line for line in log), log)
+
+    def test_a_numbered_section_is_replaced_before_a_numbered_later_one(self) -> None:
+        fx.write(
+            self.root,
+            "AGENTS.md",
+            fx.md_header()
+            + "# AGENTS.md\n\n## 4. Rules\n\n- Mine.\n\n## 5. Organization rules\n\n- Old.\n\n"
+            + "## 6. Other repositories\n\nNone.\n",
+        )
+        self.sync()
+        text = self.agents.read_text(encoding="utf-8")
+        self.assertNotIn("5. Organization rules", text)
+        self.assertIn("-->\n\n## 6. Other repositories", text)
+        self.assertIn("- Mine.\n\n<!-- >>> kleidos-quality organization-rules", text)
+
+    def test_without_a_later_section_the_block_ends_the_file(self) -> None:
+        fx.write(self.root, "AGENTS.md", fx.md_header() + "# AGENTS.md\n\nRules.\n")
+        self.sync()
+        text = self.agents.read_text(encoding="utf-8")
+        self.assertTrue(text.endswith("<!-- <<< kleidos-quality organization-rules -->\n"), text)
+        self.assertIn("Rules.\n\n<!-- >>> kleidos-quality organization-rules", text)
+
+    def test_a_second_write_leaves_agents_md_alone(self) -> None:
+        self.sync()
+        before = self.agents.read_bytes()
+        self.sync()
+        self.assertEqual(self.agents.read_bytes(), before)
+
+    def test_without_agents_md_the_block_is_reported_missing(self) -> None:
+        self.agents.unlink()
+        log = self.sync()
+        self.assertFalse(self.agents.exists())
+        self.assertTrue(any("skipped block organization-rules" in line for line in log), log)
+        found = problems(self.root)
+        self.assertTrue(any("AGENTS.md: [blocks] missing" in p for p in found), found)
+
+    def test_an_edited_block_is_caught(self) -> None:
+        self.sync()
+        text = self.agents.read_text(encoding="utf-8")
+        self.agents.write_text(text.replace("never a force push", "rarely"), encoding="utf-8")
+        found = problems(self.root)
+        self.assertTrue(any("block organization-rules differs" in p for p in found), found)
+
+    def test_the_synced_repository_passes_the_agent_docs_guard(self) -> None:
+        self.sync()
+        fx.commit(self.root)
+        self.assertEqual(fx.agent_docs.check(fx.agent_docs.Repo(self.root)), [])
+
+
 class PlaceBlockTest(unittest.TestCase):
     def test_a_table_is_created_when_the_file_has_none(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -273,6 +370,16 @@ class PlaceBlockTest(unittest.TestCase):
             lines = path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(lines[0], "repos:")
             self.assertTrue(lines[1].startswith("  # >>> kleidos-quality pre-commit-base"))
+
+    def test_markdown_markers_are_html_comments(self) -> None:
+        start, end = cq.block_markers(
+            "organization-rules", "quality/agents/block.md", "", "markdown"
+        )
+        self.assertTrue(start.startswith("<!-- >>> kleidos-quality organization-rules ("))
+        self.assertTrue(start.endswith("; do not edit) -->\n"))
+        self.assertEqual(end, "<!-- <<< kleidos-quality organization-rules -->\n")
+        text = f"# A\n\n{start}## B\n{end}"
+        self.assertEqual(cq.find_block(text, "organization-rules"), (2, 4, "## B\n"))
 
     def test_a_repos_key_with_a_comment_is_kept_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

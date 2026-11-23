@@ -8,6 +8,8 @@
 # repository that adopts the kit. A block's source is either a file holding
 # its text or, for the pre-commit blocks, the region of the same id in this
 # repository's own .pre-commit-config.yaml (which is the canonical hook list).
+# A block's kind says how its markers are written: `#` lines in TOML and YAML,
+# HTML comments in Markdown.
 
 [profiles]
 base = "every repository: secrets, spelling, licensing, Markdown, Dependabot, the kit check"
@@ -32,6 +34,12 @@ profile = "base"
 [[copy]]
 source = "quality/md_nowrap.py"
 target = ".github/quality/md_nowrap.py"
+profile = "base"
+
+# The agent-docs guard: AGENTS.md and CLAUDE.md keep docs/agent-docs.md.
+[[copy]]
+source = "quality/agent_docs.py"
+target = ".github/quality/agent_docs.py"
 profile = "base"
 
 [[copy]]
@@ -133,6 +141,15 @@ target = "pyproject.toml"
 kind = "toml"
 table = "tool.mypy"
 profile = "python"
+
+# The rules every kleidos-dev repository shares, in its AGENTS.md between
+# HTML-comment markers (docs/agent-docs.md); the source is the whole file.
+[[block]]
+id = "organization-rules"
+source = "quality/agents/block.md"
+target = "AGENTS.md"
+kind = "markdown"
+profile = "base"
 
 [[block]]
 id = "typos"

@@ -20,6 +20,7 @@ CENTRAL = QUALITY.parent
 if str(QUALITY) not in sys.path:
     sys.path.insert(0, str(QUALITY))
 
+import agent_docs  # noqa: E402  found through the path set above
 import check_quality  # noqa: E402  found through the path set above
 import fetch_tool  # noqa: E402  found through the path set above
 import latest_releases  # noqa: E402  found through the path set above
@@ -35,6 +36,8 @@ __all__ = [
     "HOLDER",
     "LICENSE",
     "QUALITY",
+    "agent_docs",
+    "agent_files",
     "check_quality",
     "commit",
     "consumer",
@@ -43,6 +46,7 @@ __all__ = [
     "header",
     "init",
     "latest_releases",
+    "md_header",
     "md_nowrap",
     "mypy_groups",
     "spdx_headers",
@@ -140,4 +144,22 @@ def consumer(root: Path) -> Path:
         "README.md",
         f"<!--\n{COPYRIGHT} 2026 {HOLDER}\n{LICENSE} MIT\n-->\n\n# Demo\n\nOne line.\n",
     )
+    agent_files(root)
     return root
+
+
+def md_header() -> str:
+    return f"<!--\n{COPYRIGHT} 2026 {HOLDER}\n{LICENSE} MIT\n-->\n\n"
+
+
+def agent_files(root: Path, rules: str = "- Run the tests in `pkg/`.\n") -> None:
+    """AGENTS.md and CLAUDE.md as docs/agent-docs.md describes them, and the ignore line."""
+    write(
+        root,
+        "AGENTS.md",
+        md_header()
+        + "# AGENTS.md\n\n## What this repository is\n\nA demo.\n\n"
+        + f"## Rules of this repository\n\n{rules}\n## Other repositories\n\nNone.\n",
+    )
+    write(root, "CLAUDE.md", md_header() + "@AGENTS.md\n")
+    write(root, ".gitignore", header() + "\nCLAUDE.local.md\n")
