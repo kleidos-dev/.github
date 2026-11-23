@@ -450,6 +450,11 @@ class SubmodulePinsTest(unittest.TestCase):
         self.assertIn("fonttools==4.60.0 (here none)", found)
         self.assertIn("no playwright (here playwright==1.65.1)", found)
 
+    def test_an_included_file_the_tip_removed_is_reported(self) -> None:
+        fx.git(self.upstream, "mv", "requirements.txt", "stack.txt")
+        fx.commit(self.upstream, "Rename the stack")
+        self.assertTrue(any("no requirements.txt any more" in f for f in self.found()))
+
     def test_a_named_branch_is_followed(self) -> None:
         fx.git(self.upstream, "checkout", "-q", "-b", "stable")
         self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))

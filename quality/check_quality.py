@@ -2335,8 +2335,18 @@ class SubmoduleUpstream:
             self._fetch(commit)
 
     def read(self, commit: str, path: str) -> str | None:
+        """A file's text at a commit; None when the commit has no such file."""
+        listed = _git(f"--git-dir={self.git_dir}", "ls-tree", "--name-only", commit, "--", path)
+        if listed.returncode != 0:
+            raise SubmoduleFetchError(listed.stderr.strip() or f"ls-tree {commit[:7]} failed")
+        if not listed.stdout.strip():
+            return None
+        # The scratch clone has no blobs: git fetches this one on demand.
         shown = _git(f"--git-dir={self.git_dir}", "show", f"{commit}:{path}")
-        return shown.stdout if shown.returncode == 0 else None
+        if shown.returncode != 0:
+            said = shown.stderr.strip().splitlines()
+            raise SubmoduleFetchError(said[-1] if said else f"{path} at {commit[:7]} unreadable")
+        return shown.stdout
 
     def reader(self, commit: str) -> Callable[[str], str | None]:
         """read() bound to one commit."""
@@ -2441,6 +2451,17 @@ def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
                 if tip == sub.commit:
                     continue
                 upstream.ensure(sub.commit)
+                compared = [
+                    (
+                        rel,
+                        lines,
+                        num,
+                        inner,
+                        requirement_pins(upstream.reader(sub.commit), inner),
+                        requirement_pins(upstream.reader(tip), inner),
+                    )
+                    for _, rel, lines, num, inner in uses
+                ]
             except (SubmoduleFetchError, subprocess.TimeoutExpired) as exc:
                 for _, rel, _, num, _ in uses:
                     report.add(
@@ -2450,9 +2471,7 @@ def check_submodule_pins(repo: Repo, report: Report, online: bool) -> None:
                         f" the pins it supplies with its {branch}: {exc}",
                     )
                 continue
-            for _, rel, lines, num, inner in uses:
-                have = requirement_pins(upstream.reader(sub.commit), inner)
-                want = requirement_pins(upstream.reader(tip), inner)
+            for rel, lines, num, inner, have, want in compared:
                 if have is None:
                     continue  # pip itself fails on a missing include
                 changes = pin_changes(have, want) if want is not None else [f"no {inner} any more"]
