@@ -173,7 +173,7 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("mypy one (videos/one): errors: Found 1 error", out)
         self.assertIn("mypy two (videos/two, tools): clean", out)
 
-    def test_github_output_folds_annotates_and_summarises(self) -> None:
+    def test_github_output_folds_annotates_and_summarizes(self) -> None:
         self.pyproject("[tool.mypy]\nstrict = true\ncache_dir = '.cache/mypy'\n" + GROUPS)
         summary = self.repo / "summary.md"
         status, out, _err = self.run_groups(
