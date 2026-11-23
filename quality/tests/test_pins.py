@@ -180,6 +180,8 @@ class PinsTest(unittest.TestCase):
         self.assertEqual(self.found(), [])
         self.edit(".github/workflows/extra.yml", 'version: ["3.15"]', 'version: ["3.13"]')
         self.assertFound("[pins] python:3.13 is below")
+        self.edit(".github/workflows/extra.yml", "\njobs:\n", '\n"jobs":\n')
+        self.assertFound("[pins] python:3.13 is below")
 
     def test_the_documented_reason_inside_with_counts(self) -> None:
         self.workflow(python='"3.9"')

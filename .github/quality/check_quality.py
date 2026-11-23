@@ -2048,7 +2048,7 @@ def pin_below(report: Report, rel: str, num: int, what: str, latest: str, reason
 def workflow_job_ranges(lines: list[str]) -> list[tuple[int, int]]:
     """The line range (start, end) of each job under a workflow's top-level jobs:."""
     try:
-        top = next(i for i, line in enumerate(lines) if re.match(r"^jobs\s*:", line))
+        top = next(i for i, line in enumerate(lines) if re.match(r"^(['\"]?)jobs\1\s*:", line))
     except StopIteration:
         return []
     starts: list[int] = []
