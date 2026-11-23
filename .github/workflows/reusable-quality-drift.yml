@@ -3,11 +3,16 @@
 #
 # The quality kit's drift notice. Each adopting repository calls it weekly
 # from .github/workflows/quality-drift.yml (seeded by sync.py). It compares
-# the kit commit .github/quality/SOURCE.json records with kleidos-dev/.github
-# main; when the kit (quality/, the hook blocks, the reusable workflows) has
-# changed since, it dry-runs the new kit on a copy of this tree, writes what
-# a sync would bring to the job summary, and fails, so the red weekly run
-# is the notice (GitHub mails it to whoever last changed the schedule).
+# the kit commit .github/quality/SOURCE.json records with the newest kit
+# release (the newest quality-v* tag of kleidos-dev/.github); when what a
+# repository receives (quality/, the hook blocks, the reusable workflows,
+# the commit-message checker) differs, it dry-runs that release on a copy
+# of this tree, writes what a sync would bring to the job summary, and
+# fails, so the red weekly run is the notice (GitHub mails it to whoever
+# last changed the schedule). A merge to the kit's main that is not a
+# release raises nothing. GitHub disables the schedule of a public
+# repository with no activity for 60 days; docs/quality.md says how to
+# notice it.
 # Issues are off in most kleidos-dev repositories and a workflow may not
 # open pull requests, so it writes nowhere: it needs only a read token,
 # never pushes, and never runs pull-request code (it runs on the default
@@ -21,7 +26,7 @@ permissions: {}
 
 jobs:
   drift:
-    name: "🔭 Compare with the kit's main"
+    name: "🔭 Compare with the newest kit release"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -33,27 +38,29 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
-      - name: Is the recorded kit behind main?
+      - name: Is the recorded kit behind the newest release?
         id: compare
         run: |
           set -euo pipefail
           kit="${RUNNER_TEMP}/kit"
           git clone -q --filter=blob:none https://github.com/kleidos-dev/.github "${kit}"
-          main="$(git -C "${kit}" rev-parse HEAD)"
           recorded="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
-          behind=true
-          if [ "${recorded}" = "${main}" ]; then
-            behind=false
-          elif git -C "${kit}" cat-file -e "${recorded}^{commit}" 2>/dev/null \
-            && git -C "${kit}" diff --quiet "${recorded}" "${main}" -- quality .pre-commit-config.yaml .github/workflows; then
-            behind=false
+          python -m pip install -q --require-hashes -r "${kit}/quality/requirements-tools.txt"
+          # The kit's own sync.py names the newest quality-v* tag and compares
+          # what a repository receives at the two commits (key=value lines).
+          python "${kit}/quality/sync.py" --drift "${recorded}" > "${RUNNER_TEMP}/drift.txt"
+          cat "${RUNNER_TEMP}/drift.txt"
+          tag="$(sed -n 's/^tag=//p' "${RUNNER_TEMP}/drift.txt")"
+          behind="$(sed -n 's/^behind=//p' "${RUNNER_TEMP}/drift.txt")"
+          if [ "${behind}" = true ]; then
+            git -C "${kit}" checkout -q "${tag}"
           fi
           {
             echo "kit=${kit}"
-            echo "main=${main}"
+            echo "tag=${tag}"
+            echo "commit=$(sed -n 's/^commit=//p' "${RUNNER_TEMP}/drift.txt")"
             echo "behind=${behind}"
           } >> "${GITHUB_OUTPUT}"
-          echo "recorded ${recorded}, kit main ${main}, behind: ${behind}"
       - name: Dry-run the new kit on a copy of this tree
         if: steps.compare.outputs.behind == 'true'
         env:
@@ -72,14 +79,15 @@ jobs:
         if: steps.compare.outputs.behind == 'true'
         env:
           KIT: ${{ steps.compare.outputs.kit }}
-          MAIN: ${{ steps.compare.outputs.main }}
+          RELEASE_COMMIT: ${{ steps.compare.outputs.commit }}
+          TAG: ${{ steps.compare.outputs.tag }}
         run: |
           set -euo pipefail
           python3 - "${RUNNER_TEMP}" <<'PY' >> "${GITHUB_STEP_SUMMARY}"
           import json, os, sys
           tmp = sys.argv[1]
           kit = os.environ["KIT"]
-          main = os.environ["MAIN"]
+          commit = os.environ["RELEASE_COMMIT"]
           new = open(os.path.join(kit, "quality", "VERSION"), encoding="utf-8").read().strip()
           old = json.load(open(".github/quality/SOURCE.json", encoding="utf-8")).get("version", "?")
           path = os.path.join(tmp, "check.json")
@@ -88,9 +96,10 @@ jobs:
           diffstat = open(os.path.join(tmp, "diffstat.txt"), encoding="utf-8").read().strip()
           print(f"## Quality kit {new} available")
           print()
-          print(f"The Kleidos quality kit is at **{new}** ([{main[:12]}](https://github.com/kleidos-dev/.github/commit/{main})); this repository records **{old}**.")
+          tag = os.environ["TAG"]
+          print(f"The Kleidos quality kit's newest release is **{new}** ([{tag}](https://github.com/kleidos-dev/.github/tree/{tag}), {commit[:12]}); this repository records **{old}**.")
           print()
-          print("A sync is one pull request: `python3 <kleidos-dev/.github>/quality/sync.py --write .`, then fix every new finding in the same pull request (docs/quality.md in kleidos-dev/.github, \"Taking a new kit release\"). The kit's quality/CHANGELOG.md says what changed.")
+          print(f"A sync is one pull request: check out `{tag}` in a clone of kleidos-dev/.github beside this repository, run `python3 ../.github/quality/sync.py --write .`, then fix every new finding in the same pull request (docs/quality.md in kleidos-dev/.github, \"Taking a new kit release\"). The kit's quality/CHANGELOG.md says what changed.")
           print()
           print(f"A dry run of the new kit on this repository's default branch found **{len(check['problems'])}** kit problem(s) and **{len(ruff)}** ruff finding(s); mypy is not counted here (it needs the repository's dependencies).")
           print()
@@ -107,5 +116,5 @@ jobs:
           print()
           print("</details>")
           PY
-          echo "::error title=Quality kit behind::kleidos-dev/.github has a newer quality kit ($(cat "${KIT}/quality/VERSION")); the job summary says what a sync would bring."
+          echo "::error title=Quality kit behind::kleidos-dev/.github has released quality kit ${TAG}; the job summary says what a sync would bring."
           exit 1

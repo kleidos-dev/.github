@@ -41,8 +41,33 @@ class CheckTextTest(unittest.TestCase):
         self.assertEqual(sh.check_text("a.py", fx.header(year="2026"), "2030", copy=True), [])
 
     def test_a_third_party_holder_keeps_its_own_year(self) -> None:
-        text = f"# {C} 2014 Someone Else\n# {L} MIT\n"
+        text = f"# {C} 2014 Someone Else\n# {C} 2026 {H}\n# {L} MIT\n"
         self.assertEqual(sh.check_text("a.py", text, "2026"), [])
+
+    def test_a_copyright_line_names_the_owner(self) -> None:
+        text = f"# {C} 2026 Jose Requena\n# {L} MIT\n"
+        self.assertTrue(any("names" in p for p in sh.check_text("a.py", text, "2026")))
+
+    def test_the_year_before_is_accepted_for_a_squash_across_new_year(self) -> None:
+        self.assertEqual(sh.check_text("a.py", fx.header(year="2026"), "2027"), [])
+        self.assertTrue(sh.check_text("a.py", fx.header(year="2025"), "2027"))
+        self.assertTrue(sh.check_text("a.py", fx.header(year="2028"), "2027"))
+
+    def test_the_lines_sit_in_a_comment_at_the_top(self) -> None:
+        late = '"""Doc."""\n' + fx.header()
+        self.assertTrue(any("top" in p for p in sh.check_text("a.py", late, "2026")))
+        in_docstring = f'"""Doc.\n\n{C} 2026 {H}\n{L} MIT\n"""\n'
+        self.assertTrue(any("top" in p for p in sh.check_text("a.py", in_docstring, "2026")))
+        shebang = "#!/usr/bin/env python3\n" + fx.header()
+        self.assertEqual(sh.check_text("a.py", shebang, "2026"), [])
+        md_late = f"# Title\n\n<!--\n{C} 2026 {H}\n{L} MIT\n-->\n"
+        self.assertTrue(any("top" in p for p in sh.check_text("a.md", md_late, "2026")))
+        md = f"---\ntitle: x\n---\n<!--\n{C} 2026 {H}\n{L} MIT\n-->\n\n# T\n"
+        self.assertEqual(sh.check_text("a.md", md, "2026"), [])
+        css = f"/*\n * {C} 2026 {H}\n * {L} MIT\n */\nbody {{}}\n"
+        self.assertEqual(sh.check_text("a.css", css, "2026"), [])
+        css_late = f"body {{}}\n/*\n * {C} 2026 {H}\n * {L} MIT\n */\n"
+        self.assertTrue(sh.check_text("a.css", css_late, "2026"))
 
     def test_lines_inside_an_ignore_block_do_not_count(self) -> None:
         text = f"# {sh.IGNORE_START}\n# {C} 2026 {H}\n# {L} MIT\n# {sh.IGNORE_END}\n"
@@ -95,6 +120,53 @@ class FixTextTest(unittest.TestCase):
         _new, why = sh.fix_text("a.py", "x = 1\n", "2026", None)
         self.assertIsNotNone(why)
 
+    def test_astro_takes_slashes_inside_its_front_matter(self) -> None:
+        text = "---\nconst { title } = Astro.props;\n---\n<article>{title}</article>\n"
+        new, why = sh.fix_text("Card.astro", text, "2026", "MIT")
+        self.assertIsNone(why)
+        self.assertTrue(new.startswith(f"---\n// {C} 2026 {H}\n// {L} MIT\n"), new)
+        self.assertNotIn("<!--", new)
+        self.assertEqual(sh.check_text("Card.astro", new, "2026"), [])
+        bare, why = sh.fix_text("Bare.astro", "<p>hi</p>\n", "2026", "MIT")
+        self.assertIsNone(why)
+        self.assertEqual(bare, f"---\n// {C} 2026 {H}\n// {L} MIT\n---\n<p>hi</p>\n")
+        html_comment = text.replace("<article>", f"<!--\n{C} 2026 {H}\n{L} MIT\n-->\n<article>")
+        self.assertTrue(
+            any("front matter" in p for p in sh.check_text("C.astro", html_comment, "2026"))
+        )
+        moved, why = sh.fix_text("C.astro", html_comment, "2026", None)
+        self.assertIsNone(why)
+        self.assertNotIn("<!--", moved)
+        self.assertEqual(sh.check_text("C.astro", moved, "2026"), [])
+        self.assertIn("<article>{title}</article>", moved)
+
+    def test_every_header_line_sits_at_the_top(self) -> None:
+        split = f"<!--\n{C} 2026 {H}\n-->\n\n# Title\n\n<!--\n{L} MIT\n-->\n"
+        self.assertTrue(any("top" in p for p in sh.check_text("a.md", split, "2026")))
+
+    def test_only_shell_like_shebangs_take_hash_lines(self) -> None:
+        for shebang in ("#!/bin/sh", "#!/usr/bin/env bash", "#!/usr/bin/env python3", "#!/bin/zsh"):
+            self.assertIsNotNone(sh.style_for("tools/run", shebang + "\n"), shebang)
+        self.assertIsNone(sh.style_for("tools/run", "#!/usr/bin/env node\n"))
+
+    def test_more_formats_take_comments(self) -> None:
+        for rel in (
+            ".git-blame-ignore-revs",
+            "Doxyfile",
+            "docs/groups.dox",
+            "firmware/sdkconfig.defaults",
+            "Kconfig.projbuild",
+            "variants/partitions_8mb.csv",
+            "src/linker.lf",
+            "test/lsan.supp",
+            "boot.S",
+            "memory.ld",
+            "quality/shellcheck/shellcheckrc",
+            ".cppcheck-suppress",
+        ):
+            self.assertIsNotNone(sh.style_for(rel), rel)
+        self.assertIsNone(sh.style_for("hardware/bom.csv"))
+
     def test_a_format_without_comments_is_left_to_reuse_toml(self) -> None:
         _new, why = sh.fix_text("a.json", "{}\n", "2026", "MIT")
         self.assertIn("REUSE.toml", str(why))
@@ -116,7 +188,9 @@ class RepositoryTest(unittest.TestCase):
             'version = 1\n\n[[annotations]]\npath = ["**"]\nprecedence = "aggregate"\n'
             f'SPDX-FileCopyrightText = "2025 {H}"\nSPDX-License-Identifier = "MIT"\n\n'
             '[[annotations]]\npath = ["vendor/**"]\nprecedence = "override"\n'
-            'SPDX-FileCopyrightText = "2014 Someone Else"\nSPDX-License-Identifier = "MIT"\n',
+            'SPDX-FileCopyrightText = "2014 Someone Else"\nSPDX-License-Identifier = "MIT"\n\n'
+            '[[annotations]]\npath = ["**/*.json"]\nprecedence = "aggregate"\n'
+            f'SPDX-FileCopyrightText = "2025 {H}"\nSPDX-License-Identifier = "MIT"\n',
         )
         fx.write(self.root, "old.py", "x = 1\n")
         fx.write(self.root, "vendor/lib.py", "y = 2\n")
@@ -142,6 +216,17 @@ class RepositoryTest(unittest.TestCase):
         new = (self.root / "new.sh").read_text()
         self.assertTrue(new.startswith("#!/bin/sh\n" + fx.header(year=sh_year())), new)
         self.assertEqual(sh.check_repo(self.root)[0], [])
+
+    def test_a_text_file_of_an_unknown_format_is_named(self) -> None:
+        fx.write(self.root, "notes.weird", "plain text\n")
+        (self.root / "blob.bin").write_bytes(b"\x00\x01\x02")
+        fx.write(self.root, "tools/build", "#!/bin/sh\necho hi\n")
+        problems, _notes = sh.check_repo(self.root)
+        files = {p.split(":", 1)[0] for p in problems}
+        self.assertIn("notes.weird", files)
+        self.assertIn("tools/build", files)  # a script by its shebang: held to the rule
+        self.assertNotIn("blob.bin", files)
+        self.assertNotIn("data.json", files)  # named by an annotation of its own
 
     def test_a_wrong_year_is_found_against_the_history(self) -> None:
         (self.root / "old.py").write_text(fx.header(year="2026") + "x = 1\n")

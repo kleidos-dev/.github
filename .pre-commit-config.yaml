@@ -107,8 +107,9 @@ repos:
       - id: ruff-format
         types_or: [python, pyi]
   # mypy runs from the repository's own environment, where its dependencies
-  # are installed (pip install -r .github/quality/requirements-tools.txt and
-  # the repository's requirements); CI runs it in the kit's mypy workflow.
+  # are installed (the kit's quality/requirements-tools.txt, from a kit
+  # checkout, and the repository's requirements); CI runs it in the kit's
+  # mypy workflow.
   - repo: local
     hooks:
       - id: mypy

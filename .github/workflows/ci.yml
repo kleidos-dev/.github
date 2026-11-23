@@ -11,7 +11,9 @@
 #
 # Stages: lint and licensing first (seconds, no dependencies); then the
 # media checks, the tests (the media tools' and the kit's, with coverage),
-# mypy, OSV and the secrets scan side by side; then the impact preview,
+# mypy, OSV, the secrets scan and the kit release check (a kit change
+# bumps quality/VERSION; a version on main has its tag) side by side;
+# then the impact preview,
 # which applies the changed kit to throwaway clones of the public consumers
 # and writes what it would find to the job summary (it informs, it does not
 # gate); last, the SonarCloud analysis, which reads the tests' coverage. On
@@ -118,6 +120,39 @@ jobs:
     uses: ./.github/workflows/reusable-secrets.yml
     permissions:
       contents: read
+
+  # Repositories record released kit commits only (sync.py --write refuses
+  # anything but the tag quality-v<VERSION> on main). A pull request that
+  # changes what they receive bumps quality/VERSION and adds its CHANGELOG
+  # entry; on main, a version without its tag turns this job red until the
+  # merge commit is tagged (signed) and the job is re-run (docs/quality.md,
+  # "Changing the kit").
+  release:
+    name: "🏷️ Kit release and its tag"
+    needs: [lint, reuse]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Install the kit's tools (hashed)
+        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+      - name: The kit at this commit is a release, or a new version
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          git fetch -q --tags --force origin
+          on_main=()
+          if [ "${EVENT}" != pull_request ]; then
+            on_main=(--on-main)
+          fi
+          python quality/sync.py --release-check "${on_main[@]}"
 
   preview:
     name: "🔭 Impact on the public consumers"

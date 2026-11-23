@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: MIT
 #
 # The Kleidos quality kit's PyPI tools with every dependency, hashed
-# (kleidos-dev/.github quality/requirements-tools.txt, copied to
-# .github/quality/requirements-tools.txt). Install with
-#   pip install --require-hashes -r .github/quality/requirements-tools.txt
+# (kleidos-dev/.github quality/requirements-tools.txt). The kit's workflows
+# install them from the kit at the commit a repository records; it is not
+# copied into the repositories. Locally, from a kit checkout beside one:
+#   pip install --require-hashes -r ../.github/quality/requirements-tools.txt
 # Compiled from quality/requirements-tools.in with
 #   uv pip compile --universal --generate-hashes --no-header \
 #     --python-version 3.11 quality/requirements-tools.in

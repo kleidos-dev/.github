@@ -42,6 +42,7 @@ import argparse
 import datetime as dt
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -84,15 +85,20 @@ HASH_SUFFIXES = {
     ".ps1",
     ".nix",
     ".dockerfile",
+    ".lf",  # ESP-IDF linker fragments
+    ".supp",  # sanitizer and valgrind suppressions
 }
 HASH_NAMES = {
     ".gitignore",
     ".gitattributes",
     ".gitmodules",
     ".gitleaksignore",
+    ".git-blame-ignore-revs",
     ".coveragerc",
     ".editorconfig",
     ".shellcheckrc",
+    "shellcheckrc",
+    ".cppcheck-suppress",
     ".clang-tidy",
     ".clang-format",
     ".yamllint",
@@ -101,7 +107,13 @@ HASH_NAMES = {
     "Dockerfile",
     "CMakeLists.txt",
     "CODEOWNERS",
+    "Doxyfile",
 }
+# Names whose format takes # comments: ESP-IDF's sdkconfig fragments and
+# Kconfig files, and its partition tables (the one .csv that carries comments).
+HASH_NAME_PATTERN = re.compile(
+    r"^(?:sdkconfig(?:[.\w-]*)|Kconfig(?:[.\w-]*)|partitions[\w.-]*\.csv)$"
+)
 SLASH_SUFFIXES = {
     ".js",
     ".mjs",
@@ -130,9 +142,16 @@ SLASH_SUFFIXES = {
     ".scad",
     ".dot",
     ".proto",
+    ".dox",  # Doxygen pages, parsed as C++
 }
-BLOCK_SUFFIXES = {".css", ".scss", ".less"}
-HTML_SUFFIXES = {".md", ".markdown", ".html", ".htm", ".xml", ".vue", ".astro"}
+BLOCK_SUFFIXES = {".css", ".scss", ".less", ".ld"}
+# Case matters: .S is assembly run through the C preprocessor, which takes
+# C comments; a plain .s is the assembler's own syntax and is left alone.
+BLOCK_SUFFIXES_EXACT = {".S"}
+HTML_SUFFIXES = {".md", ".markdown", ".html", ".htm", ".xml", ".vue"}
+# An Astro component's header goes in its front matter, as // lines: an HTML
+# comment in its template would reach every page that renders it.
+ASTRO_SUFFIXES = {".astro"}
 DASH_SUFFIXES = {".sql", ".lua"}
 PERCENT_SUFFIXES = {".tex", ".sty"}
 # requirements*.txt take # comments; other .txt files are data.
@@ -168,25 +187,53 @@ FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.S)
 class Style:
     """How one format writes a comment."""
 
-    kind: str  # "line", "block" or "html"
+    kind: str  # "line", "block", "html" or "astro"
     prefix: str = ""
 
     def header(self, copyright_text: str, license_expr: str) -> list[str]:
         c = f"{COPYRIGHT_TAG} {copyright_text}"
         lic = f"{LICENSE_TAG} {license_expr}"
-        if self.kind == "line":
+        if self.kind in ("line", "astro"):
             return [f"{self.prefix}{c}\n", f"{self.prefix}{lic}\n"]
         if self.kind == "block":
             return ["/*\n", f" * {c}\n", f" * {lic}\n", " */\n"]
         return ["<!--\n", f"{c}\n", f"{lic}\n", "-->\n"]
 
 
-def style_for(rel: str) -> Style | None:
-    """The comment syntax of a path, or None when its format has none."""
+# Interpreters whose scripts take # comments after the shebang (a Node.js
+# script does not: its file stays with REUSE.toml unless its name says .js).
+HASH_SHEBANG = re.compile(
+    r"#!\s*\S*?(?:/env\s+(?:-\S+\s+)*)?(?:\S*/)?(?:bash|zsh|ksh|dash|sh)\b"
+    r"|#!\s*\S*?(?:/env\s+(?:-\S+\s+)*)?(?:\S*/)?(?:python[\d.]*|perl|ruby|tclsh)\b"
+)
+
+
+def style_for(rel: str, text: str | None = None) -> Style | None:
+    """The comment syntax of a path, or None when its format has none.
+
+    A file of no known format that starts with a shebang is a script and
+    takes # comments.
+    """
+    style = _style_by_name(rel)
+    if style is None and text is not None and HASH_SHEBANG.match(text):
+        return Style("line", LINE["#"])
+    return style
+
+
+def _style_by_name(rel: str) -> Style | None:
     p = PurePosixPath(rel)
     name, suffix = p.name, p.suffix.lower()
-    if suffix in HASH_SUFFIXES or name in HASH_NAMES or REQUIREMENTS.match(name):
+    if (
+        suffix in HASH_SUFFIXES
+        or name in HASH_NAMES
+        or REQUIREMENTS.match(name)
+        or HASH_NAME_PATTERN.match(name)
+    ):
         return Style("line", LINE["#"])
+    if p.suffix in BLOCK_SUFFIXES_EXACT:
+        return Style("block")
+    if suffix in ASTRO_SUFFIXES:
+        return Style("astro", LINE["//"])
     if suffix in SLASH_SUFFIXES:
         return Style("line", LINE["//"])
     if suffix in DASH_SUFFIXES:
@@ -211,11 +258,18 @@ def _as_list(value: Any) -> list[str]:
 
 
 def _glob(pattern: str, path: str) -> bool:
-    """REUSE.toml's globs: * within a segment, ** across segments."""
+    """REUSE.toml's globs: * within a segment, ** across segments.
+
+    As REUSE translates them, a / right after ** is part of the globstar, so
+    `**/*.json` also matches a file at the root.
+    """
     regex = ""
     i = 0
     while i < len(pattern):
-        if pattern.startswith("**", i):
+        if pattern.startswith("**/", i):
+            regex += ".*"
+            i += 3
+        elif pattern.startswith("**", i):
             regex += ".*"
             i += 2
         elif pattern[i] == "*":
@@ -263,16 +317,24 @@ def is_shallow(root: Path) -> bool:
 
 
 def first_years(root: Path) -> dict[str, str]:
-    """Path -> the year of the commit that first added it (oldest wins)."""
-    out = git(
-        root,
-        "log",
-        "--diff-filter=A",
-        "--no-renames",
-        "--format=%x00%ad",
-        "--date=format:%Y",
-        "--name-only",
-    )
+    """Path -> the year, in UTC, of the commit that first added it (oldest wins)."""
+    out = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "log",
+            "--diff-filter=A",
+            "--no-renames",
+            "--format=%x00%ad",
+            "--date=format-local:%Y",
+            "--name-only",
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+        env={**os.environ, "TZ": "UTC"},
+    ).stdout
     years: dict[str, str] = {}
     for chunk in out.split("\0"):
         lines = [ln for ln in chunk.splitlines() if ln.strip()]
@@ -339,11 +401,68 @@ def read_header(lines: list[str]) -> Header:
     return head
 
 
+def years_accepted(year: str) -> tuple[str, str]:
+    """The header years a file first committed in `year` may carry.
+
+    The year itself, or the one before: a pull request written in December
+    and squash-merged in January lands on main with a January commit, and
+    its header (written when the file was) must not turn main red.
+    """
+    return year, str(int(year) - 1)
+
+
+def _inside_leading_comment(rest: str, opener: str, closer: str) -> bool:
+    """Whether `rest` is only whole comments and then one comment still open."""
+    rest = rest.lstrip()
+    open_at = rest.rfind(opener)
+    if not rest.startswith(opener) or closer in rest[open_at:]:
+        return False
+    earlier = re.sub(re.escape(opener) + ".*?" + re.escape(closer), "", rest[:open_at], flags=re.S)
+    return not earlier.strip()
+
+
+def header_misplaced(lines: list[str], style: Style, index: int) -> str | None:
+    """Why the header line at `index` is not in a comment at the top, or None."""
+    before = "".join(lines[:index])
+    line = lines[index] if index < len(lines) else ""
+    at = min((line.find(t) for t in (COPYRIGHT_TAG, LICENSE_TAG) if t in line), default=0)
+    if style.kind == "astro":
+        front = FRONT_MATTER.match("".join(lines))
+        if not front or len(before) + len(line) > front.end():
+            return "an Astro component's header goes in its front matter, as // lines"
+        body = before.split("\n", 1)[1] if "\n" in before else ""
+        if any(ln.strip() and not ln.lstrip().startswith("//") for ln in body.splitlines()):
+            return "the header lines come first in the front matter"
+        return None
+    if style.kind == "line":
+        mark = style.prefix.strip()
+        for i, ln in enumerate(lines[:index]):
+            bare = ln.strip()
+            shebang = i == 0 and bare.startswith("#!")
+            if bare and not bare.startswith(mark) and bare != "---" and not shebang:
+                return "the header lines sit in a comment at the top of the file"
+        if not line.lstrip().startswith(mark):
+            return "the header lines sit in a comment at the top of the file"
+        return None
+    if style.kind == "html":
+        front = FRONT_MATTER.match(before)
+        rest = before[front.end() :] if front else before
+        rest = re.sub(r"\A\s*<\?xml[^>]*\?>", "", rest)
+        rest = re.sub(r"\A\s*<!DOCTYPE[^>]*>", "", rest, flags=re.IGNORECASE)
+        if not _inside_leading_comment(rest + line[:at], "<!--", "-->"):
+            return "the header lines sit in an HTML comment at the top of the file"
+        return None
+    if not _inside_leading_comment(before + line[:at], "/*", "*/"):
+        return "the header lines sit in a block comment at the top of the file"
+    return None
+
+
 def check_text(rel: str, text: str, year: str | None, *, copy: bool = False) -> list[str]:
     """What is wrong with one file's header (empty when it is right)."""
     lines = text.splitlines(keepends=True)
     head = read_header(lines)
     problems = []
+    style = style_for(rel, text)
     if not head.copyright_lines:
         problems.append(f"no {COPYRIGHT_TAG} line in its first {HEAD_LINES} lines")
     if not head.license_lines:
@@ -361,10 +480,26 @@ def check_text(rel: str, text: str, year: str | None, *, copy: bool = False) -> 
         if not m:
             problems.append(f"the copyright line does not start with a year: {value!r}")
             continue
-        if HOLDER in m.group(2) and year is not None and not copy and m.group(1) != year:
+        if (
+            HOLDER in m.group(2)
+            and year is not None
+            and not copy
+            and m.group(1) not in years_accepted(year)
+        ):
             problems.append(
                 f"the copyright year is {m.group(1)}, but git first added the file in {year}"
             )
+    if head.copyright_lines and not any(HOLDER in v for _i, v in head.copyright_lines):
+        problems.append(
+            f"no copyright line names {HOLDER} (a third-party file is stated in REUSE.toml"
+            ' with precedence "override")'
+        )
+    if style is not None:
+        for index in sorted({i for i, _v in head.copyright_lines + head.license_lines}):
+            why = header_misplaced(lines, style, index)
+            if why:
+                problems.append(why)
+                break
     return problems
 
 
@@ -391,11 +526,36 @@ def _sibling_line(line: str, tag: str, text: str) -> str:
     return f"{prefix}{text}\n"
 
 
+def _lift_astro_header(text: str, license_expr: str | None) -> tuple[str, str | None]:
+    """Remove header lines an Astro file carries outside its front matter.
+
+    Returns the text without them (and without an HTML comment they leave
+    empty) and the license they named, so the writer puts both lines back
+    at the top of the front matter.
+    """
+    lines = text.splitlines(keepends=True)
+    head = read_header(lines)
+    style = Style("astro", LINE["//"])
+    found = head.copyright_lines + head.license_lines
+    if not any(header_misplaced(lines, style, i) for i, _v in found):
+        return text, license_expr
+    if any(HOLDER not in v for _i, v in head.copyright_lines):
+        return text, license_expr  # another holder's notice: a person moves it
+    if head.license_lines:
+        license_expr = head.license_lines[0][1]
+    drop = {i for i, _v in found}
+    kept = "".join(ln for i, ln in enumerate(lines) if i not in drop)
+    kept = re.sub(r"<!--\s*-->\n?", "", kept)
+    return kept, license_expr
+
+
 def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[str, str | None]:
     """The text with a correct header, and why it could not be fixed (or None)."""
-    style = style_for(rel)
+    style = style_for(rel, text)
     if style is None:
         return text, "its format has no comment syntax: state it in REUSE.toml"
+    if style.kind == "astro":
+        text, license_expr = _lift_astro_header(text, license_expr)
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
@@ -429,6 +589,13 @@ def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[
     if not license_expr:
         return text, "no license: give --license or cover the file in REUSE.toml"
     new = style.header(owner, license_expr)
+    if style.kind == "astro":
+        front = FRONT_MATTER.match(text)
+        if front:
+            opening = front.group(0).split("\n", 1)[0] + "\n"
+            inner = front.group(0)[len(opening) :]
+            return opening + "".join(new) + inner + text[front.end() :], None
+        return "---\n" + "".join(new) + "---\n" + text, None
     if style.kind == "html":
         front = FRONT_MATTER.match(text)
         if front:
@@ -459,14 +626,33 @@ class Plan:
     full: list[str]  # checked for both lines and the year
     presence: list[str]  # byte copies: both lines, the year is their source's
     skipped: dict[str, str]  # path -> why it is not checked
+    unknown: list[str]  # text files of a format this module has no syntax for
+
+
+def text_of(root: Path, rel: str) -> str | None:
+    """A file's text, or None for a binary (a NUL byte, or not UTF-8)."""
+    data = (root / rel).read_bytes()
+    if b"\0" in data:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def is_catch_all(table: dict[str, Any]) -> bool:
+    """A REUSE.toml annotation that covers every path (`**`)."""
+    return any(p in ("**", "**/*") for p in _as_list(table.get("path")))
 
 
 def plan(root: Path) -> Plan:
     tables = reuse_annotations(root)
+    specific = [t for t in tables if not is_catch_all(t)]
     copies = kit_copies(root)
     full: list[str] = []
     presence: list[str] = []
     skipped: dict[str, str] = {}
+    unknown: list[str] = []
     for rel in tracked(root):
         p = PurePosixPath(rel)
         if p.parts[0] in ("LICENSES", ".reuse") or REUSE_IGNORED.match(p.name):
@@ -476,8 +662,13 @@ def plan(root: Path) -> Plan:
         if rel in COMMIT_CHECK_COPIES and agents_copy(root, rel):
             skipped[rel] = "a copy of kleidos-dev/agents' commit-message gate: checked there"
             continue
-        if style_for(rel) is None:
-            continue  # REUSE.toml states it; reuse lint checks that it does
+        if _style_by_name(rel) is None:
+            text = text_of(root, rel)
+            if text is None or annotation_for(specific, rel) is not None:
+                continue  # REUSE.toml states it; reuse lint checks that it does
+            if style_for(rel, text) is None:
+                unknown.append(rel)
+                continue
         table = annotation_for(tables, rel)
         if table is not None and table.get("precedence") == "override":
             skipped[rel] = 'stated in REUSE.toml with precedence "override"'
@@ -486,7 +677,7 @@ def plan(root: Path) -> Plan:
             skipped[rel] = "GitHub copies it into posts: REUSE.toml states it"
             continue
         (presence if rel in copies else full).append(rel)
-    return Plan(full, presence, skipped)
+    return Plan(full, presence, skipped, unknown)
 
 
 def check_repo(root: Path, today: dt.date | None = None) -> tuple[list[str], list[str]]:
@@ -498,7 +689,13 @@ def check_repo(root: Path, today: dt.date | None = None) -> tuple[list[str], lis
     years = {} if shallow else first_years(root)
     if shallow:
         notes.append("shallow clone: the years were not checked (fetch the whole history)")
-    problems = []
+    problems: list[str] = []
+    problems.extend(
+        f"{rel}: a text file in a format the header check has no comment syntax for: add the"
+        " syntax to the kit's spdx_headers.py, or name the file (or its format, **/*.json) in"
+        " a REUSE.toml annotation other than the catch-all"
+        for rel in work.unknown
+    )
     for rel in COPIED_INTO_POSTS:
         if (root / rel).is_file() and style_for(rel) is not None:
             table = annotation_for(reuse_annotations(root), rel)

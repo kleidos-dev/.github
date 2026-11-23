@@ -30,7 +30,7 @@ pre-commit hook); the CI fetches the kit at the recorded commit and passes
 1 problems found, 2 a usage or setup error, 3 the recorded kit commit is not
 in the --kit-git clone (fetch it).
 
-Python 3.11 or newer; PyYAML (pinned in requirements-tools.txt).
+Python 3.11 or newer; PyYAML (pinned in the kit's quality/requirements-tools.txt).
 """
 
 from __future__ import annotations
@@ -74,6 +74,26 @@ COMMIT_CHECK_COPIES = (
     ".github/workflows/commit-check-comment.yml",
 )
 AGENTS_COPY_MARK = "Vendored from kleidos-dev/agents"
+# Every copy the kit makes, target -> source (kit.toml's [[copy]] entries; a
+# kit test keeps the two equal). SOURCE.json may record these and nothing
+# else, so a file cannot hide from the checks by being listed there; the
+# drift test's target depends on the repository's test directory.
+KIT_COPIES = {
+    ".github/quality/check_quality.py": "quality/check_quality.py",
+    ".github/quality/md_nowrap.py": "quality/md_nowrap.py",
+    ".github/quality/spdx_headers.py": "quality/spdx_headers.py",
+    ".github/quality/markdownlint.jsonc": "quality/markdownlint/base.jsonc",
+    ".gitleaks-mac.toml": "quality/gitleaks/mac.toml",
+    ".github/quality/ruff.toml": "quality/ruff/ruff.toml",
+    ".github/zizmor.yml": "quality/zizmor/zizmor.yml",
+    ".shellcheckrc": "quality/shellcheck/shellcheckrc",
+    ".github/quality/eslint.base.mjs": "quality/eslint/base.mjs",
+    ".github/quality/tsconfig.base.json": "quality/tsconfig/base.json",
+    ".clang-tidy": "quality/clang-tidy/base.yaml",
+}
+KIT_TEST_COPY = ("test_quality_kit.py", "quality/templates/test_quality_kit.py")
+# The files of .github/quality/ that are the repository's own, not copies.
+KIT_DIR_OWN = (SOURCE_JSON, WAIVERS)
 # The kit workflows every adopting repository calls, by profile; a
 # repository with a sonar-project.properties also calls the SonarCloud one.
 REQUIRED_WORKFLOWS = {
@@ -87,9 +107,34 @@ REQUIRED_WORKFLOWS = {
         "reusable-quality-drift.yml",
     ),
     "python": ("reusable-mypy.yml",),
+    "ts": ("reusable-eslint.yml",),
 }
+# The triggers a caller of a required kit workflow runs on: the pull
+# requests and the pushes to main, except the three with fixed triggers.
+REQUIRED_TRIGGERS = {
+    "reusable-commit-check.yml": ("pull_request",),
+    "reusable-commit-check-comment.yml": ("workflow_run",),
+    "reusable-quality-drift.yml": ("schedule",),
+}
+DEFAULT_TRIGGERS = ("pull_request", "push")
+# The only job conditions a caller of a required kit workflow may carry
+# (the model's SonarCloud job, which a weekly run skips).
+ALLOWED_JOB_IFS = ("github.event_name != 'schedule'",)
+# The tools a cpp repository runs in a local job of its own (clang-tidy
+# needs the repository's build to know its flags).
+CPP_ANALYZERS = ("clang-tidy", "run-clang-tidy", "pio check")
 KNOWN_PROFILES = ("base", "python", "actions", "shell", "ts", "cpp")
-WAIVABLE_TOOLS = ("ruff", "eslint", "tsconfig", "clang-tidy", "markdownlint", "ci", "dependabot")
+WAIVABLE_TOOLS = (
+    "ruff",
+    "eslint",
+    "tsconfig",
+    "clang-tidy",
+    "markdownlint",
+    "ci",
+    "dependabot",
+    "pre-commit",
+    "reuse",
+)
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
 MARK_START = re.compile(r"^(?P<indent>[ \t]*)# >>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?$")
@@ -106,11 +151,43 @@ TS_SUFFIXES = (".ts", ".tsx", ".mts", ".cts")
 JS_SUFFIXES = (".js", ".mjs", ".cjs", *TS_SUFFIXES)
 CPP_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx")
 
-# For mypy, the keys a repository may not set at all (owner, 2026-11-22: every error
-# fixed, no baseline), and the prefixes of strict's flags that may not be
-# turned off.
-MYPY_REFUSED_KEYS = ("ignore_errors", "disable_error_code", "ignore_missing_imports")
-MYPY_REFUSED_TRUE = ("implicit_reexport", "implicit_optional")
+# For mypy (owner, 2026-11-22: every error fixed, no baseline), an allowlist:
+# the facts about the repository a [tool.mypy] may state, the settings that
+# only change how mypy reports, and stricter flags set true. Anything else
+# (always_false, untyped_calls_exclude, ignore_errors, a strict flag set
+# false, ...) is refused with no waiver.
+MYPY_FACT_KEYS = (
+    "python_version",
+    "platform",
+    "files",
+    "mypy_path",
+    "exclude",
+    "exclude_gitignore",
+    "plugins",
+    "namespace_packages",
+    "explicit_package_bases",
+    "python_executable",
+    "enable_error_code",
+    "overrides",
+)
+MYPY_REPORT_KEYS = (
+    "pretty",
+    "show_error_codes",
+    "show_column_numbers",
+    "show_error_end",
+    "show_error_context",
+    "show_error_code_links",
+    "show_absolute_path",
+    "show_traceback",
+    "color_output",
+    "error_summary",
+    "cache_dir",
+    "sqlite_cache",
+    "incremental",
+    "cache_fine_grained",
+    "junit_xml",
+)
+# Flags that only make mypy stricter when set true.
 MYPY_STRICT_PREFIXES = (
     "strict",
     "disallow_",
@@ -118,7 +195,10 @@ MYPY_STRICT_PREFIXES = (
     "check_untyped",
     "no_implicit",
     "extra_checks",
+    "local_partial_types",
 )
+# Flags that make mypy stricter when set false.
+MYPY_FALSE_IS_STRICT = ("implicit_reexport", "implicit_optional", "follow_untyped_imports")
 RUFF_KIT_LINE_LENGTH = 100
 
 NOQA = re.compile(r"#\s*noqa\b(?P<codes>:\s*[A-Z]+[0-9]+(?:[\s,]+[A-Z]+[0-9]+)*)?", re.IGNORECASE)
@@ -128,6 +208,11 @@ MYPY_INLINE = re.compile(r"^#\s*mypy:")
 NOLINT = re.compile(r"NOLINT(?:NEXTLINE|BEGIN)?(?P<checks>\([^)]*\))?(?P<rest>.*)$")
 ESLINT_DISABLE = re.compile(r"eslint-disable(?:-next-line|-line)?(?P<rest>[^\n*]*)")
 ZIZMOR_IGNORE = re.compile(r"#\s*zizmor:\s*ignore\[")
+ESLINT_IGNORES = re.compile(r"\bignores\s*:\s*\[(?P<list>[^\]]*)\]")
+# Build output an ESLint config may ignore without a waiver: generated, not written.
+GENERATED_DIRS = re.compile(
+    r"^(?:\*\*/)?(?:node_modules|dist|build|coverage|out|\.wrangler|\.astro)(?:/.*)?$"
+)
 SHELLCHECK_DISABLE = re.compile(r"#\s*shellcheck\s+disable=")
 
 
@@ -274,6 +359,20 @@ def has_dot_part(path: str) -> bool:
     return any(part.startswith(".") for part in PurePosixPath(path).parts[:-1])
 
 
+def is_kit_target(rel: str) -> bool:
+    """Whether a path is one the kit copies to (kit.toml's [[copy]] targets)."""
+    if rel in KIT_COPIES:
+        return True
+    return PurePosixPath(rel).name == KIT_TEST_COPY[0] and not rel.startswith(KIT_DIR)
+
+
+def kit_source_of(rel: str) -> str | None:
+    """The kit file a copy at this path comes from, or None."""
+    if rel in KIT_COPIES:
+        return KIT_COPIES[rel]
+    return KIT_TEST_COPY[1] if is_kit_target(rel) else None
+
+
 def first_is_emoji(name: str) -> bool:
     return bool(name) and unicodedata.category(name[0]) == "So"
 
@@ -391,15 +490,16 @@ class Repo:
         self.foreign = self._foreign_copies()
 
     def _foreign_copies(self) -> set[str]:
-        """Byte copies the repository may not edit: the kit's and the commit-check's."""
-        out = {p for p in self.files if p.startswith(KIT_DIR)}
-        kit_source = self.root / SOURCE_JSON
-        if kit_source.is_file():
-            try:
-                recorded = json.loads(kit_source.read_text(encoding="utf-8"))
-                out.update(str(e["path"]) for e in recorded.get("files", []))
-            except (ValueError, KeyError, TypeError, AttributeError):
-                pass
+        """Byte copies the repository may not edit: the kit's and the commit-check's.
+
+        Only what the kit can have put there counts: a path SOURCE.json records
+        that is one of the kit's copy targets, the two own files of
+        .github/quality/, and the three commit-check paths its manifest may
+        list. Anything else under .github/quality/, and any other recorded
+        path, is the repository's own and is reported (check_kit_dir).
+        """
+        out = {p for p in KIT_DIR_OWN if p in self.files}
+        out.update(p for p in self.recorded_copies() if is_kit_target(p))
         out.update(p for p in COMMIT_CHECK_COPIES if p in self.files and self._agents_copy(p))
         kit_toml = self.root / "quality" / "kit.toml"
         if kit_toml.is_file():
@@ -409,15 +509,26 @@ class Repo:
             for entry in [*manifest.get("copy", []), *manifest.get("seed", [])]:
                 if not str(entry["source"]).endswith(PY_SUFFIXES):
                     out.add(str(entry["source"]))
-        cc = self.root / COMMIT_CHECK_SOURCE
-        if cc.is_file():
-            try:
-                data = json.loads(cc.read_text(encoding="utf-8"))
-                out.update(str(e["path"]) for e in data.get("files", []))
-            except (ValueError, KeyError, TypeError):
-                pass
+        if COMMIT_CHECK_SOURCE in self.files:
             out.add(COMMIT_CHECK_SOURCE)
+            out.update(p for p in self.commit_check_paths() if p in COMMIT_CHECK_COPIES)
         return out
+
+    def recorded_copies(self) -> list[str]:
+        """The copy paths .github/quality/SOURCE.json records (empty when unreadable)."""
+        try:
+            recorded = json.loads((self.root / SOURCE_JSON).read_text(encoding="utf-8"))
+            return [str(e["path"]) for e in recorded.get("files", [])]
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return []
+
+    def commit_check_paths(self) -> list[str]:
+        """The paths .github/commit-check/SOURCE.json records (empty when unreadable)."""
+        try:
+            data = json.loads((self.root / COMMIT_CHECK_SOURCE).read_text(encoding="utf-8"))
+            return [str(e["path"]) for e in data.get("files", [])]
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return []
 
     def _agents_copy(self, rel: str) -> bool:
         if rel.endswith(".py"):
@@ -513,14 +624,55 @@ def check_profiles(repo: Repo, source: dict[str, Any], report: Report) -> None:
         )
 
 
+def check_kit_dir(repo: Repo, source: dict[str, Any], report: Report) -> None:
+    """Only kit copies live in .github/quality/, and SOURCE.json records only kit copies."""
+    recorded = {str(e.get("path", "")): e for e in source["files"]}
+    for rel, entry in sorted(recorded.items()):
+        want = kit_source_of(rel)
+        if want is None:
+            report.add(
+                "source",
+                SOURCE_JSON,
+                f"records {rel}, which is not a path the kit copies to: only kit.toml's"
+                " copies may be listed",
+            )
+        elif str(entry.get("source_path", "")) != want:
+            report.add(
+                "source",
+                SOURCE_JSON,
+                f"records {rel} as a copy of {entry.get('source_path')}, but the kit copies"
+                f" {want} there",
+            )
+    for rel in repo.files:
+        if under(rel, KIT_DIR) and rel not in KIT_DIR_OWN and rel not in recorded:
+            report.add(
+                "kit-dir",
+                rel,
+                f"{KIT_DIR} holds only the kit's copies, {SOURCE_JSON} and {WAIVERS}:"
+                " move the repository's own file elsewhere",
+            )
+    if COMMIT_CHECK_SOURCE in repo.files:
+        for rel in repo.commit_check_paths():
+            if rel not in COMMIT_CHECK_COPIES:
+                report.add(
+                    "source",
+                    COMMIT_CHECK_SOURCE,
+                    f"records {rel}: the commit-check manifest lists only"
+                    f" {', '.join(COMMIT_CHECK_COPIES)}",
+                )
+
+
 def check_copies(repo: Repo, source: dict[str, Any], kit: Kit | None, report: Report) -> None:
+    # kleidos-dev/.github (commit "self") checks its copies against its own
+    # working tree only: SOURCE.json's digests there are a record, not a gate.
+    is_self = source.get("commit") == "self"
     for entry in source["files"]:
         rel = str(entry.get("path", ""))
         if not repo.exists(rel):
             report.add("copies", rel, "missing (run sync.py --write)")
             continue
         digest = sha256(repo.path(rel).read_bytes())
-        if digest != entry.get("sha256"):
+        if not is_self and digest != entry.get("sha256"):
             report.add(
                 "copies", rel, "differs from the SHA-256 SOURCE.json records: never edit a kit copy"
             )
@@ -559,7 +711,9 @@ def check_blocks(repo: Repo, source: dict[str, Any], kit: Kit | None, report: Re
             continue
         start, _end, inner = found
         digest = sha256(inner.encode("utf-8"))
-        if digest != entry.get("sha256"):
+        # In kleidos-dev/.github the block is its own source (a Dependabot
+        # bump of a hook rev changes it there first), so no digest gates it.
+        if source.get("commit") != "self" and digest != entry.get("sha256"):
             report.add(
                 "blocks",
                 rel,
@@ -617,16 +771,6 @@ def check_manifest_coverage(source: dict[str, Any], kit: Kit, report: Report) ->
         )
     for rel in sorted(have_files - want_files):
         report.add("source", SOURCE_JSON, f"records a copy at {rel} that the kit no longer has")
-    want_source = {str(c["target"]): str(c["source"]) for c in copies}
-    for entry in source["files"]:
-        rel = str(entry.get("path"))
-        if rel in want_source and str(entry.get("source_path")) != want_source[rel]:
-            report.add(
-                "source",
-                SOURCE_JSON,
-                f"records {rel} as a copy of {entry.get('source_path')}, but the kit copies"
-                f" {want_source[rel]} there",
-            )
     have_blocks = {str(e.get("id")) for e in source["blocks"]}
     want_blocks = {str(b["id"]) for b in blocks}
     for bid in sorted(want_blocks - have_blocks):
@@ -667,30 +811,246 @@ def check_kit_uses(repo: Repo, source: dict[str, Any], report: Report) -> None:
                         f"{m.group('file')} is called at {m.group('ref')[:12]}, not the"
                         f" recorded kit commit {str(commit)[:12]} (run sync.py --write)",
                     )
-    texts = "".join(
-        ln + "\n"
-        for r in workflow_files(repo)
-        for ln in repo.text(r).splitlines()
-        if not ln.lstrip().startswith("#")
-    )
     required = [w for p in source["profiles"] for w in REQUIRED_WORKFLOWS.get(p, ())]
     if repo.exists("sonar-project.properties"):
         required.append("reusable-sonarcloud.yml")
+    callers_of = kit_callers(repo, self_ref=commit == "self")
     for name in required:
-        if commit == "self":
-            if name == "reusable-quality-drift.yml":
-                continue  # the kit's home is never behind itself
-            called = f"./.github/workflows/{name}" in texts
-        else:
-            called = f"/.github/workflows/{name}@" in texts
-        if not called:
+        if commit == "self" and name == "reusable-quality-drift.yml":
+            continue  # the kit's home is never behind itself
+        found = callers_of.get(name, [])
+        if not found:
             report.add(
                 "workflows",
                 ".github/workflows/",
                 f"no workflow calls the kit's {name}: every check a repository runs comes"
                 ' from the kit (docs/quality.md, "Reusable workflows")',
             )
+            continue
+        why_not = [caller_gap(c, REQUIRED_TRIGGERS.get(name, DEFAULT_TRIGGERS)) for c in found]
+        if all(why_not):
+            for c, why in zip(found, why_not, strict=True):
+                report.add(
+                    "workflows",
+                    f"{c.workflow} jobs.{c.job_id}",
+                    f"calls {name} but {why}, so the check may never run"
+                    " (no waiver: a kit check runs on every pull request and push)",
+                )
+    check_lint_skip(repo, callers_of.get("reusable-lint.yml", []), report)
     report.notes.append(f"{callers} call(s) to kit workflows")
+
+
+@dataclass
+class Caller:
+    """One job that calls a kit workflow, and what decides whether it runs."""
+
+    workflow: str
+    job_id: str
+    job: dict[str, Any]
+    jobs: dict[str, Any]
+    triggers: dict[str, Any]
+
+
+def workflow_triggers(wf: dict[Any, Any]) -> dict[str, Any]:
+    """A workflow's `on:` as {event: config} (YAML 1.1 reads a bare `on` as True)."""
+    raw = wf.get("on", wf.get(True))
+    if isinstance(raw, str):
+        return {raw: None}
+    if isinstance(raw, list):
+        return {str(e): None for e in raw}
+    if isinstance(raw, dict):
+        return {str(k): v for k, v in raw.items()}
+    return {}
+
+
+def kit_callers(repo: Repo, self_ref: bool) -> dict[str, list[Caller]]:
+    """Kit workflow file name -> the jobs that call it."""
+    out: dict[str, list[Caller]] = {}
+    pattern = re.compile(
+        r"^\./\.github/workflows/(?P<file>reusable-[\w.-]+\.ya?ml)$"
+        if self_ref
+        else r"^kleidos-dev/\.github/\.github/workflows/(?P<file>[\w.-]+\.ya?ml)@"
+    )
+    for rel in workflow_files(repo):
+        try:
+            wf = yaml.safe_load(repo.text(rel)) or {}
+        except yaml.YAMLError:
+            continue  # check_ci reports it
+        if not isinstance(wf, dict):
+            continue
+        jobs = wf.get("jobs") or {}
+        if not isinstance(jobs, dict):
+            continue
+        triggers = workflow_triggers(wf)
+        for job_id, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            m = pattern.match(str(job.get("uses", "")))
+            if m:
+                out.setdefault(m.group("file"), []).append(
+                    Caller(rel, str(job_id), job, jobs, triggers)
+                )
+    return out
+
+
+def normalized_if(value: Any) -> str:
+    text = str(value).strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2]
+    return re.sub(r"\s+", " ", text.replace('"', "'")).strip()
+
+
+# The pull_request activity types a check must run on: a new pull request,
+# every push to it, and a reopened one (GitHub's default set).
+PR_TYPES = ("opened", "synchronize", "reopened")
+
+
+def trigger_gap(event: str, config: Any) -> str | None:
+    """Why a trigger may skip the default branch or a pull request's commits, or None."""
+    if not isinstance(config, dict):
+        return None
+    types = config.get("types")
+    if event == "pull_request" and types is not None:
+        listed = [types] if isinstance(types, str) else [str(t) for t in types]
+        missing = [t for t in PR_TYPES if t not in listed]
+        if missing:
+            return f"its pull_request trigger leaves out {', '.join(missing)}"
+    if (
+        event == "push"
+        and ("tags" in config or "tags-ignore" in config)
+        and ("branches" not in config and "branches-ignore" not in config)
+    ):
+        return "its push trigger runs on tags only"
+    for key in ("paths", "paths-ignore"):
+        if key in config:
+            return f"its {event} trigger has a {key} filter"
+    branches = config.get("branches")
+    if branches is not None and not branch_filter_matches_main(branches):
+        return f"its {event} trigger does not include main"
+    ignored = config.get("branches-ignore") or []
+    if any(fnmatch.fnmatch("main", str(b)) for b in ignored):
+        return f"its {event} trigger ignores main"
+    return None
+
+
+def branch_filter_matches_main(patterns: Any) -> bool:
+    """Whether a `branches:` list selects main (the last matching pattern wins, ! negates)."""
+    selected = False
+    for raw in [patterns] if isinstance(patterns, str) else list(patterns):
+        pattern = str(raw)
+        negated = pattern.startswith("!")
+        if fnmatch.fnmatch("main", pattern.removeprefix("!")):
+            selected = not negated
+    return selected
+
+
+def caller_gap(caller: Caller, events: tuple[str, ...]) -> str | None:
+    """Why a caller job may not run on every pull request and push, or None."""
+    for event in events:
+        if event not in caller.triggers:
+            return f"{caller.workflow} does not run on {event}"
+        gap = trigger_gap(event, caller.triggers[event])
+        if gap:
+            return gap
+    seen: set[str] = set()
+    todo = [caller.job_id]
+    while todo:
+        job_id = todo.pop()
+        if job_id in seen:
+            continue
+        seen.add(job_id)
+        job = caller.jobs.get(job_id)
+        if not isinstance(job, dict):
+            continue
+        # A scheduled caller (the drift notice) may not skip the schedule.
+        allowed = () if "schedule" in events else ALLOWED_JOB_IFS
+        if "if" in job and normalized_if(job["if"]) not in allowed:
+            who = "it" if job_id == caller.job_id else f"the job it needs, {job_id},"
+            shown = str(job["if"]).lower() if isinstance(job["if"], bool) else job["if"]
+            return f"{who} carries the condition `if: {shown}`"
+        needs = job.get("needs") or []
+        todo.extend([needs] if isinstance(needs, str) else [str(n) for n in needs])
+    return None
+
+
+def kit_hook_ids(config_text: str, block_ids: Iterable[str]) -> set[str]:
+    """The hook ids and aliases inside these managed blocks of a pre-commit config."""
+    ids: set[str] = set()
+    for block_id in block_ids:
+        try:
+            found = find_block(config_text, block_id)
+        except ValueError:
+            continue
+        if found is None:
+            continue
+        try:
+            parsed = yaml.safe_load("repos:\n" + found[2]) or {}
+        except yaml.YAMLError:
+            continue
+        for r in parsed.get("repos") or []:
+            for h in r.get("hooks") or []:
+                ids.update(str(h[k]) for k in ("id", "alias") if h.get(k))
+    return ids
+
+
+def kit_block_hook_ids(kit: Kit) -> set[str]:
+    """Every hook id and alias in the kit's pre-commit blocks."""
+    ids: set[str] = set()
+    for entry in kit.manifest().get("block", []):
+        if entry.get("kind") == "pre-commit":
+            text = kit.read(str(entry["source"])).decode("utf-8")
+            ids |= kit_hook_ids(text, [str(entry["id"])])
+    return ids
+
+
+def refused_skips(skip: str, kit_ids: set[str]) -> list[str]:
+    """The kit hook ids a lint caller's `skip` names."""
+    return sorted({s.strip() for s in skip.split(",") if s.strip()} & kit_ids)
+
+
+def check_lint_skip(repo: Repo, callers: list[Caller], report: Report) -> None:
+    """A lint caller's `skip` names only the repository's own hooks."""
+    if not repo.exists(".pre-commit-config.yaml"):
+        return
+    text = repo.text(".pre-commit-config.yaml")
+    block_ids = [m.group("id") for m in map(MARK_START.match, text.splitlines()) if m]
+    ids = kit_hook_ids(text, block_ids)
+    for c in callers:
+        skip = str((c.job.get("with") or {}).get("skip", ""))
+        for hook in refused_skips(skip, ids):
+            report.add(
+                "workflows",
+                f"{c.workflow} jobs.{c.job_id}",
+                f"skip names the kit hook {hook}: only the repository's own hooks may be"
+                " skipped (no waiver)",
+            )
+
+
+def check_pre_commit_globals(repo: Repo, report: Report) -> None:
+    """Top-level keys of .pre-commit-config.yaml that decide whether the kit's hooks run."""
+    rel = ".pre-commit-config.yaml"
+    if not repo.exists(rel):
+        report.add("pre-commit", rel, "missing (sync.py --write writes the kit's blocks)")
+        return
+    try:
+        cfg = yaml.safe_load(repo.text(rel)) or {}
+    except yaml.YAMLError:
+        return  # check_hook_block_live reports it
+    if not isinstance(cfg, dict):
+        return
+    # exclude '^$' is pre-commit's own default (it excludes nothing); for
+    # files, any value narrows, '^$' to nothing at all.
+    if cfg.get("exclude") not in (None, "", "^$"):
+        report.weaken("pre-commit", f"exclude:{cfg['exclude']}", rel)
+    if cfg.get("files") not in (None, ""):
+        report.weaken("pre-commit", f"files:{cfg['files']}", rel)
+    stages = cfg.get("default_stages")
+    if stages is not None and "pre-commit" not in [str(x) for x in stages]:
+        report.add(
+            "pre-commit",
+            rel,
+            "default_stages without pre-commit stops the kit's hooks from running (no waiver)",
+        )
 
 
 # --------------------------------------------------------------------------
@@ -772,11 +1132,33 @@ def ruff_weakenings(rel: str, table: dict[str, Any], report: Report) -> None:
     for key in ("exclude", "extend-exclude"):
         for pattern in table.get(key) or []:
             report.weaken("ruff", f"exclude:{pattern}", rel)
+    # `include` replaces ruff's file list, so it can narrow it to nothing.
+    if "include" in table:
+        for pattern in table.get("include") or ["(empty)"]:
+            report.weaken("ruff", f"include:{pattern}", rel)
     if table.get("force-exclude") is False:
         report.weaken("ruff", "force-exclude", rel)
     length = table.get("line-length")
     if isinstance(length, int) and length > RUFF_KIT_LINE_LENGTH:
         report.weaken("ruff", f"line-length:{length}", rel)
+
+
+def mypy_refusal(key: str, value: Any) -> str | None:
+    """Why a [tool.mypy] setting is refused, or None when a repository may set it."""
+    if key == "strict":
+        return None if value is True else "strict must be true (the kit block)"
+    if key in MYPY_FACT_KEYS or key in MYPY_REPORT_KEYS:
+        return None
+    if key == "follow_imports":
+        return None if value in ("normal", "error") else f"follow_imports = {value} hides errors"
+    if key.startswith(MYPY_STRICT_PREFIXES):
+        return None if value is True else f"{key} = {value} turns a strict check off"
+    if key in MYPY_FALSE_IS_STRICT:
+        return None if value is False else f"{key} = {value} loosens a strict check"
+    return (
+        f"{key} is not a setting a repository may add (the kit allows the facts about the"
+        " repository, the report settings and stricter flags; docs/quality.md)"
+    )
 
 
 def check_mypy(repo: Repo, report: Report) -> None:
@@ -809,19 +1191,12 @@ def check_mypy(repo: Repo, report: Report) -> None:
         report.add("mypy", "pyproject.toml", "no [tool.mypy] table")
         return
     where = "pyproject.toml [tool.mypy]"
-    if mypy.get("strict") is not True:
+    if "strict" not in mypy:
         report.add("mypy", where, "strict must be true (the kit block)")
     for key, value in mypy.items():
-        if key in MYPY_REFUSED_KEYS or key.startswith("allow_") and value:
-            report.add("mypy", where, f"{key} is refused: fix the errors (no waiver)")
-        elif key in MYPY_REFUSED_TRUE and value:
-            report.add("mypy", where, f"{key} = true is refused (no waiver)")
-        elif key == "follow_imports" and value in ("skip", "silent"):
-            report.add("mypy", where, f"follow_imports = {value} hides errors: refused (no waiver)")
-        elif key.startswith(MYPY_STRICT_PREFIXES) and value is False:
-            report.add(
-                "mypy", where, f"{key} = false turns a strict check off: refused (no waiver)"
-            )
+        refusal = mypy_refusal(key, value)
+        if refusal:
+            report.add("mypy", where, f"{refusal}: refused (no waiver)")
     overrides = mypy.get("overrides") or []
     for i, override in enumerate(overrides):
         extra = sorted(set(override) - {"module", "ignore_missing_imports"})
@@ -1044,6 +1419,14 @@ def check_dependabot(repo: Repo, report: Report, central: bool) -> None:
             + list(u.get("directories") or [])
         ]
         covered.setdefault(eco, []).extend(dirs)
+        if not u.get("cooldown"):
+            report.add(
+                "dependabot",
+                rel,
+                f"{eco} {', '.join(dirs) or '?'}: needs a cooldown (default-days: 7), so a"
+                " compromised or yanked release has time to be noticed (zizmor's"
+                " dependabot-cooldown)",
+            )
         for d in dirs:
             if under(d.strip("/"), ".github/quality"):
                 report.add(
@@ -1233,6 +1616,11 @@ def check_suppressions_c_js(repo: Repo, report: Report) -> None:
 def check_reuse(repo: Repo, report: Report) -> None:
     if not (repo.exists("REUSE.toml") or repo.exists(".reuse/dep5")):
         report.add("reuse", "REUSE.toml", "missing: every file's license is stated (reuse lint)")
+    # A file that cannot carry a comment is stated in REUSE.toml, never in a
+    # .license sidecar, unless REUSE.toml cannot express it (owner, 2026-11-22).
+    for rel in repo.files:
+        if rel.endswith(".license") and "node_modules/" not in rel:
+            report.weaken("reuse", f"sidecar:{rel}", rel)
 
 
 def check_typos(repo: Repo, report: Report) -> None:
@@ -1344,6 +1732,57 @@ def check_eslint(repo: Repo, report: Report) -> None:
             )
         for m in off.finditer(text):
             report.weaken("eslint", m.group("rule"), rel)
+        if "disableTypeChecked" in text:
+            report.weaken("eslint", "disableTypeChecked", rel)
+        for m in ESLINT_IGNORES.finditer(text):
+            for pattern in re.findall(r"""['"]([^'"]+)['"]""", m.group("list")):
+                if not GENERATED_DIRS.match(pattern):
+                    report.weaken("eslint", f"ignores:{pattern}", rel)
+
+
+def check_cpp_analysis(repo: Repo, report: Report) -> None:
+    """A cpp repository runs clang-tidy in a job of its own on its pull requests."""
+    for rel in workflow_files(repo):
+        try:
+            wf = yaml.safe_load(repo.text(rel)) or {}
+        except yaml.YAMLError:
+            continue
+        triggers = workflow_triggers(wf) if isinstance(wf, dict) else {}
+        if "pull_request" not in triggers or trigger_gap("pull_request", triggers["pull_request"]):
+            continue
+        for job in (wf.get("jobs") or {}).values():
+            if not isinstance(job, dict) or never_runs(job):
+                continue
+            for step in job.get("steps") or []:
+                if not isinstance(step, dict) or never_runs(step):
+                    continue
+                if any(tool in str(step.get("run", "")) for tool in CPP_ANALYZERS):
+                    return
+    report.add(
+        "workflows",
+        ".github/workflows/",
+        "the cpp profile runs clang-tidy with the kit's .clang-tidy in a job of the"
+        " repository's own on every pull request (the kit has no reusable job for it:"
+        " clang-tidy needs the repository's build)",
+    )
+
+
+def never_runs(item: dict[str, Any]) -> bool:
+    """A job or step whose condition is a literal false."""
+    if "if" not in item:
+        return False
+    cond = item["if"]
+    return cond is False or normalized_if(cond).strip().lower() in ("false", "0", "''")
+
+
+def check_python_version(repo: Repo, report: Report) -> None:
+    """The python profile names its Python in .python-version (the kit's workflows read it)."""
+    if not repo.exists(".python-version"):
+        report.add(
+            "python",
+            ".python-version",
+            "missing: the kit's Python workflows (mypy, tests) read the version from it",
+        )
 
 
 def check_clang_tidy(repo: Repo, report: Report) -> None:
@@ -1540,9 +1979,11 @@ def run(
     check_blocks(repo, source, kit, report)
     if kit is not None:
         check_manifest_coverage(source, kit, report)
+    check_kit_dir(repo, source, report)
     if "actions" in profiles:
         check_kit_uses(repo, source, report)
         check_ci(repo, report)
+    check_pre_commit_globals(repo, report)
     check_gitleaks(repo, report)
     check_osv(repo, report, today)
     check_dependabot(repo, report, central)
@@ -1552,6 +1993,7 @@ def run(
     if not repo.exists(WAIVERS):
         report.add("waivers", WAIVERS, "missing (sync.py --write seeds an empty one)")
     if "python" in profiles:
+        check_python_version(repo, report)
         check_ruff(repo, report)
         check_mypy(repo, report)
         check_python_inline(repo, report)
@@ -1560,6 +2002,8 @@ def run(
         check_eslint(repo, report)
     if "cpp" in profiles:
         check_clang_tidy(repo, report)
+        if "actions" in profiles:
+            check_cpp_analysis(repo, report)
     check_suppressions_c_js(repo, report)
     apply_waivers(repo, report, today)
     report.notes.insert(
@@ -1637,6 +2081,11 @@ def main(argv: list[str] | None = None) -> int:
         "--plant-mac", action="store_true", help="only prove the MAC rules on planted values"
     )
     ap.add_argument(
+        "--lint-skip",
+        default="",
+        help="the lint caller's skip input: refused if it names a kit hook (needs --kit)",
+    )
+    ap.add_argument(
         "files", nargs="*", help=argparse.SUPPRESS
     )  # pre-commit passes names; the check is repository-wide
     args = ap.parse_args(argv)
@@ -1653,6 +2102,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if wrong else 0
         kit = DirKit(args.kit.resolve()) if args.kit else None
         report = run(args.repo, kit=kit, kit_git=args.kit_git)
+        if args.lint_skip and kit is not None:
+            for hook in refused_skips(args.lint_skip, kit_block_hook_ids(kit)):
+                report.add(
+                    "workflows",
+                    "reusable-lint.yml skip",
+                    f"names the kit hook {hook}: only the repository's own hooks may be"
+                    " skipped (no waiver)",
+                )
     except SetupError as exc:
         print(f"check_quality: {exc}", file=sys.stderr)
         return 2

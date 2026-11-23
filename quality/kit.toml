@@ -18,6 +18,11 @@ ts = "TypeScript: the ESLint and tsconfig bases"
 cpp = "C or C++ sources: the clang-tidy base"
 
 # --- Copies: the kit's bytes, recorded by SHA-256 in SOURCE.json ----------
+# check_quality.py's KIT_COPIES lists the same targets (a kit test keeps the
+# two equal), so a SOURCE.json cannot record anything else. The tool pins,
+# quality/requirements-tools.txt, are not copied: every workflow installs
+# them from the kit at the recorded commit, and a copy would only put the
+# kit's pins into each repository's dependency graph (docs/quality.md).
 
 [[copy]]
 source = "quality/check_quality.py"
@@ -32,11 +37,6 @@ profile = "base"
 [[copy]]
 source = "quality/spdx_headers.py"
 target = ".github/quality/spdx_headers.py"
-profile = "base"
-
-[[copy]]
-source = "quality/requirements-tools.txt"
-target = ".github/quality/requirements-tools.txt"
 profile = "base"
 
 [[copy]]
