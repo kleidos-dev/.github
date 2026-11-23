@@ -5,15 +5,18 @@
 
 Owner, 2026-11-23: every pinned version is the latest stable release. The
 kit's pins are the newest it knows, and check_quality.py holds every
-repository to them (LATEST_PYTHON, LATEST_ACTIONS, LATEST_HOOKS); this
-script, run by the CI's weekly "📦 Pinned versions current" job, compares
-them with upstream:
+repository to them (LATEST_PYTHON, LATEST_ACTIONS, LATEST_HOOKS,
+LATEST_IMAGES); this script, run by the CI's weekly "📦 Pinned versions
+current" job, compares them with upstream:
 
   Python       the newest stable CPython setup-python serves
                (actions/python-versions' manifest)
   actions      each action's latest GitHub release
   hooks        each hook repository's latest GitHub release, else its
                newest version tag
+  images       each container image's newest stable x.y.z tag on Docker
+               Hub, and the digest that tag names (a tag pushed again
+               counts too)
   PyPI tools   each pin of quality/requirements-tools.in
   binaries     quality/tools.lock (fetch_tool.py --outdated)
 
@@ -49,6 +52,10 @@ PYTHON_MANIFEST = (
 )
 GITHUB_URL = re.compile(r"^https://github\.com/(?P<repo>[\w.-]+/[\w.-]+?)(?:\.git)?/?$")
 RELEASE_TAG = re.compile(r"^v?\d+(?:\.\d+)*$")
+IMAGE_TAG = re.compile(r"^\d+\.\d+\.\d+$")
+DOCKER_TAGS = (
+    "https://hub.docker.com/v2/repositories/{name}/tags?page_size=100&ordering=last_updated"
+)
 PIN = re.compile(r"^(?P<name>[A-Za-z0-9._-]+)(?:\[[^\]]*\])?==(?P<version>[^\s;#]+)")
 
 GetJson = Callable[[str], Any]
@@ -84,6 +91,22 @@ def newest_release(repo: str, get: GetJson) -> str:
     if not versions:
         raise ValueError(f"{repo} has no release and no version tag")
     return max(versions, key=lambda t: cq.version_tuple(t) or ())
+
+
+def newest_image(name: str, get: GetJson) -> tuple[str, str]:
+    """A Docker Hub image's newest stable x.y.z tag, and the digest it names.
+
+    The tags come newest-updated first, so a new release is on the first page.
+    """
+    tags = {
+        str(t["name"]): str(t["digest"])
+        for t in get(DOCKER_TAGS.format(name=name))["results"]
+        if IMAGE_TAG.match(str(t["name"])) and t.get("digest")
+    }
+    if not tags:
+        raise ValueError(f"{name} has no x.y.z tag on Docker Hub")
+    tag = max(tags, key=lambda t: cq.version_tuple(t) or ())
+    return tag, tags[tag]
 
 
 def newest_pypi(name: str, get: GetJson) -> str:
@@ -123,6 +146,12 @@ def outdated(get: GetJson = get_json, binaries: bool = True) -> list[str]:
         latest = newest_release(m.group("repo"), get)
         if behind(pinned, latest):
             lines.append(f"hook {url}: pinned {pinned}, latest {latest}")
+    for name, (tag, digest) in sorted(cq.LATEST_IMAGES.items()):
+        latest, latest_digest = newest_image(name, get)
+        if behind(tag, latest):
+            lines.append(f"image {name}: pinned {tag}, latest {latest} ({latest_digest})")
+        elif tag == latest and digest != latest_digest:
+            lines.append(f"image {name}: {tag} now names {latest_digest}, the kit knows {digest}")
     for name, pinned in sorted(tool_pins().items()):
         latest = newest_pypi(name, get)
         if behind(pinned, latest):
@@ -150,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
                 "Move it in one pull request here: the pin, the matching LATEST_* entry of"
                 " quality/check_quality.py, quality/VERSION and quality/CHANGELOG.md"
                 ' (docs/quality.md, "Versions"); the sync then carries it to every'
-                " repository.\n\n"
+                " repository. An image is only its LATEST_IMAGES entry here; each"
+                " repository that runs it moves its digest when it takes the release.\n\n"
             )
             fh.writelines(f"- {line}\n" for line in lines)
     return 1 if lines else 0

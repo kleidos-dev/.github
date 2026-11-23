@@ -1,7 +1,7 @@
 {
   "$comment": "Written by kleidos-dev/.github quality/sync.py --write; never edit it or the files and blocks it lists: change the kit there and sync again (docs/quality.md).",
   "source": "https://github.com/kleidos-dev/.github",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "commit": "self",
   "profiles": [
     "base",
@@ -13,7 +13,7 @@
     {
       "path": ".github/quality/check_quality.py",
       "source_path": "quality/check_quality.py",
-      "sha256": "e4c64a911e8aebcb9e2ea365e82e208d3210287fe1f2a4835eae8d6c2012986a"
+      "sha256": "2495da14264e26d864327270ddcafef4fa79f5cb1d8d3856375385436aa7b359"
     },
     {
       "path": ".github/quality/md_nowrap.py",

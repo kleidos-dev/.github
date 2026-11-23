@@ -7,6 +7,13 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 2.1.0 (2026-11-23)
+
+Container images join the pin rule. Nothing turns a green repository red: the only image the kit knows, `kicad/kicad`, is already pinned by its 10.0.8 digest in boards and brand, and no other repository runs a known image.
+
+- `LATEST_IMAGES` (`check_quality.py`): the newest stable tag of `kicad/kicad`, 10.0.8, and the digest it names, `sha256:3f4a01786dfbe803a65f345c3342b765db9add913f5e9448f8356793714ddc34`. Every workflow `image:` (a job's `container:` or a service) or `container:` shorthand of a known image is pinned by that digest with its tag in a comment (`kicad/kicad@sha256:… # 10.0.8`); a tag alone, a digest with no tag and the newest tag with another digest are findings no waiver clears, and an older tag is held like any other pin (`below-latest:` and a waiver, `what = "image:<name>:<tag>"`).
+- The weekly `📦 Pinned versions current` job (`latest_releases.py`) also reads each known image's newest stable `x.y.z` tag on Docker Hub and the digest it names, and turns red on a newer tag or on the same tag pushed again. Dependabot cannot do it: its `docker` ecosystem reads Dockerfiles and Kubernetes manifests, not a workflow's `container:`.
+
 ## 2.0.0 (2026-11-23)
 
 Every pin at the latest stable release (owner, 2026-11-23). MAJOR: the new pin rule turns red every repository that names a Python below 3.15 (agents, boards, qa and videos, by the impact preview), and the kit's scripts now need Python 3.14 or newer, so a repository takes this release together with its move to 3.15 (or a written reason and a waiver where it truly cannot move).
