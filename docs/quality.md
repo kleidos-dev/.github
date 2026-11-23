@@ -74,7 +74,7 @@ One owner per file. kleidos-dev/agents owns the checker, `check_commit_msg.py`, 
    - C++: the root `.clang-tidy` is the kit's; repository specifics go in a subdirectory's `.clang-tidy` with `InheritParentConfig: true`.
 4. Replace the CI with thin callers. [`quality/templates/workflows/check.yml`](../quality/templates/workflows/check.yml) is the model: lint and licensing first, then types, tests, OSV and the history scan side by side, then SonarCloud (public repositories). A `ts` repository adds the [`reusable-eslint.yml`](../.github/workflows/reusable-eslint.yml) caller (its `working-directory` and tsconfig `projects`); a `cpp` repository keeps a job of its own that runs clang-tidy with the kit's `.clang-tidy` on every pull request, because clang-tidy needs the repository's build (meter's static-analysis job already does). Keep the repository's own jobs (a model build, a firmware build, a picture check) beside them. Each caller of a kit workflow sits in a workflow that runs on `pull_request` and `push` to `main` (with no `paths` filter), carries no `if:` but the model's `github.event_name != 'schedule'`, and needs no job that does; the commit-check, comment and drift callers keep their seeded triggers. Every job keeps the CI conventions: an emoji name, `timeout-minutes` (a caller job's comes from the called workflow), staged `needs:`, least `permissions`. Re-run `sync.py --write .` after editing, so the new calls name the recorded commit.
 5. `.github/dependabot.yml`: every manifest directory has its ecosystem; every update has a `cooldown` (`default-days: 7`, which zizmor's `dependabot-cooldown` audit also asks for); `github-actions` ignores `kleidos-dev/.github*` (the sync moves those references); no `pre-commit` ecosystem (hook versions come with the sync); nothing under `.github/quality/`. Turn on Dependabot security updates: `gh api -X PUT repos/<owner>/<repo>/automated-security-fixes`.
-6. A repository with the `python` profile has a `.python-version` (the kit's mypy and test workflows read it; the checker reports its absence). boards, qa, agents, meter and posts have none today.
+6. A repository with the `python` profile has a `.python-version` (the kit's mypy and test workflows read it; the checker reports its absence), naming the latest stable Python ([Pins at the latest release](#pins-at-the-latest-release)).
 7. The commit-message gate: where the sync replaced kleidos-dev/agents' two workflow copies, it also drops them from `.github/commit-check/SOURCE.json` and says so; edit the repository's own digest test (`tests/ci/test_commit_check_copy.py` in qa and meter) so its path set is the checker alone, in the same pull request. kleidos-dev/agents' `sync_commit_check.py` then copies only the checker (its `FILES` reduced to `check_commit_msg.py`, and its `--check` no longer reporting the two workflows): that change lands in agents' own sync, which goes first in wave 3, before qa's and meter's ([The commit-message gate](#the-commit-message-gate)).
 8. Fix everything the tools report, in the same pull request: `pre-commit run --all-files`, `python3 .github/quality/mypy_groups.py` (mypy, per group where the repository declares [mypy groups](#mypy-groups)), `python3 .github/quality/spdx_headers.py --write` for the licensing headers, `reuse lint`. A waiver only where [Overrides](#overrides) allows one. A first `ruff format` of the whole tree is its own commit, listed in `.git-blame-ignore-revs`.
 9. Install the hooks (`pre-commit install --hook-type pre-commit --hook-type commit-msg`), commit signed, and merge once CI is green.
@@ -148,7 +148,31 @@ files = ["youtube/music-styles/keys/test-cue"]
 | Markdown tables render: MD055, MD056, MD058 only | hook `markdownlint-cli2`, [`quality/markdownlint/base.jsonc`](../quality/markdownlint/base.jsonc) | Broken tables are the findings that matter; the rest of markdownlint's defaults measured as noise. |
 | The kit is intact | hook `kleidos-quality`, the lint job | Every copy and block is the bytes `SOURCE.json` records and, in CI, the bytes the kit holds at that commit (the CI fetches the checker from the kit, so an edited local checker cannot pass itself). `.github/quality/` holds nothing else, and `SOURCE.json` records only the kit's copy targets, each from its own source, offline too. |
 | Python repositories name their Python | `check_quality.py` (`.python-version`) | The kit's mypy and test workflows read it; without it the first CI run fails in setup-python. |
+| Every pin at the latest stable release | `check_quality.py` (the pin rule), waivable as `tool = "pins"` only with a reason beside the pin; the kit's weekly `📦 Pinned versions current` job ([`quality/latest_releases.py`](../quality/latest_releases.py)) | Owner, 2026-11-23. See [Pins at the latest release](#pins-at-the-latest-release). |
 | Commit messages | [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml), the `kleidos-commit-msg` hook | kleidos-dev/agents' gate: 72 columns, imperative, no AI attribution. |
+
+### Pins at the latest release
+
+Owner, 2026-11-23: every pinned version is the latest stable release, and whatever cannot move has its blocker fixed; only what truly cannot move stays lower, with its reason beside the pin. `check_quality.py` holds every repository to the newest releases this kit release knows, the kit's own pins (a kit test keeps them equal):
+
+- **Python** (`LATEST_PYTHON`, 3.15): the first version line of every `.python-version`; `target-version`, `python_version` and `requires-python` (its lower bound) in `pyproject.toml`, `ruff.toml` and `.ruff.toml`; every `python-version:` in a workflow, inline or as a matrix list (an expression such as `${{ matrix.python-version }}` is not a pin).
+- **Actions** (`LATEST_ACTIONS`): every `uses:` of an action the kit itself pins, by the version in its comment (`# v7.0.1`); an action the kit does not use is left to Dependabot.
+- **Hook revisions** (`LATEST_HOOKS`): every `rev:` of a hook repository the kit's blocks use, by its `# frozen: vX.Y.Z` comment (or the rev, when it is a tag).
+
+A pin below them is a finding. When it truly cannot move, write the reason beside it, on its line or in the comment lines right above it (for a hook, above its `- repo:` line too), after the marker `below-latest:`:
+
+```yaml
+      # below-latest: the skills' scripts run on the python3 macOS ships (3.9)
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.9"
+```
+
+and it becomes a weakening that also needs its waiver, `tool = "pins"`, `what = "python:3.9"` (or `action:<owner>/<repo>@<version>`, `hook:<url>@<version>`, as the finding names it). A reason without the marker, or a marker without a waiver, does not pass. A `.python-version` takes the comment on the line above its version (pyenv, uv and setup-python skip `#` lines).
+
+The kit's weekly `📦 Pinned versions current` job ([`quality/latest_releases.py`](../quality/latest_releases.py)) compares the kit's pins with upstream: the newest stable CPython setup-python serves, each action's and hook repository's latest release (its newest version tag when it publishes no release), each PyPI tool of `requirements-tools.in`, and each `tools.lock` binary. A newer one turns the job red; moving it is a kit release that bumps the pin, its `LATEST_*` entry, `quality/VERSION` and the changelog, and the sync carries it to every repository. Dependabot's seven-day cooldown still paces its own pull requests; the job reports a release as soon as it is out.
+
+The kit's own Python is 3.15 as well: its scripts are formatted for it (PEP 758 `except` clauses without parentheses need 3.14 or newer), so a repository that takes a 2.x release runs its CI and hooks on 3.15, as the pin rule asks anyway. SonarQube Cloud lists Python up to 3.14, so `sonar.python.version` stays 3.14 with its reason beside it ([`sonarcloud.md`](sonarcloud.md)).
 
 ### TypeScript and C++ (profiles `ts`, `cpp`)
 
@@ -222,7 +246,7 @@ A notice is a red scheduled run, not an issue: issues are off in most kleidos-de
 
    ```toml
    [[waiver]]
-   tool = "ruff"                # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse
+   tool = "ruff"                # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins
    what = "ignore:E501"         # the weakening, as check_quality.py names it
    where = "pyproject.toml"     # optional: the file, when the same weakening is in two
    reason = "Why the rule is wrong for this code, with the sites read"
@@ -239,7 +263,7 @@ A notice is a red scheduled run, not an issue: issues are off in most kleidos-de
 ## Versions
 
 - [`quality/VERSION`](../quality/VERSION) is the kit's semver, with an entry per release in [`quality/CHANGELOG.md`](../quality/CHANGELOG.md). MAJOR: anything that can turn a green repository red (a rule on, a stricter setting, a tool bump with new findings, a new conformance rule some repository fails). MINOR: a new opt-in profile or tool, or a rule every repository already passes. PATCH: docs, or a checker fix that cannot add findings.
-- Tool versions are set here only: [`quality/requirements-tools.in`](../quality/requirements-tools.in) compiled with hashes into `requirements-tools.txt` (the command is in its header), the hook revisions in this repository's [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (each a commit SHA with its tag), the actions the reusable workflows pin, and `tools.lock`. Dependabot bumps the first three here (pip, pre-commit and github-actions ecosystems); the weekly `📦 Pinned release binaries current` job turns red when a `tools.lock` binary has a newer release. A bump reaches the other repositories through the sync, never through their own Dependabot.
+- Tool versions are set here only: [`quality/requirements-tools.in`](../quality/requirements-tools.in) compiled with hashes into `requirements-tools.txt` (the command is in its header), the hook revisions in this repository's [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (each a commit SHA with its tag), the actions the reusable workflows pin, and `tools.lock`; `check_quality.py`'s `LATEST_PYTHON`, `LATEST_ACTIONS` and `LATEST_HOOKS` repeat the Python, action and hook versions, and a kit test keeps them equal. Dependabot bumps the first three here (pip, pre-commit and github-actions ecosystems); the weekly `📦 Pinned versions current` job turns red when any kit pin has a newer stable release ([Pins at the latest release](#pins-at-the-latest-release)). A bump reaches the other repositories through the sync, never through their own Dependabot.
 - A Dependabot pull request here is a kit release like any other. This repository records commit `self`, so its own lint job compares its copies and blocks with its working tree, not with `SOURCE.json`'s digests, and a hook or action bump passes it unattended. What it still needs before it merges: a signed commit on its branch with the new `quality/VERSION` (MINOR for a tool bump that finds nothing new in the impact preview, MAJOR if it finds more) and its `quality/CHANGELOG.md` entry (the `🏷️ Kit release and its tag` job fails until then; a pip bump of `requirements-tools.txt` also needs its header put back on top, as the file says), then the tag after the merge. Dependabot's pre-commit updater reads crate-ci/typos' sub-crate tags (`varcon-core-v5.0.7`) as typos versions, so `dependabot.yml` ignores typos `>= 2` (closed PR #10).
 
 ## Taking a new kit release

@@ -7,7 +7,7 @@
 
 [tool.ruff]
 extend = ".github/quality/ruff.toml"
-target-version = "py311"
+target-version = "py315"
 
 [tool.mypy]
 # >>> kleidos-quality mypy (synced from kleidos-dev/.github quality/mypy/block.toml; do not edit)
@@ -15,7 +15,7 @@ strict = true
 # An ignore names the error it silences, so it cannot hide a second one.
 enable_error_code = ["ignore-without-code"]
 # <<< kleidos-quality mypy
-python_version = "3.11"
+python_version = "3.15"
 # The media metadata tools, their tests, and the quality kit itself.
 files = ["scripts", "tests", "quality"]
 # The kit's tests and sync.py import check_quality.py from beside them.

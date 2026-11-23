@@ -18,8 +18,8 @@
 # and writes what it would find to the job summary (it informs, it does not
 # gate); last, the SonarCloud analysis, which reads the tests' coverage. On
 # the weekly schedule the OSV scan catches new advisories against unchanged
-# code, and the pinned release binaries are compared with their upstream
-# releases.
+# code, and every kit pin (Python, actions, hook revs, PyPI tools, release
+# binaries) is compared with its upstream releases.
 name: CI
 
 on:
@@ -181,32 +181,33 @@ jobs:
       contents: read
       id-token: write
 
-  tools-outdated:
-    name: "📦 Pinned release binaries current"
+  # Owner, 2026-11-23: every pin is the latest stable release. The kit's
+  # pins (its Python, the actions and hook revs check_quality.py's LATEST_*
+  # name, the PyPI tools, the tools.lock binaries) are compared with their
+  # upstream releases every week; a newer one turns this job red.
+  pins-outdated:
+    name: "📦 Pinned versions current"
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Install the kit's tools (hashed)
+        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
       # Issues are off in this repository: a red weekly run is the notice.
-      - name: Compare tools.lock with the upstream releases
+      - name: Compare every kit pin with its upstream releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           status=0
-          python3 quality/fetch_tool.py --outdated > "${RUNNER_TEMP}/outdated.txt" || status=$?
-          cat "${RUNNER_TEMP}/outdated.txt"
-          if [ "${status}" != 0 ]; then
-            {
-              echo "## A pinned release binary is outdated"
-              echo
-              echo "Bump its version, URL and SHA-256 (from the release's checksum file) in quality/tools.lock in one pull request; it is a kit release like any rule change (docs/quality.md, \"Versions\")."
-              echo
-              sed 's/^/- /' "${RUNNER_TEMP}/outdated.txt"
-            } >> "${GITHUB_STEP_SUMMARY}"
-            echo "::error title=tools.lock outdated::a pinned release binary has a newer upstream release (see the job summary)"
-            exit 1
+          python quality/latest_releases.py --summary "${GITHUB_STEP_SUMMARY}" || status=$?
+          if [ "${status}" = 1 ]; then
+            echo "::error title=A kit pin is outdated::a pinned version has a newer stable release (see the job summary)"
           fi
+          exit "${status}"

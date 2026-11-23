@@ -5,8 +5,9 @@
 # hook repository provides, each pinned by version and SHA-256 (from the
 # release's own checksum file). fetch_tool.py downloads one, checks the digest
 # and installs it; fetch_tool.py --outdated compares each with the upstream
-# release, which central's weekly run turns into an issue. The org's Actions
-# policy allows no third-party action, so these replace the vendors' actions.
+# release, and the CI's weekly "📦 Pinned versions current" job turns red when
+# one is newer. The org's Actions policy allows no third-party action, so
+# these replace the vendors' actions.
 
 [osv-scanner]
 version = "2.7.1"

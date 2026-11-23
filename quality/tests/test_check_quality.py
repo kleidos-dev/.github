@@ -111,8 +111,8 @@ class ConformanceTest(unittest.TestCase):
     def test_a_ruff_include_narrows_the_files_and_needs_a_waiver(self) -> None:
         self.edit(
             "pyproject.toml",
-            'target-version = "py311"\n',
-            'target-version = "py311"\ninclude = ["nothing/*.py"]\n',
+            'target-version = "py315"\n',
+            'target-version = "py315"\ninclude = ["nothing/*.py"]\n',
         )
         self.assertFound("include:nothing/*.py weakens a kit rule")
         self.edit("pyproject.toml", 'include = ["nothing/*.py"]', "include = []")
