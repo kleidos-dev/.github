@@ -2303,8 +2303,23 @@ def submodules(repo: Repo) -> list[Submodule]:
         if path in gitlinks and attrs.get("url"):
             url = resolve_submodule_url(repo, attrs["url"])
             branch = attrs.get("branch", "")
-            out.append(Submodule(path, url, "" if branch == "." else branch, gitlinks[path]))
+            if branch == ".":
+                branch = parent_branch(repo)
+            out.append(Submodule(path, url, branch, gitlinks[path]))
     return out
+
+
+def parent_branch(repo: Repo) -> str:
+    """The branch "branch = ." follows: the checked repository's current one.
+
+    A CI checkout is detached, so GitHub's names for it stand in; with none,
+    a name no branch can have, which the fetch refuses as a finding.
+    """
+    current = _git("-C", str(repo.root), "symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+    for name in (current, os.environ.get("GITHUB_HEAD_REF"), os.environ.get("GITHUB_REF_NAME")):
+        if name:
+            return name
+    return "(. on a detached HEAD)"
 
 
 class SubmoduleUpstream:
@@ -2366,9 +2381,11 @@ class SubmoduleUpstream:
 
 
 def is_requirements_file(rel: str) -> bool:
-    """A pip requirements or constraints file, by its name or its folder."""
+    """A pip requirements or constraints file: any *.in, or a *.txt by its name or folder."""
     pure = PurePosixPath(rel)
-    if pure.suffix not in (".txt", ".in"):
+    if pure.suffix == ".in":
+        return True
+    if pure.suffix != ".txt":
         return False
     return any(word in pure.name for word in ("requirements", "constraints")) or (
         "requirements" in pure.parts[:-1]

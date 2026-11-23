@@ -13,7 +13,7 @@
     {
       "path": ".github/quality/check_quality.py",
       "source_path": "quality/check_quality.py",
-      "sha256": "9cc553bf7321d430ef4c20f4436b3af93e2cf33bad571ca50143e665126ea90a"
+      "sha256": "27857386342ce2a6cb65e523339b118e821627d385f949edf6d32eef5a77c779"
     },
     {
       "path": ".github/quality/md_nowrap.py",

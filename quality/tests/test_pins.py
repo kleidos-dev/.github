@@ -467,6 +467,15 @@ class SubmodulePinsTest(unittest.TestCase):
         path = self.root / ".gitmodules"
         path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
 
+    def test_branch_dot_follows_the_parent_branch(self) -> None:
+        fx.git(self.upstream, "checkout", "-q", "-b", "release")
+        self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
+        fx.git(self.upstream, "checkout", "-q", "main")
+        self.append_gitmodules("\tbranch = .\n")
+        self.assertEqual(self.found(), [])
+        fx.git(self.root, "checkout", "-q", "-b", "release")
+        self.assertTrue(any("tip of its release" in f for f in self.found()))
+
     def test_a_reason_beside_the_include_needs_a_waiver(self) -> None:
         self.upstream_commit("more.txt", SUB_MORE.format(charset="3.5.3"))
         what = f"submodule:brand@{self.old[:7]}"
@@ -540,6 +549,7 @@ class SubmoduleHelpersTest(unittest.TestCase):
         for rel in (
             "requirements.txt",
             "requirements-dev.in",
+            "deps.in",
             "ci/constraints.txt",
             "requirements/base.txt",
         ):
