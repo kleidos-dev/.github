@@ -1,6 +1,10 @@
 {
   "files": [
     {
+      "path": "AGENTS.md",
+      "description": "The rules for any agent or contributor changing this repository: what is where, the commands CI runs, the kit release and copy rules, the community defaults' contracts, and the organization rules. Review findings cite these rules."
+    },
+    {
       "path": "README.md",
       "description": "What the repository holds, path by path, and the media metadata rules (profile kleidos-media-meta/1, the stamp and the checker, the privacy deny-list) and the license split. Review findings cite these rules."
     },

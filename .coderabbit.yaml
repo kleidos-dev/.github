@@ -16,8 +16,9 @@
 #
 # kleidos-dev/.github: the organization's profile, its community defaults
 # (used by every repository without its own) and the media metadata tools.
-# It has no AGENTS.md: its rules are in README.md and CONTRIBUTING.md, which
-# the knowledge base below adds to the guideline files.
+# Its rules are in AGENTS.md (read by default, with CLAUDE.md, which imports
+# it), README.md and CONTRIBUTING.md, which the knowledge base below adds to
+# the guideline files.
 language: en-US
 
 reviews:
@@ -236,8 +237,8 @@ issue_enrichment:
 
 knowledge_base:
   code_guidelines:
-    # Added to the defaults (which read AGENTS.md and CLAUDE.md files, of
-    # which this repository has none): the two files that hold its rules.
+    # Added to the defaults (which read the AGENTS.md and CLAUDE.md files):
+    # the two other files that hold its rules.
     filePatterns:
       - "README.md"
       - "CONTRIBUTING.md"
