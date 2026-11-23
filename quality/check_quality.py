@@ -228,7 +228,6 @@ KIT_USES = re.compile(
 )
 USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*(['\"]?)(?P<ref>[^\s'\"#]+)\1\s*(?P<comment>#.*)?$")
 PINNED_REF = re.compile(r"^[\w.-]+/[\w.-]+(?:/[^@\s]+)?@[0-9a-f]{40}$")
-IMAGE_LINE = re.compile(r"^\s*(?:-\s+)?(?:image|container):\s*(['\"]?)(?P<ref>[^\s'\"#{]+)\1")
 IMAGE_REF = re.compile(
     r"^(?:docker://)?(?:(?:docker\.io|index\.docker\.io|registry-1\.docker\.io)/)?"
     r"(?P<name>[a-z0-9][\w./-]*?)(?::(?P<tag>[\w][\w.-]*))?(?:@(?P<digest>sha256:[0-9a-f]{64}))?$"
@@ -2246,33 +2245,46 @@ def check_hook_pins(repo: Repo, report: Report) -> None:
         pin_below(report, rel, num, f"hook:{url}@{shown}", latest, reasoned)
 
 
-def workflow_images(wf: Any) -> list[str]:
-    """The images a workflow's jobs run in: each job's container and each service's image."""
-    images: list[str] = []
-    jobs = wf.get("jobs") if isinstance(wf, dict) else None
-    for job in (jobs or {}).values() if isinstance(jobs, dict) else ():
-        if not isinstance(job, dict):
-            continue
-        containers = [job.get("container")]
-        services = job.get("services")
-        if isinstance(services, dict):
-            containers += list(services.values())
+def mapping_value(node: Any, key: str) -> Any:
+    """The value node of a key in a YAML mapping node, or None."""
+    if not isinstance(node, yaml.MappingNode):
+        return None
+    for k, v in node.value:
+        if isinstance(k, yaml.ScalarNode) and k.value == key:
+            return v
+    return None
+
+
+def workflow_images(text: str) -> list[tuple[str, int, str]]:
+    """Each image a workflow's jobs run in (job container, service image): value, line, comment.
+
+    Read from the composed YAML, so a value's line is its own: a flow mapping
+    ({image: ...}) is read, script text is not, and an alias (container: *kicad)
+    is the node its anchor wrote, listed once. The comment is what follows the
+    value on its line.
+    """
+    lines = text.splitlines()
+    found: list[tuple[str, int, str]] = []
+    seen: set[int] = set()
+    jobs = mapping_value(yaml.compose(text), "jobs")
+    for _, job in jobs.value if isinstance(jobs, yaml.MappingNode) else ():
+        containers = [mapping_value(job, "container")]
+        services = mapping_value(job, "services")
+        if isinstance(services, yaml.MappingNode):
+            containers += [v for _, v in services.value]
         for container in containers:
-            image = container.get("image") if isinstance(container, dict) else container
-            if isinstance(image, str) and image.strip():
-                images.append(image.strip())
-    return images
-
-
-def image_line(lines: list[str], ref: str, taken: set[int]) -> int:
-    """The index of the line that names an image: its image: or container: key, else any line."""
-    candidates = [i for i, line in enumerate(lines) if ref in line and i not in taken]
-    for i in candidates:
-        m = IMAGE_LINE.match(lines[i])
-        if m and m.group("ref") == ref:
-            return i
-    keyed = [i for i in candidates if re.search(r"\b(image|container)\s*:", lines[i])]
-    return (keyed or candidates or [-1])[0]
+            image = mapping_value(container, "image") or container
+            if not isinstance(image, yaml.ScalarNode) or id(image) in seen:
+                continue
+            seen.add(id(image))
+            value = str(image.value).strip()
+            if not value:
+                continue
+            end = image.end_mark
+            after = lines[end.line][end.column :] if end.line < len(lines) else ""
+            comment = after[after.index("#") :] if "#" in after else ""
+            found.append((value, image.start_mark.line, comment))
+    return found
 
 
 def check_image_pins(repo: Repo, report: Report) -> None:
@@ -2282,23 +2294,17 @@ def check_image_pins(repo: Repo, report: Report) -> None:
             continue
         text = repo.text(rel)
         try:
-            wf = yaml.safe_load(text) or {}
+            images = workflow_images(text)
         except yaml.YAMLError:
             continue
         lines = text.splitlines()
-        taken: set[int] = set()
-        for image in workflow_images(wf):
+        for image, index, comment in images:
             ref = IMAGE_REF.match(image)
             if not ref:
                 continue
             name = ref.group("name").lower().removeprefix("library/")
             if name not in LATEST_IMAGES:
                 continue
-            index = image_line(lines, image, taken)
-            taken.add(index)
-            line = lines[index] if index >= 0 else ""
-            after = line[line.index(image) + len(image) :] if image in line else ""
-            comment = after[after.index("#") :] if "#" in after else ""
             latest, digest = LATEST_IMAGES[name]
             num = index + 1
             where = f"{rel}:{num}"
@@ -2321,7 +2327,7 @@ def check_image_pins(repo: Repo, report: Report) -> None:
                 )
                 continue
             if is_below(have, want):
-                reasoned = index >= 0 and reason_beside(lines, index)
+                reasoned = reason_beside(lines, index)
                 pin_below(report, rel, num, f"image:{name}:{tag}", latest, reasoned)
                 continue
             if have == want and ref.group("digest") != digest:

@@ -13,6 +13,10 @@ The pin rule now sees the pins a repository takes from a git submodule. social i
 
 - `check_quality.py`, rule `pins`: a requirements or constraints file (any `*.in`, or a `*.txt` named for them or under `requirements/`) that includes (`-r`, `-c`) a file of a submodule must pin, through it and every file it includes, what that file pins at the tip of the submodule's branch (`.gitmodules`' `branch`, the repository's current branch for `branch = .`, else the default one). With the kit (the CI's `--kit`) it fetches the upstream into a scratch repository (depth 1, no blobs but the files read) and compares; a pin the tip adds, drops or moves is a finding, waivable with a `below-latest:` reason beside the include and `what = "submodule:<path>@<short commit>"`, and an upstream that cannot be fetched is a finding too. A pin under an environment marker is compared per marker; a `branch` that is not a plain branch name is refused, and the URL follows `--`, so nothing from `.gitmodules` reaches `git fetch` as an option. Offline, a submodule waiver is not reported unused. Offline (the pre-commit hook) it fetches nothing and notes it.
 
+## 2.1.1 (2026-11-23)
+
+A checker fix that cannot add findings. The image pin check reads each job's container and each service's image from the composed YAML, with the line and the comment of the value itself, instead of searching the file's text for the image. A container shared through a YAML alias (`container: *kicad`, its anchor on another job) is the anchor's node, checked once: it was looked up a second time, took no line or a script line that named the same reference, lost the tag comment beside the anchor and was reported as "names no tag".
+
 ## 2.1.0 (2026-11-23)
 
 Container images join the pin rule. Nothing turns a green repository red: the only image the kit knows, `kicad/kicad`, is already pinned by its 10.0.8 digest in boards and brand, and no other repository runs a known image.
