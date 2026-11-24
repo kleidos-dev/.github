@@ -362,8 +362,15 @@ class ReferenceTest(CalledCase):
             jobs = {"a": {"uses": reference}}
             found = rf.callers([rf.Workflow("w", {}, jobs, {})], self_ref=False)
             self.assertEqual(list(found), files, reference)
-        own = rf.Workflow("w", {}, {"a": {"uses": "./.github/workflows/quick.yml"}}, {})
-        self.assertEqual(list(rf.callers([own], self_ref=True)), ["quick.yml"])
+        for reference, files in (
+            ("./.github/workflows/quick.yml", ["quick.yml"]),
+            ("./.github/workflows/quick.yml/x", []),
+            ("./.github/workflows/quickxyml", []),
+            (".x/.github/workflows/quick.yml", []),
+            ("./.github/workflows/x/quick.yml", []),
+        ):
+            own = rf.Workflow("w", {}, {"a": {"uses": reference}}, {})
+            self.assertEqual(list(rf.callers([own], self_ref=True)), files, reference)
 
     def test_a_local_action_cannot_call_the_kit(self) -> None:
         body = fx.header() + "runs:\n  using: composite\n  steps:\n"
