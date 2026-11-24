@@ -3,12 +3,12 @@ SPDX-FileCopyrightText: 2026 José M. Requena Plens
 SPDX-License-Identifier: GPL-3.0-or-later
 -->
 
-<!-- BEGIN GENERATED: banner (kleidos-dev/brand, social/tools/sync_readme_banners.py); do not edit by hand -->
+<!-- BEGIN GENERATED: banner (kleidos-dev/social, tools/sync_readme_banners.py); do not edit by hand -->
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/kleidos-dev/brand/main/social/svg/readme/dot-github/banner-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/kleidos-dev/brand/main/social/svg/readme/dot-github/banner-light.svg">
-  <img src="https://raw.githubusercontent.com/kleidos-dev/brand/main/social/svg/readme/dot-github/banner-light.svg" width="100%" alt="Kleidos Community: The organization's profile, contributing guide, security policy and templates.">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/kleidos-dev/social/main/svg/readme/dot-github/banner-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/kleidos-dev/social/main/svg/readme/dot-github/banner-light.svg">
+  <img src="https://raw.githubusercontent.com/kleidos-dev/social/main/svg/readme/dot-github/banner-light.svg" width="100%" alt="Kleidos Community: The organization's profile, contributing guide, security policy and templates.">
 </picture>
 
 <!-- END GENERATED: banner -->
