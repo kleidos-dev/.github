@@ -270,6 +270,13 @@ class KitCodeTest(CalledCase):
             self.edit(".typos.toml", "[default]\n", f"[default]\n{line}\n")
             self.assert_only(".typos.toml:2: [kit-code] a managed-block marker")
             self.edit(".typos.toml", f"{line}\n", "")
+        for rel in (".pre-commit-config.yaml", "pyproject.toml", "AGENTS.md"):
+            whole = self.text(rel)
+            fx.write(self.root, rel, f"{whole}\n# >>> kleidos-quality typos (x)\n")
+            found = [f for f in self.found() if "[kit-code] a managed-block marker" in f]
+            self.assertEqual(len(found), 1, rel)
+            self.assertTrue(found[0].startswith(f"{rel}:"), found)
+            fx.write(self.root, rel, whole)
 
     def test_a_kit_script_elsewhere_is_a_note(self) -> None:
         data = (fx.CENTRAL / "quality/md_nowrap.py").read_bytes()
@@ -291,6 +298,7 @@ class ReferenceTest(CalledCase):
             (SHA, "called at a commit"),
             ("v3.0.0", "called at the tag v3.0.0"),
             ("v3.1", "called at the tag v3.1"),
+            ("v312", "is called at v312: the kit is called at @v3"),
         ):
             with self.subTest(ref=ref):
                 original = self.text(GATE)
@@ -333,7 +341,13 @@ class ReferenceTest(CalledCase):
             with self.subTest(path=path):
                 reference = f"kleidos-dev/.github/{path}@v3"
                 self.assertIn(needle, str(rf.reference_problem(reference, "v3", KIT)))
-        for path in (".github/workflows/quick.yml/x", ".github/workflows/quick.yml?", "x", ""):
+        for path in (
+            ".github/workflows/quick.yml/x",
+            ".github/workflows/quick.yml?",
+            "x",
+            "",
+            "xgithub/workflows/quick.yml",
+        ):
             reference = f"kleidos-dev/.github/{path}@v3"
             self.assertIn("is not a workflow", str(rf.reference_problem(reference, "v3", KIT)))
         for path in ("quick.yml", "check.yml", "sonar.yml", "reusable-python-tests.yml"):
@@ -371,6 +385,7 @@ class ReferenceTest(CalledCase):
             ("./.github/workflows/quick.yml", ["quick.yml"]),
             ("./.github/workflows/quick.yml/x", []),
             ("./.github/workflows/quickxyml", []),
+            ("./.github/workflows/.yml", []),
             (".x/.github/workflows/quick.yml", []),
             ("x/.github/workflows/quick.yml", []),
             ("./xgithub/workflows/quick.yml", []),

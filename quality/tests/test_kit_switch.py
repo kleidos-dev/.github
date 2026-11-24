@@ -100,6 +100,15 @@ class SwitchTest(unittest.TestCase):
         self.assertEqual(ids.count("kleidos-commit-msg"), 1)
         self.assertIn("      # Why mine.\n      - id: mine\n", text)
 
+    def test_every_hook_of_the_copies_goes(self) -> None:
+        held = ["kleidos-quality", "kleidos-md-nowrap", "kleidos-spdx-headers"]
+        held += ["kleidos-agent-docs", "kleidos-commit-msg", "mypy"]
+        for name in held:
+            own = f"  - repo: local\n    hooks:\n      - id: {name}\n        name: x\n"
+            text = ks.hook_list(f"# x\nrepos:\n{own}", KIT, ["base"])
+            ids = [rf.hook_key(h["hook"]) for h in rf.hook_lists(text)]
+            self.assertEqual(ids, ["kleidos-kit", "kleidos-commit-msg"], name)
+
     def test_the_first_entry_and_a_third_partys_hooks_stay_whole(self) -> None:
         own = "  - repo: local\n    hooks:\n      - id: own\n        name: own\n"
         theirs = "  - repo: https://x\n    rev: v1\n    hooks:\n      - id: mypy\n      - id: b\n"
