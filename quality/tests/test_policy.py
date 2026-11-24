@@ -99,7 +99,7 @@ class PolicyTest(unittest.TestCase):
         with self.planted(".github/quality/x.py", fx.header()):
             status, said = self.run_policy("--only", "kit", "--kit-sha", "d" * 40)
         self.assertEqual(status, 1)
-        self.assertIn("note: the kit's hook entry here is at v3.", said)
+        self.assertIn("the hooks here are at v3.", said)
         self.assertIn(f"({'d' * 12})", said)
 
     def test_a_skipped_kit_hook_is_refused(self) -> None:

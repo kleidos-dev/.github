@@ -26,7 +26,7 @@ One report says what is behind, what is broken and what nobody declared across t
 | Runs | Weekly in [`ecosystem.yml`](../.github/workflows/ecosystem.yml), on demand, and as a trial on a pull request that changes it | Weekly from a timer on the owner's machine ([The local report](#the-local-report)) |
 | Reads as | A token that reads this repository and what is public | The caller's own `gh` session, read-only |
 | Covers | The public repositories | Every one, and the settings |
-| Goes to | The job summary | A dated file and a notification; it is never posted |
+| Goes to | The job summary, and the badge on the organization's profile | A dated file and a notification; it is never posted |
 
 The public half cannot leak what it cannot read, and does not name it either: it asks nothing about a repository the list does not call public, withholds any line that names one, and refuses to print if one is left. `--all` refuses to run in CI.
 

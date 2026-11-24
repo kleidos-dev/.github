@@ -6,8 +6,8 @@
 Owner, 2026-11-23: every pinned version is the latest stable release. The
 kit's pins are the newest it knows, and check_quality.py holds every
 repository to them (LATEST_PYTHON, LATEST_ACTIONS, LATEST_HOOKS,
-LATEST_IMAGES); this script, run by the CI's weekly "📦 Pinned versions
-current" job, compares them with upstream:
+LATEST_IMAGES); this script, which the weekly ecosystem report runs,
+compares them with upstream:
 
   Python       the newest stable CPython setup-python serves
                (actions/python-versions' manifest)
@@ -183,9 +183,8 @@ def main(argv: list[str] | None = None) -> int:
             fh.write(
                 "Move it in one pull request here: the pin, the matching LATEST_* entry of"
                 " quality/check_quality.py, quality/VERSION and quality/CHANGELOG.md"
-                ' (docs/quality.md, "Versions"); the sync then carries it to every'
-                " repository. An image is only its LATEST_IMAGES entry here; each"
-                " repository that runs it moves its digest when it takes the release.\n\n"
+                ' (docs/quality.md, "Versions"). An image is only its LATEST_IMAGES entry here;'
+                " each repository that runs it moves its digest.\n\n"
             )
             fh.writelines(f"- {line}\n" for line in lines)
     return 1 if lines else 0

@@ -60,7 +60,6 @@ class Options:
 def kit_check(opts: Options) -> list[str]:
     """check_quality.py, with this kit as the kit of the run form and of its home."""
     kit = cq.DirKit(KIT)
-    repo = cq.Repo(opts.repo)
     report = cq.run(opts.repo, kit=kit)
     refused = cq.refused_skips(opts.lint_skip, cq.kit_block_hook_ids(kit) | set(run_form.KIT_HOOKS))
     for hook in refused:
@@ -72,10 +71,7 @@ def kit_check(opts: Options) -> list[str]:
     if opts.summary:
         with opts.summary.open("a", encoding="utf-8") as fh:
             fh.write(cq.render_markdown(report))
-    found = [f"{p.where}: [{p.rule}] {p.message}" for p in report.problems]
-    if found:
-        print(f"note: the kit's hook entry here is at {run_form.hook_rev(repo)}")
-    return found
+    return [f"{p.where}: [{p.rule}] {p.message}" for p in report.problems]
 
 
 def agent_docs_check(opts: Options) -> list[str]:
@@ -162,7 +158,9 @@ def main(argv: list[str] | None = None) -> int:
         total += len(found)
     which = kit_line(args.kit_sha)
     if total:
-        print(f"{total} problem(s) found by {which}: docs/quality.md of kleidos-dev/.github")
+        rev = run_form.hook_rev(cq.Repo(args.repo))
+        print(f"{total} problem(s) found by {which}, the hooks here are at {rev}")
+        print("the rules are in kleidos-dev/.github, docs/quality.md")
         return 1
     print(f"clean: {', '.join(chosen)} ({which})")
     return 0

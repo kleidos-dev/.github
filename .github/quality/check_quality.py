@@ -160,8 +160,8 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 # knows it (owner, 2026-11-23: every pin at the latest stable release). They
 # are the kit's own pins: a kit test holds them equal to its .python-version,
 # the actions its workflows pin and the hook revs of its
-# .pre-commit-config.yaml, and the kit's weekly "📦 Pinned versions current"
-# job (quality/latest_releases.py) turns red when upstream has a newer one.
+# .pre-commit-config.yaml, and the weekly ecosystem report
+# (quality/latest_releases.py) lists one that has a newer release upstream.
 # A pin below them is reported unless a comment beside it (same line, or the
 # comment lines right above) says why after "below-latest:", and then it is a
 # weakening that needs a waiver (tool = "pins").
@@ -709,7 +709,7 @@ def detect_profiles(repo: Repo) -> set[str]:
 def load_source(repo: Repo, report: Report) -> dict[str, Any] | None:
     if not repo.exists(SOURCE_JSON):
         report.add(
-            "source", SOURCE_JSON, "missing: run the kit's sync.py --write on this repository"
+            "source", SOURCE_JSON, "missing: the kit's tools/kit_switch.py --configs writes it"
         )
         return None
     try:
@@ -1153,7 +1153,7 @@ def check_pre_commit_globals(repo: Repo, report: Report) -> None:
     """Top-level keys of .pre-commit-config.yaml that decide whether the kit's hooks run."""
     rel = ".pre-commit-config.yaml"
     if not repo.exists(rel):
-        report.add("pre-commit", rel, "missing (sync.py --write writes the kit's blocks)")
+        report.add("pre-commit", rel, "missing (docs/quality.md, The hooks)")
         return
     try:
         cfg = yaml.safe_load(repo.text(rel)) or {}
@@ -1570,7 +1570,11 @@ def check_python_inline(repo: Repo, report: Report) -> None:
 def check_gitleaks(repo: Repo, report: Report) -> None:
     rel = ".gitleaks.toml"
     if not repo.exists(rel):
-        report.add("gitleaks", rel, "missing: the default rules config (sync.py --write seeds it)")
+        report.add(
+            "gitleaks",
+            rel,
+            "missing: the default rules config (the kit's gitleaks/default.example.toml)",
+        )
     else:
         try:
             cfg = tomllib.loads(repo.text(rel))
@@ -1752,7 +1756,7 @@ def check_ci(repo: Repo, report: Report, kit_ref: str | None = None) -> None:
             ref = m.group("ref")
             if ref.startswith(("./", "docker://")):
                 continue
-            if kit_ref and re.fullmatch(rf"{KIT_REPO}/[\w./-]+@{kit_ref}", ref):
+            if kit_ref and re.fullmatch(rf"{re.escape(KIT_REPO)}/[\w./-]+@{kit_ref}", ref):
                 continue  # run_form.py holds the rest of it
             if not PINNED_REF.match(ref):
                 report.add("ci", f"{rel}:{num}", f"{ref} is not pinned by a full commit SHA")

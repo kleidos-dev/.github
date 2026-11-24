@@ -21,4 +21,6 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 > **Found a vulnerability?** Never report it in Discussions, in an issue, or in a pull request. Report it privately, as the [security policy](https://github.com/kleidos-dev/.github/blob/main/SECURITY.md) describes.
 
+[![Ecosystem report: what is broken across the public repositories](https://github.com/kleidos-dev/.github/actions/workflows/ecosystem.yml/badge.svg)](https://github.com/kleidos-dev/.github/actions/workflows/ecosystem.yml)
+
 <sub>Kleidos is licensed under [GPL-3.0-or-later](https://www.gnu.org/licenses/gpl-3.0.html); each repository states its own license in its `LICENSE` file.</sub>
