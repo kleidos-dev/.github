@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The quality kit's third entry workflow (docs/quality.md, "How a repository
+# runs the kit"): the SonarQube Cloud analysis, on a caller line of its own
+# because it is the only kit job that may ask GitHub for an OIDC token,
+# which buys a token of one project for 30 minutes. Public repositories only.
+#
+#   sonar:
+#     name: "📊 Sonar"
+#     needs: check
+#     if: github.event_name != 'schedule'
+#     uses: kleidos-dev/.github/.github/workflows/sonar.yml@v3
+#     permissions:
+#       contents: read
+#       id-token: write
+name: Quality kit, sonar
+
+on:
+  workflow_call:
+    inputs:
+      coverage-artifact:
+        description: The artifact check.yml uploaded the coverage report as (empty for none)
+        type: string
+        default: coverage
+
+permissions: {}
+
+jobs:
+  sonarcloud:
+    name: "📊 SonarCloud"
+    uses: ./.github/workflows/reusable-sonarcloud.yml
+    with:
+      coverage-artifact: ${{ inputs.coverage-artifact }}
+    permissions:
+      contents: read
+      id-token: write

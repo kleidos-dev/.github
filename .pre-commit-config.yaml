@@ -5,11 +5,10 @@
 default_install_hook_types: [pre-commit, commit-msg]
 
 # The blocks between the kleidos-quality markers are the quality kit's
-# canonical hook list: sync.py copies each block, byte for byte, into the
-# .pre-commit-config.yaml of every repository that adopts the kit (one block
-# per profile), and Dependabot's pre-commit ecosystem bumps the revs here
-# only. Every rev is a commit SHA with its tag beside it. The hooks outside
-# the markers are this repository's own.
+# canonical hook list, one block per profile: the kit's check holds the
+# third-party hooks of every repository to them (run_form.py), and a kit 2.x
+# repository still carries their bytes. Every rev is a commit SHA with its
+# tag beside it. The hooks outside the markers are this repository's own.
 repos:
   - repo: local
     hooks:

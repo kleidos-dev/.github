@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The public half of the ecosystem report (docs/ecosystem.md), weekly: what
+# is behind, what is broken and what does not answer across the public
+# kleidos-dev repositories, in the job summary. The token reads this
+# repository and what is public, so the report cannot hold a line about
+# anything else, and the script refuses to print one. It fails on what is
+# broken; being behind is never red. The other half needs the owner's own
+# session and runs on his machine (tools/timer/).
+#
+# On a pull request that changes the report it runs as a trial that fails
+# only when the script does. GitHub turns a schedule off after 60 days with
+# no activity in the repository; the local report says so when it happens.
+name: Ecosystem report
+
+on:
+  schedule:
+    # Monday 07:00 Europe/Madrid in winter, after the Dependabot runs.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/ecosystem.yml
+      - tools/ecosystem.py
+      - tools/ecosystem.toml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecosystem-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    name: "🌍 Public repositories"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+      - name: Install the kit's tools (hashed)
+        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+      - name: Read the public repositories
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          status=0
+          python tools/ecosystem.py report --summary "${GITHUB_STEP_SUMMARY}" || status=$?
+          if [ "${status}" = 1 ] && [ "${EVENT}" = pull_request ]; then
+            echo "::notice title=Ecosystem report::something is red today; this trial run does not fail for it"
+            status=0
+          fi
+          exit "${status}"

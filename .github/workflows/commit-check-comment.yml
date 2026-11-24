@@ -14,7 +14,7 @@ name: Commit check comment
 # and the called job treats the artifact as data only (see above).
 on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
-    workflows: [Commit check]
+    workflows: [CI]
     types: [completed]
 
 permissions: {}
@@ -29,5 +29,4 @@ jobs:
     uses: ./.github/workflows/reusable-commit-check-comment.yml
     permissions:
       actions: read
-      contents: read
       pull-requests: write

@@ -175,9 +175,46 @@ class ConformanceTest(unittest.TestCase):
             "needs targetRules",
         )
 
+    def test_gitleaks_extends_every_default_rule(self) -> None:
+        rel = ".gitleaks.toml"
+        for body in (
+            "",
+            "[extend]\n",
+            "[extend]\nuseDefault = false\n",
+            '[extend]\nuseDefault = "x"\n',
+        ):
+            fx.write(self.root, rel, fx.header() + body)
+            self.assertEqual(
+                self.found(),
+                [f"{rel}: [gitleaks] [extend] useDefault = true is required: every default rule"],
+                body,
+            )
+        fx.write(self.root, rel, fx.header() + "[extend]\nuseDefault = true\n")
+        self.assertEqual(self.found(), [])
+        fx.write(self.root, rel, "= 3\n")
+        self.assertFound(f"{rel}: [gitleaks] not valid TOML", "useDefault = true is required")
+        (self.root / rel).unlink()
+        self.assertFound(f"{rel}: [gitleaks] missing")
+
+    def test_a_gitleaks_allowlist_says_why_and_for_which_rules(self) -> None:
+        body = "[extend]\nuseDefault = true\n[[allowlists]]\npaths = ['y']\n"
+        for more, problems in (
+            ("description = 'd'\ntargetRules = ['r']\n", 0),
+            ("description = ' '\ntargetRules = ['r']\n", 1),
+            ("description = 'd'\ntargetRules = []\n", 1),
+            ("description = 'd'\n", 1),
+            ("targetRules = ['r']\n", 1),
+        ):
+            fx.write(self.root, ".gitleaks.toml", fx.header() + body + more)
+            self.assertEqual(len(self.found()), problems, more)
+
     def test_a_gitleaksignore_fingerprint_says_why(self) -> None:
         fx.write(self.root, ".gitleaksignore", "abc:file:rule:1\n")
         self.assertFound("every fingerprint has a comment line above it")
+        fx.write(self.root, ".gitleaksignore", "# why\nabc:file:rule:1\n\n# why\nd:e:f:1\n")
+        self.assertEqual(self.found(), [])
+        fx.write(self.root, ".gitleaksignore", "# why\nabc:file:rule:1\nd:e:f:1\n")
+        self.assertFound(".gitleaksignore:3: [gitleaks]")
 
     def test_an_osv_ignore_has_a_reason_and_a_near_end(self) -> None:
         fx.write(
@@ -187,6 +224,109 @@ class ConformanceTest(unittest.TestCase):
             '[[IgnoredVulns]]\nid = "GHSA-2"\nignoreUntil = 2026-12-01\n',
         )
         self.assertFound("more than 90 days ahead", "GHSA-2: [osv] needs a reason")
+
+    def test_an_osv_ignore_ends(self) -> None:
+        for until, needle in (
+            ("2026-11-22", ""),
+            ("2027-02-20", ""),
+            ("2026-11-22T10:00:00Z", ""),
+            ("2027-02-21", "ignoreUntil 2027-02-21 is more than 90 days ahead"),
+            ("2026-11-21", "expired on 2026-11-21: fix the dependency"),
+            ("2026-11-21T10:00:00Z", "expired on 2026-11-21"),
+            ('"2026-12-01"', "needs an ignoreUntil date, at most 90 days ahead"),
+            (None, "needs an ignoreUntil date, at most 90 days ahead"),
+        ):
+            with self.subTest(until=until):
+                line = f"ignoreUntil = {until}\n" if until else ""
+                body = f'[[IgnoredVulns]]\nid = "GHSA-1"\nreason = "x"\n{line}'
+                fx.write(self.root, "osv-scanner.toml", body)
+                found = self.found()
+                self.assertEqual(len(found), 1 if needle else 0, found)
+                if needle:
+                    self.assertIn(needle, found[0])
+        fx.write(self.root, "osv-scanner.toml", "= 3\n")
+        self.assertFound("osv-scanner.toml: [osv] not valid TOML")
+
+    def test_where_the_scan_runs_and_what_it_runs_is_the_kits(self) -> None:
+        rel = "sonar-project.properties"
+        head = fx.header() + "! one\nsonar.sources=a,\\\n  b\n"
+        self.assertEqual(self.found(), [])
+        for line, key in (
+            ("sonar.scanner.autoconfig.enabled=false", ""),
+            ("sonar.scanner.autoconfig.enabled : false ", ""),
+            ("sonar.qualitygate.wait=true", ""),
+            ("# sonar.host.url=https://evil.example", ""),
+            ("sonar.projectDescription=see\\\n sonar.host.url=x", ""),
+            ("sonar.scanner.autoconfig.enabled=true", "sonar.scanner.autoconfig.enabled"),
+            ("sonar.scanner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
+            ("  sonar.scanner.javaExePath ./evil.sh", "sonar.scanner.javaExePath"),
+            ("sonar.scanner.javaExePath: ./evil.sh", "sonar.scanner.javaExePath"),
+            ("sonar.scan\\\n  ner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
+            ("\\u0073onar.scanner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
+            ("sonar\\.scanner.apiBaseUrl=https://evil.example", "sonar.scanner.apiBaseUrl"),
+            ("sonar.host.url=https://evil.example", "sonar.host.url"),
+            ("sonar.region=us", "sonar.region"),
+            ("sonar.nodejs.executable=./evil.sh", "sonar.nodejs.executable"),
+            ("sonar.working.directory=planted", "sonar.working.directory"),
+            ("sonar.scanner.x", "sonar.scanner.x"),
+        ):
+            with self.subTest(line=line):
+                fx.write(self.root, rel, f"{head}{line}\n")
+                found = [f for f in self.found() if "[sonar]" in f]
+                wanted = f"{rel}: [sonar] {key} is refused: the kit's job runs the scan"
+                self.assertEqual(found, [wanted] if key else [])
+
+    def test_a_waiver_is_for_the_file_it_names(self) -> None:
+        self.append("pyproject.toml", '\n[tool.ruff.lint]\nignore = ["E501"]\n')
+        waiver = (
+            '\n[[waiver]]\ntool = "ruff"\nwhat = "ignore:E501"\nwhere = "{}"\n'
+            'reason = "r"\ndecided = "d"\n'
+        )
+        whole = (self.root / cq.WAIVERS).read_text(encoding="utf-8")
+        fx.write(self.root, cq.WAIVERS, whole + waiver.format("pyproject.toml"))
+        self.assertEqual(self.found(), [])
+        fx.write(self.root, cq.WAIVERS, whole + waiver.format("other/pyproject.toml"))
+        self.assertFound("has no waiver", "matches nothing any more")
+        self.assertEqual(len(self.found()), 2)
+
+    def test_the_waivers_file_is_there_and_reads(self) -> None:
+        whole = (self.root / cq.WAIVERS).read_text(encoding="utf-8")
+        (self.root / cq.WAIVERS).unlink()
+        self.assertEqual(len(self.found()), 1)
+        self.assertFound(f"{cq.WAIVERS}: [waivers] missing")
+        fx.write(self.root, cq.WAIVERS, whole + "= 3\n")
+        self.assertFound(f"{cq.WAIVERS}: [waivers] not valid TOML")
+
+    def test_dependabot_watches_the_actions(self) -> None:
+        rel = ".github/dependabot.yml"
+        self.edit(rel, "package-ecosystem: github-actions", "package-ecosystem: docker")
+        self.assertFound(f"{rel}: [dependabot] no github-actions ecosystem")
+
+    def test_a_pin_says_its_version_and_an_ignore_its_reason(self) -> None:
+        sha = "a" * 40
+        rel = ".github/workflows/own.yml"
+        job = (
+            'name: Own\non: push\npermissions: {{}}\njobs:\n  a:\n    name: "🔧 A"\n'
+            "    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n{}"
+        )
+        for steps, needle in (
+            (f"      - uses: o/a@{sha} # v1\n", ""),
+            (f"      - uses: o/a@{sha}\n", "carries the version it pins in a comment"),
+            (f"      - uses: o/a@{sha} #\n", "carries the version it pins in a comment"),
+            (f"      - uses: o/a@{sha[:39]} # v1\n", "is not pinned by a full commit SHA"),
+            ("      - uses: './x'\n      - uses: docker://x\n", ""),
+            ("      # why\n      - run: x # zizmor: ignore[a]\n", ""),
+            (
+                "      - run: x # zizmor: ignore[a]\n",
+                "has its reason in a comment on the line above",
+            ),
+        ):
+            with self.subTest(steps=steps):
+                fx.write(self.root, rel, fx.header() + job.format(steps))
+                found = self.found()
+                self.assertEqual(len(found), 1 if needle else 0, found)
+                if needle:
+                    self.assertIn(needle, found[0])
 
     def test_dependabot_ignores_the_kit_and_covers_every_manifest(self) -> None:
         self.edit(".github/dependabot.yml", '      - dependency-name: "kleidos-dev/.github*"\n', "")

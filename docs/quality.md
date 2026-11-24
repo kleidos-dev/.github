@@ -5,83 +5,118 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # The Kleidos quality kit
 
-One place holds the rules every Kleidos repository meets, the configuration of every analysis tool that enforces them, and the CI jobs that run those tools: this repository, in [`quality/`](../quality/) and the `reusable-*.yml` workflows of [`.github/workflows/`](../.github/workflows/). Every repository consumes it the same way, may add rules of its own, and cannot weaken a shared rule without writing down why. A rule change is one pull request here and one sync pull request in each repository.
+One place holds the rules every Kleidos repository meets, the configuration of every analysis tool that enforces them, and the CI jobs that run those tools: this repository, in [`quality/`](../quality/), [`hooks/`](../hooks/) and [`.github/workflows/`](../.github/workflows/). Every repository runs it the same way, may add rules of its own, and cannot weaken a shared rule without writing down why. A rule change is one pull request here.
+
+From 3.0.0 the kit is **run, not held**: a repository calls it by its name, `@v3`, and holds none of its code ([How a repository runs the kit](#how-a-repository-runs-the-kit)). The repositories that still hold kit 2.x copies keep working as they are, at the commit they recorded, until each one switches ([Switching from kit 2.x](#switching-from-kit-2x)); being behind is never red (owner, 2026-11-24).
 
 The kit uses free tools only (owner, 2026-11-22). SonarCloud stays on every public repository; the kit runs its analysis job but never touches a project's settings.
 
-The agent instruction files every repository keeps, `AGENTS.md` and `CLAUDE.md`, have a standard of their own, [`agent-docs.md`](agent-docs.md); the kit carries its two mechanical parts, the organization rules block and the guard that checks the files.
+The agent instruction files every repository keeps, `AGENTS.md` and `CLAUDE.md`, have a standard of their own, [`agent-docs.md`](agent-docs.md); the kit carries its two mechanical parts, the organization rules and the guard that checks the files. What is behind or broken across the repositories is one report, [`ecosystem.md`](ecosystem.md).
 
 ## Contents
 
-- [How a repository consumes the kit](#how-a-repository-consumes-the-kit)
-- [Adopting the kit in a repository](#adopting-the-kit-in-a-repository)
+- [How a repository runs the kit](#how-a-repository-runs-the-kit)
+- [Switching from kit 2.x](#switching-from-kit-2x)
+- [Held copies (kit 2.x)](#held-copies-kit-2x)
 - [The rules](#the-rules)
+- [Tests](#tests)
 - [Licensing headers](#licensing-headers)
 - [Reusable workflows](#reusable-workflows)
 - [Overrides](#overrides)
 - [Versions](#versions)
-- [Taking a new kit release](#taking-a-new-kit-release)
 - [Changing the kit](#changing-the-kit)
+- [Merging](#merging)
+- [Proof from another repository](#proof-from-another-repository)
 - [Outside the kit: Socket, CodeQL, SonarCloud](#outside-the-kit-socket-codeql-sonarcloud)
-- [Where each repository stands](#where-each-repository-stands)
 
-## How a repository consumes the kit
+## How a repository runs the kit
 
-Four mechanisms, chosen per tool by what the tool can do:
+Four things, and nothing else of the kit is in the tree:
 
-| Mechanism | What the repository holds | Used for |
+| What | What the repository holds | Who moves it |
 | --- | --- | --- |
-| Copy | The kit's file, byte for byte, recorded by SHA-256 | Tools that can point at another file (`ruff` `extend`, ESLint import, `tsconfig` `extends`, markdownlint `extends`, gitleaks `--config`, clang-tidy's parent config) and the kit's own scripts |
-| Managed block | A region of kit text inside a file the repository owns, between `# >>> kleidos-quality <id>` and `# <<< kleidos-quality <id>` (in Markdown, the same words in HTML comments: `<!-- >>> kleidos-quality <id> ... -->`, `<!-- <<< kleidos-quality <id> -->`) | Tools that read one file and have no include: mypy (`[tool.mypy]` in `pyproject.toml`), typos (`[default]` in `.typos.toml`), pre-commit (the hook list), coding agents (the organization rules in `AGENTS.md`, [`agent-docs.md`](agent-docs.md)) |
-| Reusable workflow | A thin caller job: `uses: kleidos-dev/.github/.github/workflows/reusable-<x>.yml@<kit commit>` | Every CI check |
-| Conformance rule | Nothing: `check_quality.py` reads the repository's own configs | Weakenings no copy or block can prevent (a local `select`, an ignore, a `-check`, a `continue-on-error`) |
+| CI | The calls to the entry workflows, at the branch `v3`, and the `✅ Check` job | The kit's release moves the branch; a new major is a hand pull request |
+| Hooks | One entry in `.pre-commit-config.yaml`, at a release tag, beside the third-party hooks | Dependabot |
+| Base configurations | The files a tool reads from the disk, with their record in `.github/quality/SOURCE.json` | `tools/ecosystem.py refresh`, whenever; an old one is a line of the report |
+| Waivers | `.github/quality/waivers.toml` | The repository |
 
-Everything a repository took from the kit is recorded in `.github/quality/SOURCE.json`: the kit version, the kit commit, the profiles, and the SHA-256 of every copy and every block. Every call to a kit workflow names that same commit, so a repository is at exactly one kit version for configs and CI alike. That commit is always a release: the merge commit on `main` that the tag `quality-v<VERSION>` names, the only commit `sync.py --write` records (zizmor's online `ref-version-mismatch` audit checks every `# quality-v<VERSION>` comment beside a kit SHA against that tag). kleidos-dev/agents' commit-check copies and their digest test are the model this follows.
+### The entry workflows
 
-`.github/quality/` holds the kit's copies, `SOURCE.json` and `waivers.toml`, and nothing else: any other file there, a `SOURCE.json` entry that is not one of the kit's copy targets, and a `.github/commit-check/SOURCE.json` entry other than the commit-message checker and its two workflows are reported, so no file escapes the checks by being parked or listed there.
+The model is [`quality/templates/run/ci.yml`](../quality/templates/run/ci.yml).
+
+| Workflow | Jobs | Inputs | The caller grants |
+| --- | --- | --- | --- |
+| [`quick.yml`](../.github/workflows/quick.yml) | Lint (every policy check, every hook, zizmor online), licensing, the secrets scan, on a pull request the commit messages, and where `deny-hooks` names some, the repository's own hooks that read the deny-list, in a job of their own | `skip`, `deny-hooks`; the secret `deny` | `contents: read` |
+| [`check.yml`](../.github/workflows/check.yml) | The tests, mypy, ESLint and `tsc`, OSV-Scanner | `python` (what pip installs) or `install` (a command), `tests`, `coverage-report`, `coverage-artifact`, `timeout-minutes`, `types`, `types-install`, `python-version-file`, `node-directory`, `node-projects`, `node-version` | `contents: read` |
+| [`sonar.yml`](../.github/workflows/sonar.yml) | The SonarQube Cloud analysis (public repositories) | `coverage-artifact` | `contents: read`, `id-token: write` |
+
+Each calls the `reusable-*.yml` workflows beside it ([Reusable workflows](#reusable-workflows)), which a repository may also call itself, at `@v3`, for what the entry workflows do not say (a second test job). The comment caller, [`quality/templates/run/commit-check-comment.yml`](../quality/templates/run/commit-check-comment.yml), is the second and last kit file of a repository.
+
+- **The reference is the branch, `@v3`, exactly.** Third-party actions stay pinned by the commit SHA of their latest release (owner, 2026-11-23); our own kit is called by name because the question a SHA answers is who can move the reference, and only the organization's admin can move `v3` (a ruleset on `main`, on `v[0-9]*` and on every tag). zizmor's policy would accept any name there, `@main` included, so the kit's check holds it to the one.
+- **Never an annotated or signed tag.** A workflow called at one cannot call the workflows beside it: the run fails before its first job, with no log (tried on 2026-11-24; a branch, a lightweight tag and a commit all work). The release tags are signed, and they are for the hooks and the history.
+- **The kit that runs is the kit that checks.** Each job fetches `kleidos-dev/.github` at the commit of the workflow it is in (`job.workflow_sha`, read as `fromJSON(toJSON(job)).workflow_sha` while actionlint 1.7.12 does not know the key; the round trip needs no configuration file and leaves every other key of `job` checked, which an ignore would not) and writes `kit v3.x.y (<commit>)` in the job summary.
+- **The secret.** Only `quick.yml` takes one, by name, `deny: ${{ secrets.KLEIDOS_DENY_EXTRA }}`, never `secrets: inherit`, and gives it to one job, [`reusable-deny.yml`](../.github/workflows/reusable-deny.yml), whose last step is the only one that sees it. Before that step the job runs GitHub's own actions, the kit and its hashed tools, and no hook, no dependency and no code of a third party; the hooks it runs then are the repository's own local ones, in a language that installs nothing ([`deny_hooks.py`](../quality/deny_hooks.py) refuses any other). Taking the secret out of the environment of a hook that runs in the same job is not enough, since what ran before may have left something behind for the step that has it. The repository's own code and what the job's own commit changed still run with it: whoever can push a branch can read it.
+
+### The gate
+
+The last job of the file is the repository's own and the one required check: named `✅ Check`, it needs every other job of the file, carries `if: always()`, and fails unless each of them succeeded. GitHub counts a required check that was *skipped* as passed, so a job whose own condition may skip it (an expensive build that runs only when its inputs changed, the analysis on a schedule) is named in `MAY_SKIP`; any other skip fails. The kit's check holds the job to the model, word for word, refuses a second job with that name, and refuses any workflow whose token can write checks or commit statuses, since a job with one could post a passing `✅ Check` on any commit. Nothing around the step steers it: its shell reads no start-up file (`-p --noprofile --norc`), it sets its own `PATH` and `HOME`, both of its inputs are always set in the step, and the check refuses `env` and `defaults` on its workflow, a matrix or a soft failure on a kit caller, and an expression in what a caller skips. A `MAY_SKIP` job whose condition is never true is the one thing it cannot tell from a build that had nothing to do: the caller of a kit workflow may be named there only where the check says so, and the rest is read by a person.
+
+**What no fix removes.** A pull request brings its own workflow files, and GitHub runs those. Whatever the check says about `.github/` it says after the workflow under check has run, from inside it. So a green `✅ Check` proves something about a change of the code and nothing about a change under `.github/` ([Merging](#merging)).
+
+### The hooks
+
+```yaml
+  - repo: https://github.com/kleidos-dev/.github
+    rev: v3.0.0
+    hooks:
+      - id: kleidos-kit          # every policy check: conformance, agent docs, Markdown, licensing lines
+      - id: kleidos-commit-msg   # the commit-message rules
+      - id: kleidos-mypy         # mypy, where there is Python
+```
+
+They are `language: script` hooks ([`.pre-commit-hooks.yaml`](../.pre-commit-hooks.yaml)): nothing is installed. [`hooks/launch.py`](../hooks/launch.py) reads on Python 3.9, the oldest `python3` the machines have (macOS's), and runs each hook on a Python that can: the commit-message check in the one it started on, the others on 3.14 or newer, with PyYAML for `kleidos-kit` and mypy from the repository's environment for `kleidos-mypy`. Where a Python has no PyYAML the line it prints makes an environment of the kit's own (`~/.local/share/kleidos-kit`, which it looks for last): Homebrew's and Debian's Pythons refuse pip outside one. Where there is no Python it says so in one line and fails; the CI is the gate, so an outside contributor need not run the hooks. Every hook names its stages, because pre-commit runs a hook that names none at every installed hook type.
+
+The third-party hooks are the repository's own text, held to the kit's canonical list (the blocks of this repository's [`.pre-commit-config.yaml`](../.pre-commit-config.yaml)): a missing one, a changed `entry` or `language` is a problem, and different arguments or file filters are a weakening. CI runs the branch and the hooks a release, so for up to a week a pull request can meet a rule its author's hooks do not have yet; a failing policy job prints the kit it ran and the `rev` it found.
+
+### The base configurations
+
+`.github/quality/ruff.toml`, `.github/quality/markdownlint.jsonc`, `.gitleaks-mac.toml`, `.github/zizmor.yml`, `.shellcheckrc`, `.github/quality/eslint.base.mjs`, `.github/quality/tsconfig.base.json` and `.clang-tidy`, as the profiles call for them. `.github/quality/SOURCE.json` is a record of schema `kleidos.vendored-copy/1`, the one every copy between repositories uses:
+
+| Field | Says |
+| --- | --- |
+| `upstream.repo`, `upstream.path` | Where the files come from |
+| `upstream.commit` | The commit they were taken at: a note, never a gate (the digests are the pin) |
+| `mode` | `follow`, with an optional `max_age_days`, or `frozen`, with a one-sentence `reason` |
+| `taken` | The date of the copy |
+| `files` | Each file with its SHA-256, named from the record's folder, or from the top with `"root": "."` |
+| `sources` | Where a file's name differs from its source's |
+| `kit` | In the kit's own record: the version and the profiles |
+
+The check holds every such record of the tree to its bytes, offline ("edited in place"), and the kit's own to bytes some kit release holds ([`quality/config-digests.json`](../quality/config-digests.json)). It never compares them with the newest: a repository sits on an old configuration, green, for as long as nobody refreshes it, and the report says so.
 
 Profiles say what applies: `base` (every repository), `python`, `actions`, `shell`, `ts`, `cpp`. They are detected from the tree, and the checker fails when the tree holds a language whose profile is not adopted.
 
-| Profile | Copies | Blocks | Seeded once |
-| --- | --- | --- | --- |
-| base | `check_quality.py`, `md_nowrap.py`, `agent_docs.py`, `spdx_headers.py`, `markdownlint.jsonc` (all in `.github/quality/`), `.gitleaks-mac.toml` | `pre-commit-base`, `typos`, `organization-rules` (in `AGENTS.md`) | `.gitleaks.toml`, `.github/quality/waivers.toml`, `.markdownlint-cli2.jsonc`, `quality-drift.yml`, the two commit-check callers |
-| python | `.github/quality/ruff.toml`, `.github/quality/mypy_groups.py` | `pre-commit-python`, `mypy` | |
-| actions | `.github/zizmor.yml` | `pre-commit-actions` | |
-| shell | `.shellcheckrc` | `pre-commit-shell` | |
-| ts | `.github/quality/eslint.base.mjs`, `.github/quality/tsconfig.base.json` | | |
-| cpp | `.clang-tidy` (the root one) | | |
+### What else the repository holds to
 
-A seeded file is written once, when the repository has none, and is the repository's own from then on, held to the conformance rules. The two commit-check callers also replace a repository's copies of kleidos-dev/agents' `commit-check.yml` and `commit-check-comment.yml` (see [The commit-message gate](#the-commit-message-gate)).
+- `.github/dependabot.yml`: every manifest directory has its ecosystem; every update has a `cooldown` (`default-days: 7`); `github-actions` ignores `kleidos-dev/.github*` (Dependabot reads a branch named like a version as a pin and would propose `@v4` the week that branch exists); the `pre-commit` ecosystem runs and ignores `version-update:semver-major` of `https://github.com/kleidos-dev/.github`.
+- `pyproject.toml`: `[tool.ruff]` with `extend = ".github/quality/ruff.toml"` and `target-version`; `[tool.mypy]` with `strict = true`, `enable_error_code = ["ignore-without-code"]`, `python_version` and `files` naming every Python root (or [mypy groups](#mypy-groups)). `.typos.toml`: `[default] locale = "en-us"`.
+- `AGENTS.md` links the [organization rules](../quality/agents/block.md) and copies none of them.
+- A repository with the `python` profile has a `.python-version`. TypeScript: `tsconfig.json` extends the base and `eslint.config.js` imports `kleidosTypeScript` from it. C++: the root `.clang-tidy` is the kit's, and a job of the repository's own runs clang-tidy on every pull request (it needs the repository's build).
 
-The kit's tool pins, [`quality/requirements-tools.txt`](../quality/requirements-tools.txt), are not copied: every kit workflow installs them from the kit at the recorded commit, and a copy would only have put about 30 pinned packages into every repository's dependency graph, where one advisory against a tool's dependency would turn every repository's OSV gate red at once. Locally, install them from a kit checkout beside the repository: `pip install --require-hashes -r ../.github/quality/requirements-tools.txt`. A sync removes a copy the kit no longer makes.
+## Switching from kit 2.x
 
-### The commit-message gate
+One pull request (or signed push) per repository, after `v3` exists:
 
-One owner per file. kleidos-dev/agents owns the checker, `check_commit_msg.py`, and the `kleidos-commit-msg` hook entry: its `sync_commit_check.py` copies the checker into each repository's `.github/commit-check/`, recorded in that repository's `.github/commit-check/SOURCE.json`, for the commit-msg hook. The kit owns the CI side: the two workflows are seeded thin callers of [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml) and [`reusable-commit-check-comment.yml`](../.github/workflows/reusable-commit-check-comment.yml), which run the checker kleidos-dev/.github carries at the recorded kit commit. This repository's copy is recorded in its own [`.github/commit-check/SOURCE.json`](../.github/commit-check/SOURCE.json) (agents' commit and the SHA-256) and held there by [`quality/tests/test_commit_check_copy.py`](../quality/tests/test_commit_check_copy.py), which also reads agents' bytes at that commit when agents is checked out beside it, so the CI's checker and every hook's checker are the same file. A checker change is an agents change, then a copy here and a kit release.
+1. `python tools/kit_switch.py --write <repository>` from an up-to-date checkout of this repository at `v3`. It removes the kit's scripts, the drift caller, the commit-check folder and the kit test, rewrites the gate workflow (the repository's own jobs kept, `✅ Check` last), the comment caller, the hook list and Dependabot's entry, drops the block markers, links the organization rules, and records the base configurations. It refuses a tree with uncommitted changes, and prints what is left.
+2. By hand: the comments of the gate workflow that named the old jobs, the needs of the repository's own jobs, the docs that name the copies, the sync or the drift job, the `pins` waivers (an old pin is a note in the run form), and the license lines (below).
+3. `python quality/policy.py --repo <repository>` from the same checkout: clean. `pre-commit run --all-files` in the repository: clean.
+4. The exit check: CI green on the pull request and on `main`; no 40-hex reference to `kleidos-dev/.github` in the tree; nothing under `.github/quality/` but the base configurations, their record and the waivers.
 
-## Adopting the kit in a repository
+`tools/ecosystem.py preview --all` shows what each repository would meet. The one rule 3.0.0 adds that a repository meets at the switch and not before is the owner's copyright line in the license texts ([Licensing headers](#licensing-headers)).
 
-1. Clone kleidos-dev/.github beside the repository and check out the newest release: `git fetch --tags origin && git checkout quality-v$(cat quality/VERSION)` on an up-to-date `main` (or the newest `quality-v*` tag). `sync.py --write` records `HEAD`, refuses a dirty tree, and refuses any commit that is not exactly the tag `quality-v<quality/VERSION>` on `origin/main` (`--allow-untagged` exists for throwaway trees only).
-2. Run the sync, naming any profile detection would miss and, if the repository has a test suite, where the drift test goes:
+## Held copies (kit 2.x)
 
-   ```bash
-   python3 ../.github/quality/sync.py --write . --test-dir tests
-   ```
-
-   It writes the copies, the blocks and the seeded files, points every call to a kit workflow at the commit, records it all in `.github/quality/SOURCE.json`, and then runs the check. A key the repository set in a table the block now opens (say `strict = false` under `[tool.mypy]`) is moved out and listed, so a kit setting can never be overridden by a duplicate key.
-3. Point the tools at the copies, in the repository's own files:
-   - `pyproject.toml`: `[tool.ruff]` with `extend = ".github/quality/ruff.toml"` and `target-version`; `[tool.mypy]` (which now opens with the kit block) with `python_version`, `files` naming every Python root, `mypy_path` where needed, and an `[[tool.mypy.overrides]]` with `ignore_missing_imports = true` only for packages that ship no types and have no `types-*` stub, each with a comment above saying so.
-   - A `.markdownlint.json` that exists for the review bots says `"extends": ".github/quality/markdownlint.jsonc"` too (markdownlint-cli2 lets it override `.markdownlint-cli2.jsonc`).
-   - TypeScript: `tsconfig.json` extends `.github/quality/tsconfig.base.json`; `eslint.config.js` imports `kleidosTypeScript` from `.github/quality/eslint.base.mjs` and passes it its own `js` and `tseslint`.
-   - C++: the root `.clang-tidy` is the kit's; repository specifics go in a subdirectory's `.clang-tidy` with `InheritParentConfig: true`.
-4. Replace the CI with thin callers. [`quality/templates/workflows/check.yml`](../quality/templates/workflows/check.yml) is the model: lint and licensing first, then types, tests, OSV and the history scan side by side, then SonarCloud (public repositories). A `ts` repository adds the [`reusable-eslint.yml`](../.github/workflows/reusable-eslint.yml) caller (its `working-directory` and tsconfig `projects`); a `cpp` repository keeps a job of its own that runs clang-tidy with the kit's `.clang-tidy` on every pull request, because clang-tidy needs the repository's build (meter's static-analysis job already does). Keep the repository's own jobs (a model build, a firmware build, a picture check) beside them. Each caller of a kit workflow sits in a workflow that runs on `pull_request` and `push` to `main` (with no `paths` filter), carries no `if:` but the model's `github.event_name != 'schedule'`, and needs no job that does; the commit-check, comment and drift callers keep their seeded triggers. Every job keeps the CI conventions: an emoji name, `timeout-minutes` (a caller job's comes from the called workflow), staged `needs:`, least `permissions`. Re-run `sync.py --write .` after editing, so the new calls name the recorded commit.
-5. `.github/dependabot.yml`: every manifest directory has its ecosystem; every update has a `cooldown` (`default-days: 7`, which zizmor's `dependabot-cooldown` audit also asks for); `github-actions` ignores `kleidos-dev/.github*` (the sync moves those references); no `pre-commit` ecosystem (hook versions come with the sync); nothing under `.github/quality/`. Turn on Dependabot security updates: `gh api -X PUT repos/<owner>/<repo>/automated-security-fixes`.
-6. A repository with the `python` profile has a `.python-version` (the kit's mypy and test workflows read it; the checker reports its absence), naming the latest stable Python ([Pins at the latest release](#pins-at-the-latest-release)).
-7. The commit-message gate: where the sync replaced kleidos-dev/agents' two workflow copies, it also drops them from `.github/commit-check/SOURCE.json` and says so; edit the repository's own digest test (`tests/ci/test_commit_check_copy.py` in qa and meter) so its path set is the checker alone, in the same pull request. kleidos-dev/agents' `sync_commit_check.py` then copies only the checker (its `FILES` reduced to `check_commit_msg.py`, and its `--check` no longer reporting the two workflows): that change lands in agents' own sync, which goes first in wave 3, before qa's and meter's ([The commit-message gate](#the-commit-message-gate)).
-8. Fix everything the tools report, in the same pull request: `pre-commit run --all-files`, `python3 .github/quality/mypy_groups.py` (mypy, per group where the repository declares [mypy groups](#mypy-groups)), `python3 .github/quality/spdx_headers.py --write` for the licensing headers, `reuse lint`. A waiver only where [Overrides](#overrides) allows one. A first `ruff format` of the whole tree is its own commit, listed in `.git-blame-ignore-revs`.
-9. Install the hooks (`pre-commit install --hook-type pre-commit --hook-type commit-msg`), commit signed, and merge once CI is green.
-
-The checker, offline, is the pre-commit hook `kleidos-quality`; with the kit beside it, `python3 ../.github/quality/sync.py --check .` compares the copies with the kit's working tree.
+A repository that has not switched carries byte copies of kit files, managed blocks of kit text between `kleidos-quality` markers, and calls to the `reusable-*.yml` workflows at one kit commit, all recorded in `.github/quality/SOURCE.json`. It stays exactly as it is: its CI calls the commit it recorded, which the tag `quality-v<VERSION>` names, and its weekly drift job, which runs this repository's newest [`sync.py`](../quality/sync.py), answers "not behind" for any 2.x commit. No release after 2.3.0 is taken by a sync: `sync.py --write` refuses a repository that is not this one. The tags `quality-v*` stay until the last one has switched. [`quality/kit.toml`](../quality/kit.toml) lists the copies and blocks; `check_quality.py` still checks them where it meets them. All of it goes with the first release after the last 2.x caller is gone, and not before: their drift job runs this repository's newest `sync.py`, through the newest [`reusable-quality-drift.yml`](../.github/workflows/reusable-quality-drift.yml), so removing either turns each of them red.
 
 ## The rules
 
@@ -127,11 +162,14 @@ files = ["youtube/music-styles/keys/test-cue"]
 | Rule | Enforced by | Why |
 | --- | --- | --- |
 | actionlint | hook `actionlint` | Syntax, expressions, and shellcheck inside every `run:`. |
-| zizmor, offline in the hook and online in the lint job | hook `zizmor`, [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml), [`quality/zizmor/zizmor.yml`](../quality/zizmor/zizmor.yml) | Workflow security: template injection, credentials left by checkout, cache poisoning, excessive permissions. Every `uses:` is pinned by commit SHA, GitHub's own actions included (the trivy-action tag rewrite of 2026-03-19 is the risk). The `self-repository` audit is off kit-wide: it asks for `uses: $/...`, which actionlint 1.7.12 rejects. |
+| zizmor, offline in the hook and online in the lint job | hook `zizmor`, [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml), [`quality/zizmor/zizmor.yml`](../quality/zizmor/zizmor.yml) | Workflow security: template injection, credentials left by checkout, cache poisoning, excessive permissions. Every `uses:` is pinned by commit SHA, GitHub's own actions included (the trivy-action tag rewrite of 2026-03-19 is the risk), but the kit's own, which are called at `@v3`. The `self-repository` audit is off kit-wide: it asks for `uses: $/...`, which actionlint 1.7.12 rejects. |
 | A zizmor finding is accepted only inline: `# zizmor: ignore[<rule>]` with the reason on the line above | `check_quality.py` | The repository's `zizmor.yml` is the kit's copy, so there is no ignore list to grow. |
-| CI conventions: an emoji first in every job name, a `timeout-minutes` on every job that runs steps, every `uses:` pinned by a 40-hex SHA with its version in a comment, no `continue-on-error: true` on a job | `check_quality.py` | The owner's conventions, now checked. A job with `continue-on-error` is green whatever it finds. |
-| Every check comes from the kit, and runs | `check_quality.py`, no waiver (the base profile's kit workflows, `reusable-mypy.yml` with `python`, `reusable-eslint.yml` with `ts`, `reusable-sonarcloud.yml` where `sonar-project.properties` exists; with `cpp`, a job of the repository's own whose `run:` calls clang-tidy) | One definition of each check, so a fix reaches every repository. The workflows are parsed, not searched: a caller counts only in a workflow that runs on `pull_request` and on `push` to `main` with no `paths` filter, and only if neither it nor a job it needs carries an `if:` other than `github.event_name != 'schedule'` (the commit-check, comment and drift callers keep their seeded `pull_request`, `workflow_run` and `schedule` triggers). A caller with `if: false`, a check run only by hand, or one the pushes to `main` never run is reported. |
-| The lint caller skips only the repository's own hooks | `check_quality.py` and [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) itself (`--lint-skip`, read against the kit's blocks at the recorded commit), no waiver | `skip` exists for a repository hook that needs a secret; a kit hook named there would switch a shared rule off. |
+| CI conventions: an emoji first in every job name, a `timeout-minutes` on every job that runs steps, every third-party `uses:` pinned by a 40-hex SHA with its version in a comment, no `continue-on-error: true` on a job | `check_quality.py` | The owner's conventions, now checked. A job with `continue-on-error` is green whatever it finds. |
+| Every check comes from the kit, and runs | [`run_form.py`](../quality/run_form.py), no waiver: the entry workflows called at `@v3` in a workflow that runs on `pull_request` and on `push` to `main` with no `paths` filter, by jobs that neither carry nor need an `if:` other than `github.event_name != 'schedule'`; `types` not false where there is Python, `node-directory` named where there is TypeScript; the sonar call where `sonar-project.properties` exists; with `cpp`, a job of the repository's own whose `run:` calls clang-tidy | One definition of each check, so a fix reaches every repository. The workflows are parsed, not searched: a caller with `if: false`, a check run only by hand, or one the pushes to `main` never run is reported. |
+| The kit's reference, grants and secrets | `run_form.py`, no waiver | `@v3` and nothing else ([The entry workflows](#the-entry-workflows)); a caller grants what the table there says and no more. |
+| The gate | `run_form.py`, no waiver | [The gate](#the-gate). |
+| No workflow can write checks or commit statuses | `run_form.py`, no waiver (`checks: write`, `statuses: write`, `write-all`) | A job with either can post a passing `✅ Check`: the App behind it is the same GitHub Actions the required check is pinned to. |
+| The quick caller skips only the repository's own hooks | `run_form.py`, and the lint job itself against the kit that runs, no waiver | `skip` and `deny-hooks` exist for hooks that cannot run in CI or that need the deny-list; a kit hook named there would switch a shared rule off. |
 | Nothing above the hooks switches them off | `check_quality.py` | A top-level `exclude:` or `files:` in `.pre-commit-config.yaml` narrows every hook, the kit's included: a weakening that needs a waiver (`tool = "pre-commit"`). A `default_stages` without `pre-commit` stops them running at all: refused, no waiver. |
 | shellcheck at warning severity | hook `shellcheck`, [`quality/shellcheck/shellcheckrc`](../quality/shellcheck/shellcheckrc) | Quoting and word-splitting bugs; notes and style stay out. |
 
@@ -145,26 +183,22 @@ files = ["youtube/music-styles/keys/test-cue"]
 | `.gitleaks.toml`: `useDefault = true`, no `disabledRules`, no global `[allowlist]`, every `[[allowlists]]` with a `description` and `targetRules`; every `.gitleaksignore` fingerprint with a comment above it; scans run with `--ignore-gitleaks-allow` | `check_quality.py`, no waiver | An allowlist that reaches every rule hides the next real secret. |
 | Known vulnerabilities fail the build | [`reusable-osv.yml`](../.github/workflows/reusable-osv.yml) (OSV-Scanner over every manifest and lockfile, also weekly) | Advisory-only scanning was ignored. An accepted one goes in `osv-scanner.toml` with a `reason` and an `ignoreUntil` at most 90 days ahead (`check_quality.py`). |
 | Dependabot covers every manifest, each update with a cooldown | `check_quality.py` | A directory without its ecosystem never gets a security update; a week's cooldown gives a compromised or yanked release time to be noticed. |
-| Licensing: `reuse lint`, and the header lines | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml), hooks `reuse` and `kleidos-spdx-headers`, `check_quality.py` (a `.license` sidecar is a weakening, `tool = "reuse"`) | See [Licensing headers](#licensing-headers). |
-| Markdown prose is never hard-wrapped | hook `kleidos-md-nowrap` ([`quality/md_nowrap.py`](../quality/md_nowrap.py)) | Owner, 2026-11-16: one line per paragraph and per list item. |
-| Agent instruction files keep the standard: `AGENTS.md` and `CLAUDE.md` at the root, `CLAUDE.md` importing `AGENTS.md` first, `CLAUDE.local.md` ignored, the size limits, every named path and link real, every skill and subagent named, the organization rules block unedited | hook `kleidos-agent-docs` ([`quality/agent_docs.py`](../quality/agent_docs.py)), run from the kit by the lint job; the `organization-rules` block | Every agent reads `AGENTS.md`; a path that moved or a rule restated by hand misleads the next one. See [`agent-docs.md`](agent-docs.md). |
+| Licensing: `reuse lint`, the header lines, and the owner's statement with no e-mail | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml), hooks `reuse` and `kleidos-kit`, `check_quality.py` (a `.license` sidecar is a weakening, `tool = "reuse"`) | See [Licensing headers](#licensing-headers). |
+| Markdown prose is never hard-wrapped | hook `kleidos-kit` and the lint job ([`quality/md_nowrap.py`](../quality/md_nowrap.py)) | Owner, 2026-11-16: one line per paragraph and per list item. |
+| Agent instruction files keep the standard: `AGENTS.md` and `CLAUDE.md` at the root, `CLAUDE.md` importing `AGENTS.md` first, `CLAUDE.local.md` ignored, the size limits, every named path and link real, every skill and subagent named, the organization rules linked | hook `kleidos-kit` and the lint job ([`quality/agent_docs.py`](../quality/agent_docs.py)) | Every agent reads `AGENTS.md`; a path that moved or a rule restated by hand misleads the next one. See [`agent-docs.md`](agent-docs.md). |
 | Markdown tables render: MD055, MD056, MD058 only | hook `markdownlint-cli2`, [`quality/markdownlint/base.jsonc`](../quality/markdownlint/base.jsonc) | Broken tables are the findings that matter; the rest of markdownlint's defaults measured as noise. |
-| The kit is intact | hook `kleidos-quality`, the lint job | Every copy and block is the bytes `SOURCE.json` records and, in CI, the bytes the kit holds at that commit (the CI fetches the checker from the kit, so an edited local checker cannot pass itself). `.github/quality/` holds nothing else, and `SOURCE.json` records only the kit's copy targets, each from its own source, offline too. |
+| Copies are the bytes their record names, and no kit code is held | hook `kleidos-kit`, the lint job (`run_form.py`) | [The base configurations](#the-base-configurations). A kit script, a managed-block marker, the drift caller or the commit-check folder left in the tree is reported. |
 | Python repositories name their Python | `check_quality.py` (`.python-version`) | The kit's mypy and test workflows read it; without it the first CI run fails in setup-python. |
-| Every pin at the latest stable release | `check_quality.py` (the pin rule), waivable as `tool = "pins"` only with a reason beside the pin; the kit's weekly `📦 Pinned versions current` job ([`quality/latest_releases.py`](../quality/latest_releases.py)) | Owner, 2026-11-23. See [Pins at the latest release](#pins-at-the-latest-release). |
-| Commit messages | [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml), the `kleidos-commit-msg` hook | kleidos-dev/agents' gate: 72 columns, imperative, no AI attribution. |
+| Every pin at the latest stable release | Dependabot in each repository, the report's ages, and here [`quality/latest_releases.py`](../quality/latest_releases.py); an image by digest with its tag, a hook with its tag, are problems | Owner, 2026-11-23. See [Pins at the latest release](#pins-at-the-latest-release). |
+| Commit messages | [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml), the `kleidos-commit-msg` hook | 72 columns, imperative, no AI attribution: [The commit-message gate](#the-commit-message-gate). |
+
+### The commit-message gate
+
+The kit owns the checker, [`hooks/check_commit_msg.py`](../hooks/check_commit_msg.py) (until 3.0.0 `kleidos-dev/agents` did, and every repository held a copy). The hook runs it on the message git is about to commit; `quick.yml` runs it on a pull request's commits, with the kit that is called, and in this repository with the base branch's, so a change to it does not judge its own pull request; the result is a table in the job summary and one comment on the pull request. Its rules are in its docstring. A pull request opened by Dependabot or Renovate is not checked.
 
 ### Pins at the latest release
 
-Owner, 2026-11-23: every pinned version is the latest stable release, and whatever cannot move has its blocker fixed; only what truly cannot move stays lower, with its reason beside the pin. `check_quality.py` holds every repository to the newest releases this kit release knows: the kit's own pins (a kit test keeps them equal), and the container images some repositories' workflows run in:
-
-- **Python** (`LATEST_PYTHON`, 3.15): the first version line of every `.python-version`; `target-version`, `python_version` and `requires-python` (its lower bound) in `pyproject.toml`, `ruff.toml` and `.ruff.toml`; every `python-version:` in a workflow, inline or as a block list, and the matrix key a `python-version: ${{ matrix.<key> }}` reads, in that job only (its inline list, block list or `include:` entries).
-- **Actions** (`LATEST_ACTIONS`): every `uses:` of an action the kit itself pins, by the version in its comment (`# v7.0.1`); an action the kit does not use is left to Dependabot.
-- **Hook revisions** (`LATEST_HOOKS`): every `rev:` of a hook repository the kit's blocks use, by its `# frozen: vX.Y.Z` comment (or the rev, when it is a tag); a bare commit SHA with no tag beside it is reported, since nothing says which release it is.
-- **Container images** (`LATEST_IMAGES`: `kicad/kicad` 10.0.8, which boards and brand run their KiCad jobs in): every workflow `image:` (a job's `container:` or a service) or `container:` shorthand of an image the kit knows is pinned by the digest of the newest stable tag, with that tag in a comment beside it: `image: kicad/kicad@sha256:3f4a0178…3714ddc34 # 10.0.8`. A tag alone (which the registry can move), a digest with no tag beside it, and the newest tag with another digest are findings no waiver clears; an older tag is held like any other pin. Dependabot cannot keep them current: its `docker` ecosystem reads Dockerfiles and Kubernetes manifests, not a workflow's `container:`.
-- **Pins a submodule supplies**: a requirements or constraints file (any `*.in`, or a `*.txt` named for requirements or constraints or under a `requirements/` folder) that includes a file of a git submodule (`-r brand/requirements.txt`, `-c`), directly or through files of the repository it includes, takes that file's pins at the commit the submodule is recorded at, so that commit is a pin too. With the kit (`--kit`, as the CI runs it) the checker fetches the submodule's upstream (`.gitmodules`' `url`, its `branch`, the checked repository's current branch for `branch = .`, or else the default branch) and reads the included file, and every file it includes in turn, at the recorded commit and at the branch tip; a pin the tip adds, drops or moves is a finding until the submodule moves to the tip (`what = "submodule:<path>@<short commit>"`, the reason on the include line or right above it). A pin under an environment marker (`foo==1 ; sys_platform == 'win32'`) is compared per marker. A submodule at the tip, or a tip that changes no pin, is clean; an upstream that cannot be fetched, or a `branch` that is not a plain branch name, is a finding (the URL and branch come from the checked tree, so neither reaches `git fetch` as an option). Offline (the pre-commit hook) it fetches nothing and says so in a note.
-
-A pin below them is a finding. When it truly cannot move, write the reason beside it, on its line or in the comment lines right above it (for a hook, above its `- repo:` line too), after the marker `below-latest:`:
+Owner, 2026-11-23: every pinned version is the latest stable release, and whatever cannot move has its blocker fixed; only what truly cannot move stays lower, with its reason beside the pin, on its line or in the comment lines right above it, after the marker `below-latest:`:
 
 ```yaml
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -173,11 +207,15 @@ A pin below them is a finding. When it truly cannot move, write the reason besid
           python-version: "3.9"
 ```
 
-and it becomes a weakening that also needs its waiver, `tool = "pins"`, `what = "python:3.9"` (or `action:<owner>/<repo>@<version>`, `hook:<url>@<version>`, `image:<name>:<tag>`, `submodule:<path>@<short commit>`, as the finding names it). A reason without the marker, or a marker without a waiver, does not pass. A `.python-version` takes the comment on the line above its version (pyenv, uv and setup-python skip `#` lines).
+Owner, 2026-11-24: being behind is never red. So in a repository that runs the kit:
 
-The kit's weekly `📦 Pinned versions current` job ([`quality/latest_releases.py`](../quality/latest_releases.py)) compares the kit's pins with upstream: the newest stable CPython setup-python serves, each action's and hook repository's latest release (its newest version tag when it publishes no release), each container image's newest stable `x.y.z` tag on Docker Hub and the digest it names (a tag pushed again counts as well), each PyPI tool of `requirements-tools.in`, and each `tools.lock` binary. A newer one turns the job red; moving it is a kit release that bumps the pin, its `LATEST_*` entry, `quality/VERSION` and the changelog, and the sync carries it to every repository (an image is only its `LATEST_IMAGES` entry here, and each repository that runs it moves its digest when it takes the release). Dependabot's seven-day cooldown still paces its own pull requests; the job reports a release as soon as it is out.
+- Dependabot moves third-party actions, hook revisions and packages, in grouped weekly pull requests with a seven-day cooldown (the kit's own release is exempt), and `tools/ecosystem.py land` merges the ones that pass its guards.
+- The check notes a Python, an action, a hook or an image that is below the newest release this kit knows and has no `below-latest:` reason; the note fails nothing.
+- What a pin must *say* stays a problem: a third-party `uses:` is a full commit SHA with its version in a comment; a hook of the canonical list is a commit with `# frozen: vX.Y.Z` or a tag; a container image the kit knows is pinned by digest with its tag in a comment, `image: kicad/kicad@sha256:3f4a0178…3714ddc34 # 10.0.8`, and the newest tag with another digest is refused (Dependabot's `docker` ecosystem reads no workflow's `container:`).
 
-The kit's own Python is 3.15 as well: its scripts are formatted for it (PEP 758 `except` clauses without parentheses need 3.14 or newer), so a repository that takes a 2.x release runs its CI and hooks on 3.15, as the pin rule asks anyway. SonarQube Cloud lists Python up to 3.14, so `sonar.python.version` stays 3.14 with its reason beside it ([`sonarcloud.md`](sonarcloud.md)).
+This repository's own pins (its Python, the actions, the hook revisions, the images, the PyPI tools of [`requirements-tools.in`](../quality/requirements-tools.in), the binaries of [`tools.lock`](../quality/tools.lock)) are compared with upstream by the weekly [ecosystem report](ecosystem.md), as an amber line; moving one is a kit release. A kit 2.x repository still has the older rule, at the commit it recorded: a pin below its kit's is a finding there, waivable as `tool = "pins"` with the reason beside it.
+
+The kit's own Python is 3.15: its scripts are formatted for it (PEP 758 `except` clauses without parentheses need 3.14 or newer), but [`hooks/`](../hooks/), which keeps to 3.9 ([The hooks](#the-hooks)). SonarQube Cloud lists Python up to 3.14, so `sonar.python.version` stays 3.14 with its reason beside it ([`sonarcloud.md`](sonarcloud.md)).
 
 ### TypeScript and C++ (profiles `ts`, `cpp`)
 
@@ -189,6 +227,14 @@ The kit's own Python is 3.15 as well: its scripts are formatted for it (PEP 758 
 | `NOLINT(<check>): <why>`, `eslint-disable-next-line <rule> -- <why>` | `check_quality.py` | A suppression names what it silences and why. |
 
 clang-format is not in the kit yet: meter and the firmware use different styles.
+
+## Tests
+
+Owner, 2026-11-24. Every repository aims at the maximum of tests: 100 % of line, branch, condition (MC/DC) and mutation is the target, with good practice for each language, and every exclusion is listed with its reason where the tool reads it. A change brings its tests; a guard brings the planted defect that proves it fires. The share a file has reached is held, so it only rises.
+
+The long standard, language by language, comes from a pilot in `kleidos-dev/cla` and will be `docs/testing.md` here; until then this section is the rule.
+
+The kit's own code is the first to meet it. [`quality/tests/workflow_contract.yaml`](../quality/tests/workflow_contract.yaml) states every job and step of every workflow with its reason, and the tests run each script with its tools replaced, so no line of a workflow changes without saying why. The `check` job measures line and branch coverage of every root ([`.coveragerc`](../.coveragerc), whose exclusions carry their reasons) and [`quality/coverage_floor.py`](../quality/coverage_floor.py) holds each file to the share it has reached: a file that is not listed is held to 100 %.
 
 ## Licensing headers
 
@@ -205,30 +251,30 @@ SPDX-License-Identifier: <the repository's license for the file>
 
 - `<year>` is the year of the file's first commit, as `git log --diff-filter=A --format=%ad --date=format:%Y -- <file>` gives it (read in UTC), and the current year for a file not committed yet. The check also accepts the year before: the public repositories merge by squash, so a file added in a pull request written in December and merged in January lands on `main` with a January commit, and its header, written in December, must not turn `main` red. A pull request that crosses the new year needs nothing else; the writer always sets the first-commit year.
 - At least one copyright line names José M. Requena Plens. A third-party file is stated in `REUSE.toml` with `precedence = "override"` instead.
-- No e-mail address, in a file or in `REUSE.toml`.
+- **Year and name only** (owner, 2026-11-24): no e-mail address, in a file, in `REUSE.toml` or in a license text. The owner's line of a `LICENSE` or of a text under `LICENSES/` is `Copyright (c) <year> José M. Requena Plens`, with `All rights reserved.` after it where that is the license; a third party's line is never touched. A statement anywhere in the tree that puts an e-mail after the owner's name is found too. A header may add in parentheses which part it covers, `(Spanish translation)`. In a repository that still holds kit 2.x copies the license texts are a note until it switches.
 - The license stays the one each repository already declares (MIT, GPL-3.0-or-later, ...).
 - A file that cannot carry a comment (images, JSON, binaries, lockfiles, generated data) gets both lines through a `REUSE.toml` annotation (`SPDX-FileCopyrightText` and `SPDX-License-Identifier`), never a `.license` sidecar unless `REUSE.toml` cannot express it. So does a file `REUSE.toml` covers with `precedence = "override"`: third-party text, the kit's managed-block sources, and the pull request template, whose text GitHub copies into every pull request.
 - The lines sit in a comment at the top of the file: in Markdown and HTML an HTML comment at the top (after any front matter, XML declaration or doctype); in CSS and linker scripts a block comment; in an Astro component `//` lines at the top of its front matter (an HTML comment in its template would reach every page that renders it; the writer opens a front matter where there is none); elsewhere line comments, after a shebang or an encoding line. Lines further down, or inside a docstring, do not count.
 - A text file in a format the check has no comment syntax for (JSON, SVG, a KiCad file, a TSV, a `.python-version`) is named in a `REUSE.toml` annotation of its own, by path or by format (`**/*.json`), not only by the catch-all `**`: the check lists every such file, so a new format is a decision, either its syntax added to [`spdx_headers.py`](../quality/spdx_headers.py) or an annotation. A file with a shebang is a script and takes `#` lines whatever its name. Formats that take comments include ESP-IDF's `sdkconfig*`, `Kconfig*`, partition tables (`partitions*.csv`) and linker fragments (`.lf`), `Doxyfile` and `.dox`, `.supp`, `.S`, `.ld`, `.cppcheck-suppress` and `.git-blame-ignore-revs`.
 
-`reuse lint` proves that every file states both, in the file or in `REUSE.toml`; [`quality/spdx_headers.py`](../quality/spdx_headers.py) proves that every file that can carry a comment states them itself, in order, with the right year and no e-mail. Both run in [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml), which fetches the whole history for the years, and as hooks. Kit copies keep the kit's year and are checked for presence only; in a shallow clone only presence is checked.
+`reuse lint` proves that every file states both, in the file or in `REUSE.toml`; [`quality/spdx_headers.py`](../quality/spdx_headers.py) proves that every file that can carry a comment states them itself, in order, with the right year and no e-mail, and holds the license texts. Both run in [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml), which fetches the whole history for the years, and as hooks. The base configurations keep the kit's year and are checked for presence only; in a shallow clone only presence is checked.
 
-To add or repair the lines, with the year from git and the license from the file's own line, else its `REUSE.toml` annotation, else `--license`:
+To add or repair the lines, with the year from git and the license from the file's own line, else its `REUSE.toml` annotation, else `--license`, from a checkout of this repository:
 
 ```bash
-python3 .github/quality/spdx_headers.py --write            # every file
-python3 .github/quality/spdx_headers.py --write 'src/**'   # some
+python3 quality/spdx_headers.py --repo <repository> --write            # every file
+python3 quality/spdx_headers.py --repo <repository> --write 'src/**'   # some
 ```
-
-The sync writes seeded files with the current year. A template or generator that emits files (a skill's file template, a script that writes a `REUSE.toml` annotation) writes both lines.
+ A template or generator that emits files (a skill's file template, a script that writes a `REUSE.toml` annotation) writes both lines.
 
 ## Reusable workflows
 
-Every check a repository runs is a job of the kit, one workflow per concern, in the style of jmrplens/gitlab-mcp-server (whose release workflow calls separate files). A repository keeps only thin callers; its own steps that cannot be shared stay local jobs.
+Every check a repository runs is a job of the kit, one workflow per concern, which the [entry workflows](#the-entry-workflows) call; a repository calls one itself, at `@v3`, only for what they do not say. Its own steps that cannot be shared stay local jobs.
 
 | Workflow | Job | Inputs | Caller permissions |
 | --- | --- | --- | --- |
-| [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) | The kit check and the agent-docs guard (both from the kit at the recorded commit), every pre-commit hook on every file (mypy, reuse and the header lines excepted: they have their own workflows), zizmor's online audits | `skip` (the repository's own hook ids that need a secret; a kit hook id fails the kit check), `python-version` | `contents: read` |
+| [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) | Every policy check ([`policy.py`](../quality/policy.py), from the kit that is called), every pre-commit hook on every file (mypy, reuse and the header lines excepted: they have their own workflows), zizmor's online audits | `skip`, `deny-hooks` (the repository's own hook ids; a kit hook fails the check), `python-version` | `contents: read` |
+| [`reusable-deny.yml`](../.github/workflows/reusable-deny.yml) | The repository's own hooks that read the deny-list, alone with it ([The entry workflows](#the-entry-workflows)) | `hooks` (required); the secret `deny` | `contents: read` |
 | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml) | `reuse lint`, then the header lines, on the whole history | | `contents: read` |
 | [`reusable-mypy.yml`](../.github/workflows/reusable-mypy.yml) | mypy with the repository's dependencies installed, through the kit's `mypy_groups.py`: one run per [mypy group](#mypy-groups), each folded in the log, an error annotation per failing group and a table of every group in the job summary (a bare `mypy` without groups) | `install`, `python-version-file`, `python-version` | `contents: read` |
 | [`reusable-python-tests.yml`](../.github/workflows/reusable-python-tests.yml) | The repository's tests, and `coverage.xml` as the `coverage` artifact for SonarCloud | `run` (required), `install`, `python-version`, `python-version-file`, `coverage-report`, `coverage-artifact`, `timeout-minutes` | `contents: read` |
@@ -236,13 +282,13 @@ Every check a repository runs is a job of the kit, one workflow per concern, in 
 | [`reusable-osv.yml`](../.github/workflows/reusable-osv.yml) | OSV-Scanner, failing on any known vulnerability | | `contents: read` |
 | [`reusable-secrets.yml`](../.github/workflows/reusable-secrets.yml) | gitleaks over the history and the tree with both configs, and the MAC plant test | | `contents: read` |
 | [`reusable-sonarcloud.yml`](../.github/workflows/reusable-sonarcloud.yml) | The secretless SonarCloud analysis, moved unchanged from the public repositories: OIDC token exchange (`SonarSource/sonarqube-auth-action`), scan (`SonarSource/sonarqube-scan-action`), and a wait until SonarCloud accepted the analysis; a pull request with no OIDC token (a fork, Dependabot) ends green with a notice | `coverage-artifact` (`coverage`; empty for none) | `contents: read`, `id-token: write` |
-| [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml) | The commit-message gate, with the checker the base branch names | | `contents: read` |
-| [`reusable-commit-check-comment.yml`](../.github/workflows/reusable-commit-check-comment.yml) | The one commit-check comment, from a `workflow_run` caller | | `actions: read`, `contents: read`, `pull-requests: write` |
-| [`reusable-quality-drift.yml`](../.github/workflows/reusable-quality-drift.yml) | Weekly: is the recorded kit behind the newest release (the newest `quality-v*` tag)? Only what a repository receives counts (quality/ but its tests, the kit's blocks, the `reusable-*.yml` workflows, the commit-message checker), so a merge to `main` that changes none of it, or is not yet released, raises nothing. A dry run of that release, written to the job summary, and a red run as the notice | | `contents: read` |
+| [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml) | The commit-message gate | | `contents: read` |
+| [`reusable-commit-check-comment.yml`](../.github/workflows/reusable-commit-check-comment.yml) | The one commit-check comment, from a `workflow_run` caller that follows the gate workflow | | `actions: read`, `pull-requests: write` |
+| [`reusable-quality-drift.yml`](../.github/workflows/reusable-quality-drift.yml) | Kit 2.x only: the weekly drift notice, which always answers "not behind" now; it stays while a 2.x caller remains | | `contents: read` |
 
-The commit-check callers keep the workflow name `Commit check` (the comment workflow follows it by name) and the drift caller is `.github/workflows/quality-drift.yml`; the sync seeds all three. The org's Actions policy allows only GitHub-owned and verified actions, so the kit uses no third-party action: tools come from PyPI with hashes ([`quality/requirements-tools.txt`](../quality/requirements-tools.txt)), from pre-commit hook repositories, or as release binaries pinned by SHA-256 in [`quality/tools.lock`](../quality/tools.lock) and installed by [`quality/fetch_tool.py`](../quality/fetch_tool.py). Each called job's name shows on GitHub as `<caller job> / <called job>`.
+The org's Actions policy allows only GitHub-owned and verified actions, so the kit uses no third-party action: tools come from PyPI with hashes ([`quality/requirements-tools.txt`](../quality/requirements-tools.txt)), from pre-commit hook repositories, or as release binaries pinned by SHA-256 in [`quality/tools.lock`](../quality/tools.lock) and installed by [`quality/fetch_tool.py`](../quality/fetch_tool.py). Each called job's name shows on GitHub as `<caller job> / <called job>`.
 
-A notice is a red scheduled run, not an issue: issues are off in most kleidos-dev repositories, and no workflow here may open a pull request (`GITHUB_TOKEN` pull requests run no CI, and a PAT or App token is not used). GitHub disables the scheduled workflows of a public repository after 60 days without activity in it (its documented behavior, not yet seen here), and the drift notice and the weekly OSV scan stop with them; a repository that has been quiet that long gets its `Quality kit drift` and `CI` workflows re-enabled (`gh workflow enable`) whenever it is next touched, and each kit release is followed by a look at which repositories have not synced.
+A notice is a line of the [ecosystem report](ecosystem.md), not an issue: issues are off in most kleidos-dev repositories, and no workflow here may open a pull request (`GITHUB_TOKEN` pull requests run no CI, and a PAT or App token is not used). GitHub disables the scheduled workflows of a public repository after 60 days without activity in it; the local report says when the public one has stopped, and a repository that has been quiet that long gets its `CI` workflow re-enabled (`gh workflow enable`) whenever it is next touched.
 
 ## Overrides
 
@@ -260,7 +306,7 @@ A notice is a red scheduled run, not an issue: issues are off in most kleidos-de
    ```
 
    `check_quality.py` fails on a weakening with no waiver, on a waiver with no `reason` or `decided`, on a waiver that matches nothing any more, and on an expired one. The lint job's summary lists every waiver in effect and counts the inline suppressions.
-3. **Some things cannot be waived:** a mypy suppression beyond missing types (owner: every error fixed, no baseline), a gitleaks global allowlist or `disabledRules`, an inline suppression without its code, an edited copy or managed block, and any SonarCloud suppression (owner: an issue is fixed with a real change or left open).
+3. **Some things cannot be waived:** a mypy suppression beyond missing types (owner: every error fixed, no baseline), a gitleaks global allowlist or `disabledRules`, an inline suppression without its code, an edited copy, the kit's reference, the gate, and any SonarCloud suppression (owner: an issue is fixed with a real change or left open).
 4. **Inline suppressions** carry their code and a reason: `# noqa: S603  <why>`, `# type: ignore[arg-type]  # <why>`, `# zizmor: ignore[<rule>]` with the reason on the line above, `// NOLINT(<check>): <why>`, `// eslint-disable-next-line <rule> -- <why>`. `RUF100` and mypy's `warn_unused_ignores` remove dead ones.
 5. **A weakening every repository needs moves into the kit**, in one pull request here, with its reason in the kit file (as `S603`, `S607` and `self-repository` are).
 6. **Facts are not weakenings**: `python_version`, `target-version`, `files`, `mypy_path` and the mypy groups (while coverage holds), `HeaderFilterRegex`, naming conventions, `known-first-party`, tsconfig `types` and `include`, typos exceptions for words that are right.
@@ -268,34 +314,42 @@ A notice is a red scheduled run, not an issue: issues are off in most kleidos-de
 ## Versions
 
 - [`quality/VERSION`](../quality/VERSION) is the kit's semver, with an entry per release in [`quality/CHANGELOG.md`](../quality/CHANGELOG.md). MAJOR: anything that can turn a green repository red (a rule on, a stricter setting, a tool bump with new findings, a new conformance rule some repository fails). MINOR: a new opt-in profile or tool, or a rule every repository already passes. PATCH: docs, or a checker fix that cannot add findings.
-- Tool versions are set here only: [`quality/requirements-tools.in`](../quality/requirements-tools.in) compiled with hashes into `requirements-tools.txt` (the command is in its header), the hook revisions in this repository's [`.pre-commit-config.yaml`](../.pre-commit-config.yaml) (each a commit SHA with its tag), the actions the reusable workflows pin, and `tools.lock`; `check_quality.py`'s `LATEST_PYTHON`, `LATEST_ACTIONS` and `LATEST_HOOKS` repeat the Python, action and hook versions, and a kit test keeps them equal; `LATEST_IMAGES` names the container images consumers run, which the kit itself does not. Dependabot bumps the first three here (pip, pre-commit and github-actions ecosystems); the weekly `📦 Pinned versions current` job turns red when any kit pin has a newer stable release ([Pins at the latest release](#pins-at-the-latest-release)). A bump reaches the other repositories through the sync, never through their own Dependabot.
-- A Dependabot pull request here is a kit release like any other. This repository records commit `self`, so its own lint job compares its copies and blocks with its working tree, not with `SOURCE.json`'s digests, and a hook or action bump passes it unattended. What it still needs before it merges: a signed commit on its branch with the new `quality/VERSION` (MINOR for a tool bump that finds nothing new in the impact preview, MAJOR if it finds more) and its `quality/CHANGELOG.md` entry (the `🏷️ Kit release and its tag` job fails until then; a pip bump of `requirements-tools.txt` also needs its header put back on top, as the file says), then the tag after the merge. Dependabot's pre-commit updater reads crate-ci/typos' sub-crate tags (`varcon-core-v5.0.7`) as typos versions, so `dependabot.yml` ignores typos `>= 2` (closed PR #10).
-
-## Taking a new kit release
-
-When a repository's weekly `Quality kit drift` run turns red, its summary says which release is out, how many problems a dry run found, and which files a sync would change. The sync is one pull request: check out that release (`git checkout quality-vX.Y.Z`) in a clone of kleidos-dev/.github beside the repository, run `python3 ../.github/quality/sync.py --write .`, fix every new finding in the same pull request (a waiver only where [Overrides](#overrides) allows it), and merge once CI is green (squash on the public repositories; a signed push to `main` on the private ones, which cannot have rulesets on the Free plan). The drift test (`test_quality_kit.py`, copied by `--test-dir`) makes the repository's own test suite fail on drift too.
+- **The branch `v<major>`** is the kit's name. A MINOR or PATCH release moves it, fast forward, to its commit on `main`, and every repository runs it at its next run; it moves at most once a week, security fixes apart. A MAJOR opens the next branch, and each repository moves its line in the pull request that carries its fixes; the old branch keeps working, frozen. No tag may ever be named like a branch: GitHub resolves the tag first, so the tag ruleset exists before the branch, and the report turns red on one.
+- **The tag `v<VERSION>`** is signed and is the hooks' `rev`. No workflow is called at it ([The entry workflows](#the-entry-workflows)). Releases before 3.0.0 are the tags `quality-v<VERSION>`.
+- Tool versions are set here only: [`quality/requirements-tools.in`](../quality/requirements-tools.in) compiled with hashes into `requirements-tools.txt` (the command is in its header), the actions the workflows pin, and `tools.lock`; `check_quality.py`'s `LATEST_PYTHON`, `LATEST_ACTIONS` and `LATEST_HOOKS` repeat the Python, action and canonical hook versions, and a kit test keeps them equal; `LATEST_IMAGES` names the container images repositories run. Dependabot bumps the first two and the hook revisions here; a repository's own hook revisions are moved by its own Dependabot.
+- A Dependabot pull request here is a kit release like any other. Before it merges it needs a signed commit on its branch with the new `quality/VERSION` (MINOR for a tool bump that finds nothing new in the impact preview, MAJOR if it finds more) and its `quality/CHANGELOG.md` entry (the `🏷️ Kit release and its tag` job fails until then; a pip bump of `requirements-tools.txt` also needs its header put back on top, as the file says), then the tag after the merge. Dependabot's pre-commit updater reads crate-ci/typos' sub-crate tags (`varcon-core-v5.0.7`) as typos versions, so `dependabot.yml` ignores typos `>= 2` (closed PR #10).
 
 ## Changing the kit
 
-1. One pull request here: the change, `quality/VERSION`, `quality/CHANGELOG.md`, and `sync.py --write .` so this repository, the kit's first consumer, records it (its `SOURCE.json` records commit `self` and is compared with the working tree).
-2. CI runs the kit's tests ([`quality/tests/`](../quality/tests/), also the `kleidos-quality-kit-tests` hook), this repository against itself, the release check (`sync.py --release-check`: a pull request that changes what a repository receives, without a new `quality/VERSION` newer than the newest tag and its `CHANGELOG.md` entry, fails), and an impact preview: `sync.py --preview --tools @public` applies the changed kit to throwaway clones of the public repositories and writes their finding counts to the job summary (`ruff format` counted from its JSON report). Private repositories are previewed locally with `sync.py --preview <path>`.
-3. Merge (squash), then tag the merge commit on `main`, signed: `git tag -s quality-vX.Y.Z -m 'Quality kit X.Y.Z' <merge commit> && git push origin quality-vX.Y.Z`. Until the tag exists, the release job of that push to `main` is red; re-run it once the tag is pushed. Then sync each repository from that tag.
+1. One pull request here: the change, `quality/VERSION`, `quality/CHANGELOG.md`, the new digest in `quality/config-digests.json` when a base configuration changed (its old ones stay: a repository may hold them), and `python quality/sync.py --write .`, so this repository records it (its `SOURCE.json` records commit `self` and is compared with the working tree).
+2. CI runs the entry workflows on this repository, by `./` path, so the pull request runs its own version of them; the kit's tests; the release check (`sync.py --release-check`: a change to what repositories run, without a new `quality/VERSION` newer than the newest tag and its `CHANGELOG.md` entry, fails); and an impact preview, `tools/ecosystem.py preview`, which applies the changed kit to throwaway clones of the public repositories and writes their counts to the job summary. Before a release, `tools/ecosystem.py preview --all` does the same locally with the private ones.
+3. Merge ([Merging](#merging)), then release from what is on the remote, never from a local `main`, in the one line that also moves the branch: `git fetch origin && git tag -s vX.Y.Z -m 'Quality kit X.Y.Z' origin/main && git push origin vX.Y.Z refs/remotes/origin/main:refs/heads/vX`, then `gh release create vX.Y.Z --verify-tag --notes-file <the changelog entry>`. Until the tag exists and the branch is at its commit, the release job of that push to `main` is red; re-run it once both are pushed.
 
-[`quality/kit.toml`](../quality/kit.toml) lists every copy, block and seed by profile, and the repositories that consume the kit.
+A bad release is red everywhere at once. The repair is a revert on `main`, a new PATCH and the same line again; then each repository that went red needs **Re-run all jobs**, since "Re-run failed jobs" keeps the workflow files the first attempt read.
+
+**Never delete or move a `vX.Y.Z`** once the first repository has switched: it is the hooks' `rev` in every repository, and the commit a held record may note. The same for the `quality-v*` tags while a 2.x caller remains.
+
+## Merging
+
+Every pull request of a repository in the run form, the owner's and the agents' alike:
+
+1. `gh pr diff <n> --name-only`. If a path starts with `.github/`, or is `.pre-commit-config.yaml`, read that part of the diff line by line before anything else: `✅ Check` is the pull request's own workflow there and is not proof. `tools/ecosystem.py land` refuses such a pull request, whoever opened it.
+2. `✅ Check` succeeded on the head that is merged, from GitHub Actions (App 15368), and so did every other job of the run.
+3. Squash, with the head's SHA (`gh pr merge <n> --squash --match-head-commit <sha>`), so nothing pushed after the reading is merged.
+
+The required checks are a ruleset of their own on `main`, with an empty bypass list, so nobody merges past a red one; the rest of `main`'s rules are another, which an organization admin may bypass, and a required check there would be bypassed with it. A squash of the whole history before a repository goes public needs the first one disabled for that push, and enabled again right after.
+
+## Proof from another repository
+
+A `./` call of this repository proves everything but one thing: that the call works from *another* repository. Before any repository switches, and again for each new major, two throwaway branches prove it, one private and one public; neither is ever merged.
+
+1. **Private, on a push: `kleidos-dev/qa`.** In a fresh clone, on a branch `kit-proof`: `python <this checkout>/tools/kit_switch.py --write .`, correct what `python <this checkout>/quality/policy.py --repo .` then lists (the paths `AGENTS.md` still names), add `kit-proof` to the gate workflow's `push: branches`, commit, push the branch. Expected: the run is green (or red only for a reason of `qa`'s own, read), `✅ Check` is there under its bare name, every kit job's summary says `kit v3.0.0 (<the commit v3 names>)`, and `gh api repos/kleidos-dev/qa/actions/runs/<id> --jq .referenced_workflows` lists `quick.yml@v3` with `"ref": "refs/heads/v3"` and that commit.
+2. **Public, on a pull request: `kleidos-dev/boards`.** The same switch on a branch, as a draft pull request. Expected, besides the above: the commit-message job ran (it only does on a pull request), `sonar` was given its OIDC token from the named reference and SonarQube Cloud accepted the analysis, and a commit whose subject breaks a rule turns `quick` red and leaves its result for the comment (which is posted once the caller is on `main`, not before: `workflow_run` runs the default branch's file).
+3. In either clone, `pre-commit run --all-files` with `PRE_COMMIT_HOME` at an empty folder: the kit's hooks install from the tag and run.
+4. Close the pull request, delete both branches.
 
 ## Outside the kit: Socket, CodeQL, SonarCloud
 
-- **Socket** (owner: public repositories only) is a GitHub App, so installing it is the owner's click: <https://github.com/apps/socket-security/installations/new>, account `kleidos-dev`, "Only select repositories": `.github`, `boards`, `brand`, `social`, `cla`. Free plan; it reads the pip and npm manifests and comments on pull requests that change them. Check the permissions page before accepting (contents and metadata read, checks and pull-request write expected). No `socket.yml` is needed for its defaults.
-- **CodeQL** runs as GitHub's default setup on every public repository (a repository setting, no workflow): `actions` and `python` on `.github`, boards and brand; `actions` only on social (add `python` with `gh api -X PATCH repos/kleidos-dev/social/code-scanning/default-setup -f state=configured -F 'languages[]=actions' -F 'languages[]=python'`); `actions`, JavaScript/TypeScript and `python` on cla. No repository runs a CodeQL workflow, so the kit has none: default setup and an advanced-setup workflow are exclusive. Its license forbids it on private code.
-- **SonarCloud** settings live in each `sonar-project.properties` and in [`sonarcloud.md`](sonarcloud.md); the kit only runs the analysis job. Reading the mypy and ruff reports into SonarCloud (`sonar.python.mypy.reportPaths`, `sonar.python.ruff.reportPaths`) is a later minor release.
-
-## Where each repository stands
-
-| Repository | Visibility | Profiles | State |
-| --- | --- | --- | --- |
-| kleidos-dev/.github | public | base, python, actions | The kit's home and first consumer (commit `self`) |
-| kleidos-dev/boards, brand, social | public | base, python, actions | Wave 1: one sync pull request each, from the tag `quality-v1.0.0` |
-| kleidos-dev/cla | public | base, python, actions, ts | Wave 2, coordinated with its own build; its ESLint and tsc jobs become the `reusable-eslint.yml` caller (`working-directory: worker`, `projects: tsconfig.json ../scripts/tsconfig.json`) |
-| kleidos-dev/agents | private | by tree | Wave 3, first: its `sync_commit_check.py` copies only the checker from then on ([The commit-message gate](#the-commit-message-gate)) |
-| kleidos-dev/qa, meter, videos, posts | private | by tree (meter: cpp, shell, with its static-analysis job as the local clang-tidy job; videos: shell) | Wave 3, after agents: a signed push to `main` each; qa and meter edit their commit-check digest test |
-| jmrplens/kleidos (the firmware) | private | all | Not yet: [`quality-firmware-adoption.md`](quality-firmware-adoption.md) |
+- **Socket** (owner: public repositories only) is a GitHub App, so installing it is the owner's click: <https://github.com/apps/socket-security/installations/new>, account `kleidos-dev`, "Only select repositories": `.github`, `boards`, `brand`, `cla`. Free plan; it reads the pip and npm manifests and comments on pull requests that change them. Check the permissions page before accepting (contents and metadata read, checks and pull-request write expected). No `socket.yml` is needed for its defaults.
+- **CodeQL** runs as GitHub's default setup on every public repository (a repository setting, no workflow): `actions` and `python` on `.github`, boards and brand; `actions`, JavaScript/TypeScript and `python` on cla. No repository runs a CodeQL workflow, so the kit has none: default setup and an advanced-setup workflow are exclusive. Its license forbids it on private code.
+- **SonarCloud** settings live in each `sonar-project.properties` and in [`sonarcloud.md`](sonarcloud.md); the kit only runs the analysis job. What the scan runs and where it sends the result is the kit's: the check refuses `sonar.scanner.*` (but `autoconfig.enabled=false`), `sonar.host.url`, `sonar.region`, `sonar.nodejs.executable` and `sonar.working.directory` in the file, since a program of the tree named there would run in the step that holds the token. Reading the mypy and ruff reports into SonarCloud (`sonar.python.mypy.reportPaths`, `sonar.python.ruff.reportPaths`) is a later minor release.

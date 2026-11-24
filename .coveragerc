@@ -1,10 +1,27 @@
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
-# coverage.py, for the report the SonarCloud job reads: paths relative to the
-# repository (SonarQube Cloud cannot map the runner's absolute paths), branch
-# coverage, and the media metadata tools as the one source root.
+# coverage.py: paths relative to the repository (SonarQube Cloud cannot map
+# the runner's absolute paths), branch coverage, and every root that holds
+# code of ours. The organization's norm is the maximum of tests (docs/quality.md,
+# "Tests"); coverage_floor.py holds each file to the share it has reached.
 [run]
 relative_files = True
 branch = True
-source = scripts
+source =
+    scripts
+    quality
+    hooks
+    tools
+omit =
+    quality/tests/*
+    quality/templates/*
+
+[report]
+skip_empty = True
+# Excluded lines, each with its reason: the guard of a module that is run as a
+# script (the tests import the module and call main()), and the imports only a
+# type checker reads.
+exclude_also =
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:

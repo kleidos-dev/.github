@@ -48,13 +48,13 @@ SPDX-License-Identifier = "CC-BY-4.0"
 # their statement.
 [[annotations]]
 path = [
-  ".github/commit-check/**",
   ".github/workflows/**",
   ".github/CODEOWNERS",
   ".github/quality/**",
   ".github/dependabot.yml",
   ".github/zizmor.yml",
   ".pre-commit-config.yaml",
+  ".pre-commit-hooks.yaml",
   ".coderabbit.yaml",
   ".greptile/**",
   ".coveragerc",
@@ -65,12 +65,14 @@ path = [
   ".markdownlint-cli2.jsonc",
   ".python-version",
   ".typos.toml",
+  "hooks/**",
   "pyproject.toml",
   "quality/**",
   "requirements.txt",
   "sonar-project.properties",
   "scripts/**",
   "tests/**",
+  "tools/**",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 José M. Requena Plens"

@@ -1,0 +1,108 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The declared list of the Kleidos repositories and their settings, the only
+# one there is: tools/ecosystem.py compares what it reads with it
+# (docs/ecosystem.md). Edges between repositories are not declared here: the
+# report finds them by reading every record of copies. A change of a setting
+# is a change here first.
+
+[organization]
+login = "kleidos-dev"
+kit = "kleidos-dev/.github"
+deploy_keys = false
+# Who may move a protected name, of a main, a v<major> or a tag.
+bypass = ["OrganizationAdmin"]
+
+# Days. A copy that follows its source and is older than its limit, or a bot's
+# pull request that waits longer than its own, is listed first; being behind
+# is never red and never fails a run (owner, 2026-11-24).
+[limits]
+copy = 14
+bot_pull = 14
+public_run = 8
+worker = 7
+
+# A source whose copies may be older than `copy` says.
+[limits.source]
+"kleidos-dev/boards" = 30
+"kleidos-dev/meter" = 30
+
+# The checks every public main requires, each from the App that posts it, in
+# a ruleset nobody may bypass.
+[required_checks]
+"✅ Check" = 15368   # GitHub Actions
+"📝 CLA" = 5879825   # kleidos-cla
+
+# The rules every public main has.
+[rules]
+main = ["deletion", "non_fast_forward", "required_signatures", "update"]
+kit_branch = ["creation", "deletion", "non_fast_forward", "required_signatures", "update"]
+kit_tags = ["creation", "deletion", "update"]
+
+# The Workers that answer /version with the tree they were deployed from.
+[[worker]]
+url = "https://cla.kleidos.dev/version"
+repository = "kleidos-dev/cla"
+path = "worker"
+
+# The repositories. `folds_into`: its content moves there and it is deleted,
+# so nothing is expected of its settings. `hold`: `land` leaves its pull
+# requests alone.
+[[repository]]
+slug = "kleidos-dev/.github"
+public = true
+cla = true
+sonar = "kleidos-dev_.github"
+
+[[repository]]
+slug = "kleidos-dev/boards"
+public = true
+cla = true
+sonar = "kleidos-dev_boards"
+
+[[repository]]
+slug = "kleidos-dev/brand"
+public = true
+cla = true
+sonar = "kleidos-dev_brand"
+
+[[repository]]
+slug = "kleidos-dev/cla"
+public = true
+cla = true
+sonar = "kleidos-dev_cla"
+
+[[repository]]
+slug = "kleidos-dev/social"
+public = true
+sonar = "kleidos-dev_social"
+folds_into = "kleidos-dev/brand"
+
+[[repository]]
+slug = "kleidos-dev/agents"
+public = false
+
+[[repository]]
+slug = "kleidos-dev/meter"
+public = false
+
+[[repository]]
+slug = "kleidos-dev/posts"
+public = false
+folds_into = "kleidos-dev/videos"
+
+# Waits for the firmware to be public (owner, 2026-11-24).
+[[repository]]
+slug = "kleidos-dev/qa"
+public = false
+
+[[repository]]
+slug = "kleidos-dev/videos"
+public = false
+
+# The firmware, until its transfer to the organization.
+[[repository]]
+slug = "jmrplens/kleidos"
+public = false
+hold = true

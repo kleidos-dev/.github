@@ -1,31 +1,11 @@
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
-# The commit-message gate (kleidos-dev/agents' git-commits skill, whose
-# checker this repository carries at .github/commit-check/), as a reusable
-# workflow: the first check on every pull request. A repository's
-# .github/workflows/commit-check.yml keeps its name, "Commit check", because
-# the comment workflow follows it by that name:
-#
-#   name: Commit check
-#   on:
-#     pull_request:
-#       types: [opened, synchronize, reopened]
-#   permissions:
-#     contents: read
-#   jobs:
-#     commit-messages:
-#       name: "✍️ Commit messages"
-#       uses: kleidos-dev/.github/.github/workflows/reusable-commit-check.yml@<kit commit> # quality-vX.Y.Z
-#       permissions:
-#         contents: read
-#
-# It checks the pull request's commits (base..head, merges skipped) with the
-# checker the base branch names, so a change to the checker, or to the kit
-# commit a repository records, does not judge its own pull request: in
-# kleidos-dev/.github the base branch's own copy, elsewhere the kit at the
-# commit the base branch's .github/quality/SOURCE.json records. It writes
-# the result to the job summary and to the commit-check artifact, which
+# The commit-message gate, a job of quick.yml: it checks the pull request's
+# commits (base..head, merges skipped) with the checker of the kit this
+# workflow is part of. In kleidos-dev/.github itself that would be the pull
+# request's own checker, so there the base branch's judges. It writes the
+# result to the job summary and to the commit-check artifact, which
 # reusable-commit-check-comment.yml turns into the one comment on the pull
 # request, and fails on any error. A pull request opened by Dependabot or
 # Renovate is not checked: they author their own messages, which nobody can
@@ -49,9 +29,36 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The kit that is running: this workflow's own repository and commit (a
+      # ./ call inside the kit keeps both), so the checks and the workflow
+      # are one release. actionlint 1.7.12 does not know these two keys of
+      # the job context, hence the round trip through JSON. The kit is
+      # public: it is fetched with no token.
+      - name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
       - name: Check the pull request's commits
         id: check
         env:
+          KIT: ${{ steps.kit.outputs.dir }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -65,31 +72,14 @@ jobs:
               exit 0
               ;;
           esac
-          checker=.github/commit-check/check_commit_msg.py
           out="$RUNNER_TEMP/commit-check"
           mkdir -p "$out"
-          source_json=.github/quality/SOURCE.json
-          recorded=""
-          if git show "$BASE_SHA:$source_json" > "$out/SOURCE.json" 2>/dev/null; then
-            recorded="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["commit"])' "$out/SOURCE.json")"
-          elif [ -f "$source_json" ]; then
-            echo "The base branch has not adopted the kit yet; using the kit commit this pull request records."
-            recorded="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["commit"])' "$source_json")"
-          fi
-          if [ -z "$recorded" ] || [ "$recorded" = self ]; then
-            if [ -n "$recorded" ] && [ "$GITHUB_REPOSITORY" != kleidos-dev/.github ]; then
-              echo "::error::SOURCE.json records commit self, which only kleidos-dev/.github may do"
-              exit 1
-            fi
-            if ! git show "$BASE_SHA:$checker" > "$out/check_commit_msg.py" 2>/dev/null; then
-              echo "The base branch has no checker yet; using the pull request's copy."
-              cp "$checker" "$out/check_commit_msg.py"
-            fi
+          if [ "$GITHUB_REPOSITORY" = kleidos-dev/.github ]; then
+            # The base branch's checker, where kit 2.x kept it or where it is now.
+            git show "$BASE_SHA:hooks/check_commit_msg.py" > "$out/check_commit_msg.py" 2>/dev/null \
+              || git show "$BASE_SHA:.github/commit-check/check_commit_msg.py" > "$out/check_commit_msg.py"
           else
-            kit="$RUNNER_TEMP/kit"
-            git init -q "$kit"
-            git -C "$kit" fetch -q --depth 1 https://github.com/kleidos-dev/.github "$recorded"
-            git -C "$kit" show "FETCH_HEAD:$checker" > "$out/check_commit_msg.py"
+            cp "$KIT/hooks/check_commit_msg.py" "$out/check_commit_msg.py"
           fi
           status=0
           python3 "$out/check_commit_msg.py" --range "$BASE_SHA..$HEAD_SHA" \

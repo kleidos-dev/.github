@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+SPDX-FileCopyrightText: 2026 José M. Requena Plens
+SPDX-License-Identifier: MIT
+
+The local ecosystem report on a Mac, Mondays at 09:00 (docs/ecosystem.md,
+"The local report"): launchd runs it, at the next wake when the Mac slept.
+@CHECKOUT@ and @HOME@ are written by the commands there.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.kleidos.ecosystem</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-lc</string>
+    <string>cd '@CHECKOUT@' &amp;&amp; git pull -q --ff-only; exec .venv/bin/python tools/ecosystem.py report --all --notify --out '@HOME@/kleidos-ecosystem'</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/kleidos-ecosystem.err</string>
+</dict>
+</plist>

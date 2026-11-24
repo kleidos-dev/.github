@@ -2,24 +2,22 @@
 # SPDX-License-Identifier: MIT
 #
 # The repository's gate, so it is named CI (the project's CI convention).
-# This repository is the quality kit's home and its first consumer: every
-# check comes from one of the kit's reusable workflows, called here by ./
-# path so a pull request that changes one runs the changed version, and its
-# .github/quality/SOURCE.json records commit "self" (checked against this
-# working tree). Only the media metadata checks, which are this
-# repository's own and need the deny-list secret, are a local job.
+# This repository is the quality kit's home and its first caller: the kit's
+# checks are its own entry workflows, called here by ./ path, so a pull
+# request that changes one runs the changed version. What only this
+# repository does is a job of its own beside them.
 #
-# Stages: lint and licensing first (seconds, no dependencies); then the
-# media checks, the tests (the media tools' and the kit's, with coverage),
-# mypy, OSV, the secrets scan and the kit release check (a kit change
-# bumps quality/VERSION; a version on main has its tag) side by side;
-# then the impact preview,
-# which applies the changed kit to throwaway clones of the public consumers
-# and writes what it would find to the job summary (it informs, it does not
-# gate); last, the SonarCloud analysis, which reads the tests' coverage. On
-# the weekly schedule the OSV scan catches new advisories against unchanged
-# code, and every kit pin (Python, actions, hook revs, PyPI tools, release
-# binaries) is compared with its upstream releases.
+# Stages: quick first (lint, licensing, secrets, commit messages; the media
+# hooks with the deny-list among them); then the tests (the media tools' and
+# the kit's, with coverage), the types and OSV, and the kit release check (a
+# kit change bumps quality/VERSION; a version on main has its tag); then the
+# impact preview, which applies the changed kit to throwaway clones of the
+# public repositories and writes what it would find to the job summary (it
+# informs, it does not gate), and the SonarCloud analysis, which reads the
+# tests' coverage; last the one required check, which needs them all. On the
+# weekly schedule the OSV scan catches new advisories against unchanged
+# code; a kit pin that has a newer release is a line of the ecosystem
+# report (ecosystem.yml), never a red check.
 name: CI
 
 on:
@@ -40,96 +38,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: "🧹 Lint (quality kit)"
-    uses: ./.github/workflows/reusable-lint.yml
+  quick:
+    name: "⚡ Quick"
+    uses: ./.github/workflows/quick.yml
     with:
-      # The media hooks need the deny-list secret (the media job runs them);
-      # the kit's tests run in the tests job.
-      skip: kleidos-media-stamp,kleidos-media-metadata,kleidos-quality-kit-tests
+      # The kit's tests run in the check job.
+      skip: kleidos-quality-kit-tests
+      # The media hooks read the private identity patterns; a run without
+      # them (a fork's or Dependabot's pull request) checks every other class.
+      deny-hooks: kleidos-media-stamp,kleidos-media-metadata
+    secrets:
+      deny: ${{ secrets.KLEIDOS_DENY_EXTRA }}
     permissions:
       contents: read
 
-  reuse:
-    name: "⚖️ Licensing (REUSE)"
-    uses: ./.github/workflows/reusable-reuse.yml
-    permissions:
-      contents: read
-
-  # The identity patterns of the media deny-list are private, so they come
-  # from the KLEIDOS_DENY_EXTRA secret (one pattern per line). A run without
-  # it (a pull request from a fork or from Dependabot, which get no secrets)
-  # checks every other class and shows a warning that identity was not
-  # checked.
-  media:
-    name: "🖼️ Media metadata"
-    needs: [lint, reuse]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      KLEIDOS_DENY_EXTRA: ${{ secrets.KLEIDOS_DENY_EXTRA }}
-      KLEIDOS_DENY_OPTIONAL: ${{ secrets.KLEIDOS_DENY_EXTRA == '' && '1' || '0' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version-file: .python-version
-      - name: Metadata written from the records
-        run: python3 scripts/stamp_media_meta.py --check
-      - name: Metadata profile and privacy deny-list
-        run: python3 scripts/check_metadata.py
-
-  tests:
-    name: "🧪 Tests"
-    needs: [lint, reuse]
-    uses: ./.github/workflows/reusable-python-tests.yml
+  check:
+    name: "🧪 Check"
+    needs: quick
+    uses: ./.github/workflows/check.yml
     with:
-      # The kit's tests run the checker, which reads YAML; coverage.py
-      # measures the media tools (.coveragerc), the code SonarCloud reads.
       install: >-
         python -m pip install -r requirements.txt
         && python -m pip install --require-hashes -r quality/requirements-tools.txt
-      run: >-
+      # coverage.py measures the media tools and the kit (.coveragerc).
+      tests: >-
         python -m coverage run -m unittest discover -s tests -v
         && python -m coverage run --append -m unittest discover -s quality/tests -v
         && python -m coverage xml -o coverage.xml
+        && python -m coverage report
+        && python quality/coverage_floor.py
     permissions:
       contents: read
 
-  types:
-    name: "🔎 Types (mypy)"
-    needs: [lint, reuse]
-    uses: ./.github/workflows/reusable-mypy.yml
-    with:
-      install: python -m pip install -r requirements.txt
-    permissions:
-      contents: read
-
-  osv:
-    name: "🛡️ Dependency vulnerabilities (OSV)"
-    needs: [lint, reuse]
-    uses: ./.github/workflows/reusable-osv.yml
-    permissions:
-      contents: read
-
-  secrets:
-    name: "🔐 Secrets and MAC scan (gitleaks)"
-    needs: [lint, reuse]
-    uses: ./.github/workflows/reusable-secrets.yml
-    permissions:
-      contents: read
-
-  # Repositories record released kit commits only (sync.py --write refuses
-  # anything but the tag quality-v<VERSION> on main). A pull request that
-  # changes what they receive bumps quality/VERSION and adds its CHANGELOG
-  # entry; on main, a version without its tag turns this job red until the
-  # merge commit is tagged (signed) and the job is re-run (docs/quality.md,
-  # "Changing the kit").
+  # Repositories run released kits only. A pull request that changes what
+  # they run bumps quality/VERSION and adds its CHANGELOG entry; on main, a
+  # version without its tag turns this job red until the merge commit is
+  # tagged (signed), the branch v<major> is moved to it, and the job is
+  # re-run (docs/quality.md, "Changing the kit").
   release:
     name: "🏷️ Kit release and its tag"
-    needs: [lint, reuse]
+    needs: quick
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -156,7 +104,7 @@ jobs:
 
   preview:
     name: "🔭 Impact on the public consumers"
-    needs: [tests, types]
+    needs: check
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -170,44 +118,41 @@ jobs:
       - name: Install the kit's tools (hashed)
         run: python -m pip install --require-hashes -r quality/requirements-tools.txt
       - name: Apply the kit to throwaway clones and count what it finds
-        run: python quality/sync.py --tools --allow-dirty --summary "${GITHUB_STEP_SUMMARY}" --preview @public
+        run: python tools/ecosystem.py preview --summary "${GITHUB_STEP_SUMMARY}"
 
-  sonarcloud:
-    name: "📊 SonarCloud"
-    needs: [tests, media]
+  sonar:
+    name: "📊 Sonar"
+    needs: check
     if: github.event_name != 'schedule'
-    uses: ./.github/workflows/reusable-sonarcloud.yml
+    uses: ./.github/workflows/sonar.yml
     permissions:
       contents: read
       id-token: write
 
-  # Owner, 2026-11-23: every pin is the latest stable release. The kit's
-  # pins (its Python, the actions and hook revs check_quality.py's LATEST_*
-  # name, the PyPI tools, the tools.lock binaries) are compared with their
-  # upstream releases every week; a newer one turns this job red.
-  pins-outdated:
-    name: "📦 Pinned versions current"
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  # The one required check (docs/quality.md, "The gate").
+  done:
+    name: "✅ Check"
+    needs: [quick, check, release, preview, sonar]
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    permissions: {}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version-file: .python-version
-      - name: Install the kit's tools (hashed)
-        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
-      # Issues are off in this repository: a red weekly run is the notice.
-      - name: Compare every kit pin with its upstream releases
+      - name: Every job of this file succeeded
+        # -p: no BASH_ENV, no function and no option from the environment; and
+        # both variables are always set here, so nothing outside the step steers it.
+        shell: /bin/bash --noprofile --norc -p -e -o pipefail {0}
         env:
-          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+          MAY_SKIP: preview sonar
         run: |
           set -euo pipefail
-          status=0
-          python quality/latest_releases.py --summary "${GITHUB_STEP_SUMMARY}" || status=$?
-          if [ "${status}" = 1 ]; then
-            echo "::error title=A kit pin is outdated::a pinned version has a newer stable release (see the job summary)"
-          fi
-          exit "${status}"
+          export PATH=/usr/bin:/bin HOME=/nonexistent
+          echo "${NEEDS}" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "${NEEDS}" | jq -e --arg may " ${MAY_SKIP} " '
+            length > 0 and all(to_entries[];
+              .value.result == "success"
+              or (.value.result == "skipped" and (.key as $job | $may | contains(" \($job) "))))' > /dev/null || {
+            echo "::error title=Not every job succeeded::a job that failed, was cancelled or was skipped without leave is listed above"
+            exit 1
+          }

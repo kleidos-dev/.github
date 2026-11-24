@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # Agent instruction files in the kleidos-dev repositories
 
-Every kleidos-dev repository tells coding agents how to work in it through two files: `AGENTS.md`, which any agent reads, and `CLAUDE.md`, which Claude Code reads. This page is the standard both follow, the rules they share, how the shared copies stay in step, and the routine that keeps what agents learn. The quality kit enforces the mechanical part (the organization rules block and the agent-docs guard, [`quality.md`](quality.md)); the rest is judgment, kept in each repository's own changes.
+Every kleidos-dev repository tells coding agents how to work in it through two files: `AGENTS.md`, which any agent reads, and `CLAUDE.md`, which Claude Code reads. This page is the standard both follow, the rules they share, how the shared copies stay in step, and the routine that keeps what agents learn. The quality kit enforces the mechanical part (the organization rules and the agent-docs guard, [`quality.md`](quality.md)); the rest is judgment, kept in each repository's own changes.
 
 ## Contents
 
@@ -57,8 +57,8 @@ In this order:
 2. **What is where.** The folders and the files an agent will touch, and for each generated or copied file, the script that writes it. Not a full listing: only what an agent cannot see by listing the tree.
 3. **Commands.** How to install, and the checks to run before a commit, as a fenced block or a table, each one a command that works from a fresh clone when pasted. The same commands CI runs.
 4. **Rules of this repository.** The ones that bite: what is never edited by hand, what is irreversible, what needs the owner's yes, the contracts other repositories depend on. Each rule says what to do and, where one exists, names the check that enforces it. A decision of the owner carries its date.
-5. **Organization rules.** The kit's managed block ([The organization rules](#the-organization-rules)), the same text in every repository.
-6. **Other repositories**, only where there are pins or copies: which repository owns each copied file and which script syncs it.
+5. **Organization rules.** One link to them ([The organization rules](#the-organization-rules)).
+6. **Other repositories**, only where something comes from one: what this repository takes and the command that refreshes it.
 
 Paths are written from the repository root, in code spans. A path in another repository starts with that repository: `kleidos-dev/.github/docs/quality.md`, never a bare `docs/quality.md`. A link in a public repository never points at a private one; the private repository is named in a code span.
 
@@ -70,7 +70,7 @@ Only what no other agent can use: which subagent to delegate to for which work, 
 
 - Secrets and anything private: `.env` values, IP and MAC addresses, lab hostnames, serial ports of one machine, home-directory paths, e-mail addresses other than the project's public one, unpublished plans, text copied from an agent's private memory. Private repositories follow the same rule: they are written as if public.
 - Numbers that move: measured currents and times, counts, version numbers, "today only X". Name the file or command that holds the current value. A status paragraph is allowed only with the event that ends it ("until the import lands").
-- Organization rules restated in the repository's own words. They come from the block.
+- Organization rules restated in the repository's own words. They are linked.
 - What the code already says: full directory listings, dependency lists, the history of a decision. The rule and its date are enough; the reasoning lives in `docs/`.
 - Multi-step procedures. A procedure is a skill, or a page under `docs/` that the rule points to.
 - Personal preferences (conversation language, the owner's machines). Those are `CLAUDE.local.md` or `~/.claude/CLAUDE.md`.
@@ -91,16 +91,16 @@ The limit is Codex's cap for the whole chain; the target is roughly 5,000 tokens
 | --- | --- | --- |
 | The repository's `AGENTS.md`, `CLAUDE.md` and `.claude/` | Everything specific to it. This is the source in use | The repository's own changes, and [the guard](#the-guard) |
 | `kleidos-dev/.github` | The rules all repositories share, in full, with their reasons: [`quality.md`](quality.md), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, this page. Linked, never copied | Its own CI |
-| The organization block in each `AGENTS.md` | The handful of shared rules an agent must have in context | The quality kit: a managed block, identical everywhere |
+| The organization rules, linked from each `AGENTS.md` | The handful of shared rules an agent must have in context | [`quality/agents/block.md`](../quality/agents/block.md) here, their one home |
 | `kleidos-dev/agents` | Copies of each repository's skills and subagents as plugins, the skills that belong to no single repository, and the lessons | Its `sync_plugins.py` and [the routine](#the-routine) |
 
 GitHub does not inherit a default `AGENTS.md` from `kleidos-dev/.github` the way it inherits `CONTRIBUTING.md`, so each repository holds its own file.
 
 ## The organization rules
 
-The rules every repository shares are one text, [`quality/agents/block.md`](../quality/agents/block.md), which the kit writes into each repository's root `AGENTS.md` as the managed block `organization-rules` (owner, 2026-11-23): hand-written copies had already drifted apart. Between its two HTML-comment markers it holds the `## Organization rules` heading, one sentence that points here and at [`quality.md`](quality.md), and eight rules: English and unwrapped Markdown; signed commits at 72 columns with no attribution, never `--no-verify` nor a force push; both SPDX lines or a `REUSE.toml` entry; nothing private anywhere; a kit copy or block is never edited in place; the owner's explicit yes for what cannot be undone or is published in his name; a change that makes the file false corrects it; and what was learned is written down before the work is reported done.
+The rules every repository shares are one text, [`quality/agents/block.md`](../quality/agents/block.md): English and unwrapped Markdown; signed commits at 72 columns with no attribution, never `--no-verify` nor a force push; both SPDX lines or a `REUSE.toml` entry, year and name only; the maximum of tests; nothing private anywhere; what comes from another repository is never edited in place; the owner's explicit yes for what cannot be undone or is published in his name; a change that makes the file false corrects it; and what was learned is written down before the work is reported done.
 
-`sync.py --write` puts the block in, replacing a section pasted by hand under the same heading (numbered or not) and leaving everything else; a file with no such section gets it before `## Other repositories`, else at the end. A change to the text is a kit release, like any other block. A repository may add rules of its own in its own section, never inside the block.
+A repository that runs the kit (from 3.0.0) links it under `## Organization rules` and copies none of it, so a change of the text reaches every agent at once: the link is `https://github.com/kleidos-dev/.github/blob/main/quality/agents/block.md`, and the guard checks that it is there. A repository that still holds kit 2.x copies carries the text as a managed block, at the bytes its `SOURCE.json` records. A repository may add rules of its own in its own section.
 
 ## The agents kit
 
@@ -113,7 +113,7 @@ The repository's `.claude/` is the source and the plugin in `kleidos-dev/agents`
 
 ## The guard
 
-[`quality/agent_docs.py`](../quality/agent_docs.py), standard library only, copied by the kit's base profile to `.github/quality/agent_docs.py`. It runs as the `kleidos-agent-docs` pre-commit hook and, from the kit at the recorded commit, in the lint job of every repository (`reusable-lint.yml`), so an edited local copy cannot pass itself. Locally: `python3 .github/quality/agent_docs.py`.
+[`quality/agent_docs.py`](../quality/agent_docs.py), standard library only. It runs from the kit, in the `kleidos-kit` hook and in the lint job of every repository; no repository copies it. Locally, from a checkout of this repository: `python3 quality/agent_docs.py --repo <repository>`.
 
 | Check | Fails when |
 | --- | --- |
@@ -126,7 +126,8 @@ The repository's `.claude/` is the source and the plugin in `kleidos-dev/agents`
 | `paths` | A path in a code span or a fenced command, whose first folder exists in this repository, is neither tracked nor ignored. This is how "the commands work" is checked: every script a command names must be in the tree. A path that starts with another repository (`kleidos-dev/<repo>/`) is skipped |
 | `links` | A relative Markdown link does not resolve |
 | `kit` | A skill or subagent under `.claude/` is named in neither file |
-| `block` | The root `AGENTS.md` lacks the organization block, its markers do not pair, it differs from the bytes `.github/quality/SOURCE.json` records (in `kleidos-dev/.github`, from `quality/agents/block.md`), or an `Organization rules` section stands beside it |
+| `rules` | The root `AGENTS.md` links the organization rules nowhere, or still carries their block |
+| `block` | (A repository that holds kit 2.x copies.) The root `AGENTS.md` lacks the organization block, its markers do not pair, it differs from the bytes `.github/quality/SOURCE.json` records (in `kleidos-dev/.github`, from `quality/agents/block.md`), or an `Organization rules` section stands beside it |
 
 What it does not do: run the commands (CI does, and the commands in `AGENTS.md` are the ones CI runs), or judge whether a rule is still true. For that, Claude Code's `/doctor prompt-audit` reads the same files and reports stale or contradictory instructions; it runs in each repository at the monthly review.
 
@@ -146,7 +147,7 @@ When a session teaches something the next agent will need, two things happen bef
 
 ## Decisions
 
-- **The shared rules are a kit-managed block in every `AGENTS.md`** (owner, 2026-11-23), not hand-written copies.
+- **The shared rules are one text that every `AGENTS.md` links** (2026-11-24, with the kit run by name); from 2026-11-23 until each repository switches, a kit-managed block.
 - **Every repository meets the limits, the firmware included** (owner, 2026-11-23): its `AGENTS.md` files are trimmed to [Length](#length) by moving narrative to the `docs/` pages they already cite, losing no rule, with no waiver.
 - **The weekly review is kept** (owner, 2026-11-23).
 

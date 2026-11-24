@@ -10,8 +10,9 @@
 # The quality kit's versions are bumped here only (docs/quality.md,
 # "Versions"): quality/requirements-tools.txt (pip, hashed), the hook revs
 # of the kit's blocks in .pre-commit-config.yaml (pre-commit), and the
-# actions its reusable workflows pin (github-actions). A bump reaches the
-# other repositories through the sync, never through their own Dependabot.
+# actions its workflows pin (github-actions). A bump of what the CI runs
+# reaches the other repositories with the release; their hook revisions are
+# their own Dependabot's.
 # Each such pull request is a kit release: before it merges, a signed
 # commit on its branch bumps quality/VERSION and adds the CHANGELOG entry
 # (the CI's release check fails until then), and the merge is tagged.
@@ -25,9 +26,9 @@ updates:
     # yanked version has time to be noticed first.
     cooldown:
       default-days: 7
-    # This repository calls its own reusable workflows by ./ path; the entry
-    # is the one every adopting repository carries (the sync moves those
-    # references).
+    # This repository calls its own workflows by ./ path; the entry is the one
+    # every repository carries, so that Dependabot, which reads a branch named
+    # like a version as a pin, never proposes the next major of the kit.
     ignore:
       - dependency-name: "kleidos-dev/.github*"
     groups:

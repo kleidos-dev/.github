@@ -20,6 +20,11 @@ covers with precedence "override" (third-party text, a template whose
 comments would leak into what GitHub shows). `reuse lint` then proves that
 every file has both.
 
+The owner's copyright statement is year and name and nothing else, in every
+file and in the license texts too (LICENSE, LICENSES/): no e-mail address
+ever goes with the name. In a repository that still holds kit 2.x copies the
+license texts are a note, and a problem from the switch to the run form.
+
 Usage:
     spdx_headers.py [--repo DIR]                 check; exit 1 on any problem
     spdx_headers.py --write [--repo DIR] [--license EXPR] [PATH ...]
@@ -28,8 +33,8 @@ Usage:
         from --license
 
 Byte copies of the quality kit (listed in .github/quality/SOURCE.json) carry
-the kit's year and are checked for the two lines only; the commit-message
-gate copied from kleidos-dev/agents is checked there. In a shallow clone the
+the kit's year and are checked for the two lines only; a held copy of the
+commit-message gate is checked where it comes from. In a shallow clone the
 years cannot be read, so only their presence is checked (the CI fetches the
 whole history).
 
@@ -47,6 +52,7 @@ import re
 import subprocess
 import sys
 import tomllib
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -178,8 +184,30 @@ COMMIT_CHECK_COPIES = (
     ".github/workflows/commit-check-comment.yml",
 )
 AGENTS_COPY_MARK = "Vendored from kleidos-dev/agents"
-EMAIL = re.compile(r"<[^>@\s]+@[^>\s]+>|\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
-YEAR_LEAD = re.compile(r"^(\d{4})(?:\s*[-,]\s*\d{4})*\s+(.*)$")
+# The owner's statement: the year (or years) and the name; a header may add in
+# parentheses which part it covers ("(Spanish translation)").
+OWNER_VALUE = re.compile(rf"^\d{{4}}(?:\s*[-,]\s*\d{{4}})* {HOLDER}(?: \([^()@]+\))?$")
+# However it is written: initials, no accent, capitals, the surname first.
+OWNER_NAME = re.compile(
+    r"(?:(?:jos[eé]|\bj\.)\s*(?:m\.?\s*)?)?requena\W+plens(?:\W+(?:jos[eé]|j\.)(?:\s*m\b\.?)?)?",
+    re.IGNORECASE,
+)
+ADDRESS = r"[\w.+-]+(?:@|\W+at\W+)[\w-]+(?:\.|\W+dot\W+)\w[\w.-]*"
+# An address before or after the name, with nothing but marks and a label between.
+OWNER_EMAIL = re.compile(
+    rf"(?:{OWNER_NAME.pattern})\W{{0,12}}(?:(?:e-?mail|mail|contact)\W{{1,4}})?{ADDRESS}"
+    rf"|{ADDRESS}\W{{1,12}}(?:{OWNER_NAME.pattern})",
+    re.IGNORECASE,
+)
+COPYRIGHT_WORD = re.compile(r"copyright|\(c\)|©", re.IGNORECASE)
+LICENSE_TEXT = re.compile(r"^(?:LICEN[CS]E|COPYING)(?:[-.].*)?$")
+LICENSE_LINE = re.compile(
+    rf"^Copyright (?:\(c\)|©) \d{{4}}(?:\s*[-,]\s*\d{{4}})* {HOLDER}(?:\. All rights reserved\.)?$",
+    re.IGNORECASE,
+)
+OWNER_DOMAIN = "@kleidos.dev"
+EMAIL = re.compile(r"<[^<>@\s]+@[^<>\s]+>|(?<![\w.+-])[\w.+-]{1,64}@[\w-]{1,63}\.[\w.-]*\w")
+YEAR_LEAD = re.compile(r"^(\d{4})(?:\s?[-,]\s?\d{4})*\s+(\S.*)")
 FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.S)
 
 
@@ -351,9 +379,88 @@ def kit_copies(root: Path) -> set[str]:
     if not path.is_file():
         return set()
     try:
-        return {str(e["path"]) for e in json.loads(path.read_text(encoding="utf-8"))["files"]}
+        files = json.loads(path.read_text(encoding="utf-8"))["files"]
+        if isinstance(files, dict):  # the run form: path -> digest
+            return {str(path) for path in files}
+        return {str(e["path"]) for e in files}
     except ValueError, KeyError, TypeError:
         return set()
+
+
+def holds_kit_copies(root: Path) -> bool:
+    """Whether the repository still holds kit 2.x copies (its record lists them by commit)."""
+    try:
+        data = json.loads((root / ".github/quality/SOURCE.json").read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        return False
+    return isinstance(data, dict) and "schema" not in data and data.get("commit") != "self"
+
+
+def license_text_problems(rel: str, text: str) -> list[str]:
+    """What is wrong with the owner's copyright lines of a license text."""
+    problems = []
+    for num, line in enumerate(text.splitlines(), 1):
+        if not COPYRIGHT_WORD.search(line):
+            continue
+        ours = OWNER_NAME.search(line) or OWNER_DOMAIN in line.lower()
+        if ours and not LICENSE_LINE.match(line.strip()):
+            problems.append(
+                f"{rel}:{num}: the owner's copyright line is `Copyright (c) <year> {HOLDER}`:"
+                " year and name only, no e-mail"
+            )
+    return problems
+
+
+def owner_statements(root: Path) -> list[tuple[str, int, str]]:
+    """Every text line of the tree that names the owner, with the next: (path, number, text)."""
+    done = subprocess.run(
+        [
+            *("git", "-C", str(root), "grep", "--name-only", "--null", "-I", "--no-color"),
+            *("--untracked", "--ignore-case", "requena"),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    found = []
+    for rel in filter(None, done.stdout.decode("utf-8", "replace").split("\0")):
+        text = (root / rel).read_bytes().decode("utf-8", "replace")
+        lines = [*unicodedata.normalize("NFC", text).splitlines(), ""]
+        found += [
+            (rel, num, f"{line}\n{lines[num]}")
+            for num, line in enumerate(lines[:-1], 1)
+            if OWNER_NAME.search(line)
+        ]
+    return found
+
+
+def owner_problems(root: Path) -> tuple[list[str], list[str]]:
+    """(problems, notes): an e-mail beside the owner's name, anywhere; the license texts."""
+    problems: list[str] = []
+    texts: dict[str, str] = {}  # one line of them, one problem
+    for rel, num, text in owner_statements(root):
+        if COPYRIGHT_WORD.search(text.splitlines()[0]) and OWNER_EMAIL.search(text):
+            why = "a copyright statement carries the owner's e-mail: year and name only"
+            if is_license_text(rel):
+                texts[f"{rel}:{num}"] = why
+            else:
+                problems.append(f"{rel}:{num}: {why}")
+    for rel in tracked(root):
+        body = text_of(root, rel) if is_license_text(rel) else None
+        for line in license_text_problems(rel, body or ""):
+            where, _sep, why = line.partition(": ")
+            texts.setdefault(where, why)
+    of_texts = [f"{where}: {why}" for where, why in texts.items()]
+    if holds_kit_copies(root):
+        return problems, [
+            f"{line} (a problem from the switch to the run form)" for line in of_texts
+        ]
+    return problems + of_texts, []
+
+
+def is_license_text(rel: str) -> bool:
+    """A license's own text: LICENSE, COPYING, and what LICENSES/ holds."""
+    path = PurePosixPath(rel)
+    return path.parts[0] == "LICENSES" or LICENSE_TEXT.match(path.name) is not None
 
 
 def agents_copy(root: Path, rel: str) -> bool:
@@ -476,6 +583,8 @@ def check_text(rel: str, text: str, year: str | None, *, copy: bool = False) -> 
     for _i, value in head.copyright_lines:
         if EMAIL.search(value):
             problems.append(f"the copyright line carries an e-mail address: {value!r}")
+        elif HOLDER in value and YEAR_LEAD.match(value) and not OWNER_VALUE.match(value):
+            problems.append(f"the owner's copyright line is year and name only: {value!r}")
         m = YEAR_LEAD.match(value)
         if not m:
             problems.append(f"the copyright line does not start with a year: {value!r}")
@@ -649,6 +758,7 @@ def plan(root: Path) -> Plan:
     tables = reuse_annotations(root)
     specific = [t for t in tables if not is_catch_all(t)]
     copies = kit_copies(root)
+    held = holds_kit_copies(root)
     full: list[str] = []
     presence: list[str] = []
     skipped: dict[str, str] = {}
@@ -659,8 +769,8 @@ def plan(root: Path) -> Plan:
             continue
         if "node_modules" in p.parts or LOCKFILES.match(p.name):
             continue
-        if rel in COMMIT_CHECK_COPIES and agents_copy(root, rel):
-            skipped[rel] = "a copy of kleidos-dev/agents' commit-message gate: checked there"
+        if held and rel in COMMIT_CHECK_COPIES and agents_copy(root, rel):
+            skipped[rel] = "a held copy of the commit-message gate: checked where it comes from"
             continue
         if _style_by_name(rel) is None:
             text = text_of(root, rel)
@@ -716,6 +826,9 @@ def check_repo(root: Path, today: dt.date | None = None) -> tuple[list[str], lis
         for value in _as_list(table.get(COPYRIGHT_TAG.rstrip(":")))
         if EMAIL.search(value)
     )
+    of_owner, of_texts = owner_problems(root)
+    problems.extend(of_owner)
+    notes.extend(of_texts)
     notes.append(
         f"{len(work.full)} file(s) checked in full, {len(work.presence)} kit copies for"
         f" presence, {len(work.skipped)} skipped"

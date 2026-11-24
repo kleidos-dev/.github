@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import io
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -77,7 +78,9 @@ class WriteTest(unittest.TestCase):
         self.sync()
         text = (self.root / ".github/workflows/check.yml").read_text(encoding="utf-8")
         self.assertNotIn("0" * 40, text)
-        self.assertIn(f"reusable-lint.yml@{fx.FAKE_COMMIT} # quality-v", text)
+        self.assertIn(
+            f"reusable-lint.yml@{fx.FAKE_COMMIT} # v{cq.DirKit(fx.CENTRAL).version()}", text
+        )
 
     def test_an_edited_copy_is_caught(self) -> None:
         self.sync()
@@ -363,10 +366,11 @@ class PlaceBlockTest(unittest.TestCase):
             entry = {
                 "id": "typos",
                 "source": "quality/typos/block.toml",
+                "target": ".typos.toml",
                 "table": "default",
                 "kind": "toml",
             }
-            sync.place_block(path, entry, 'locale = "en-us"\n')
+            sync.place_block(Path(tmp), entry, 'locale = "en-us"\n')
             text = path.read_text(encoding="utf-8")
             self.assertIn("[default]\n# >>> kleidos-quality typos", text)
             found = cq.find_block(text, "typos")
@@ -380,9 +384,10 @@ class PlaceBlockTest(unittest.TestCase):
             entry = {
                 "id": "pre-commit-base",
                 "source": ".pre-commit-config.yaml",
+                "target": ".pre-commit-config.yaml",
                 "kind": "pre-commit",
             }
-            sync.place_block(path, entry, "  - repo: local\n    hooks: []\n")
+            sync.place_block(Path(tmp), entry, "  - repo: local\n    hooks: []\n")
             lines = path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(lines[0], "repos:")
             self.assertTrue(lines[1].startswith("  # >>> kleidos-quality pre-commit-base"))
@@ -406,9 +411,10 @@ class PlaceBlockTest(unittest.TestCase):
             entry = {
                 "id": "pre-commit-base",
                 "source": ".pre-commit-config.yaml",
+                "target": ".pre-commit-config.yaml",
                 "kind": "pre-commit",
             }
-            sync.place_block(path, entry, "  - repo: local\n    hooks: []\n")
+            sync.place_block(Path(tmp), entry, "  - repo: local\n    hooks: []\n")
             text = path.read_text(encoding="utf-8")
             self.assertEqual(text.count("repos:"), 1, text)
 
@@ -437,40 +443,14 @@ class ReleaseTest(unittest.TestCase):
     def tag(self, name: str, ref: str = "HEAD") -> None:
         fx.git(self.kit, "tag", name, ref)
 
-    def on_main(self) -> None:
-        fx.git(self.kit, "update-ref", sync.MAIN_REF, "HEAD")
-
-    def test_a_write_records_only_the_release_tag_on_main(self) -> None:
-        with self.assertRaises(SystemExit) as no_tag:
-            sync.release_commit(self.version, self.kit)
-        self.assertIn("no tag", str(no_tag.exception))
-        self.tag(f"quality-v{self.version}")
-        with self.assertRaises(SystemExit) as no_main:
-            sync.release_commit(self.version, self.kit)
-        self.assertIn("origin/main", str(no_main.exception))
-        self.on_main()
-        self.assertEqual(sync.release_commit(self.version, self.kit), self.head)
-        fx.write(self.kit, "later.txt", "x\n")
-        fx.commit(self.kit, "Later")
-        self.on_main()
-        with self.assertRaises(SystemExit) as moved:
-            sync.release_commit(self.version, self.kit)
-        self.assertIn("is not quality-v", str(moved.exception))
-        fx.git(self.kit, "checkout", "-q", "-b", "side", f"quality-v{self.version}")
-        fx.write(self.kit, "side.txt", "x\n")
-        fx.commit(self.kit, "Side")
-        self.tag("quality-v9.9.9")
-        with self.assertRaises(SystemExit) as off_main:
-            sync.release_commit("9.9.9", self.kit)
-        self.assertIn("not on origin/main", str(off_main.exception))
-
     def test_a_kit_change_needs_a_new_version_and_main_needs_its_tag(self) -> None:
         status, lines = sync.release_check(on_main=False, cwd=self.kit)
         self.assertEqual(status, 0, lines)
         status, lines = sync.release_check(on_main=True, cwd=self.kit)
         self.assertEqual(status, 1, lines)
         self.assertIn("git tag -s", "\n".join(lines))
-        self.tag(f"quality-v{self.version}")
+        self.tag(f"v{self.version}")
+        fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", "HEAD")
         self.assertEqual(sync.release_check(on_main=True, cwd=self.kit)[0], 0)
         # Central's own files move nothing a repository receives.
         fx.write(self.kit, "docs/note.md", "x\n")
@@ -485,33 +465,134 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(status, 1, lines)
         self.assertIn("bump quality/VERSION", "\n".join(lines))
 
-    def test_drift_compares_with_the_newest_release(self) -> None:
-        self.assertEqual(sync.drift_status(self.head, self.kit)["behind"], "false")
-        self.tag(f"quality-v{self.version}")
-        self.assertEqual(sync.drift_status(self.head, self.kit)["behind"], "false")
-        fx.write(self.kit, "docs/note.md", "x\n")
-        fx.commit(self.kit, "Docs")
-        newer = fx.git(self.kit, "rev-parse", "HEAD").strip()
+    def test_a_change_to_the_hooks_or_an_entry_workflow_is_a_kit_change(self) -> None:
+        self.tag(f"v{self.version}")
+        before = sync.kit_fingerprint("HEAD", self.kit)
+        for rel in ("hooks/launch.py", ".pre-commit-hooks.yaml", ".github/workflows/quick.yml"):
+            with self.subTest(rel=rel):
+                path = self.kit / rel
+                path.write_text(path.read_text(encoding="utf-8") + "# more\n", encoding="utf-8")
+                fx.commit(self.kit, "Kit change")
+                after = sync.kit_fingerprint("HEAD", self.kit)
+                self.assertNotEqual(before, after)
+                before = after
+        for rel in (".github/workflows/ci.yml", "tools/ecosystem.py"):
+            with self.subTest(rel=rel):
+                path = self.kit / rel
+                path.write_text(path.read_text(encoding="utf-8") + "# more\n", encoding="utf-8")
+                fx.commit(self.kit, "Own change")
+                self.assertEqual(before, sync.kit_fingerprint("HEAD", self.kit))
+
+    def test_the_newest_release_is_found_under_both_prefixes(self) -> None:
+        for name in (
+            "quality-v2.3.0",
+            "v3.0.0",
+            "v3.10.0",
+            "v3.9.0",
+            "v3",
+            "vx",
+            "v3.1",
+            "nightly",
+        ):
+            self.tag(name)
+        self.assertEqual(
+            sync.release_tags(self.kit), ["v3.10.0", "v3.9.0", "v3.0.0", "quality-v2.3.0"]
+        )
+
+    def test_a_version_no_newer_than_an_old_release_is_refused(self) -> None:
         self.tag("quality-v99.0.0")
-        status = sync.drift_status(self.head, self.kit)
-        self.assertEqual((status["tag"], status["commit"]), ("quality-v99.0.0", newer))
-        self.assertEqual(status["behind"], "false")  # the same kit bytes
+        status, lines = sync.release_check(on_main=False, cwd=self.kit)
+        self.assertEqual(status, 1, lines)
+        self.assertIn("quality-v99.0.0", lines[0])
+
+    def test_a_version_without_its_changelog_entry_is_refused(self) -> None:
+        fx.write(self.kit, "quality/VERSION", "77.0.0\n")
+        fx.commit(self.kit, "Version")
+        status, lines = sync.release_check(on_main=False, cwd=self.kit)
+        self.assertEqual(status, 1, lines)
+        self.assertIn("No changelog entry", lines[0])
+
+    def test_the_release_line_also_moves_the_branch(self) -> None:
+        _status, lines = sync.release_check(on_main=True, cwd=self.kit)
+        self.assertIn("git fetch origin && git tag -s", lines[0])
+        self.assertIn(
+            f"git push origin v{self.version} refs/remotes/origin/main:refs/heads/v3", lines[0]
+        )
+
+    def test_a_release_whose_branch_was_not_moved_is_red_on_main(self) -> None:
+        old = self.head
+        self.tag(f"v{self.version}")
+        for where in (None, old):
+            if where is not None:
+                fx.write(self.kit, "docs/note.md", "x\n")
+                fx.commit(self.kit, "Docs")
+                fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", "HEAD")
+            status, lines = sync.release_check(on_main=True, cwd=self.kit)
+            self.assertEqual(status, 1, lines)
+            self.assertIn("Branch not moved", lines[0])
+            self.assertIn(f"git push origin v{self.version}^{{commit}}:refs/heads/v3", lines[0])
+            self.assertEqual(sync.release_check(on_main=False, cwd=self.kit)[0], 0)
+        fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", old)
+        status, lines = sync.release_check(on_main=True, cwd=self.kit)
+        self.assertEqual((status, "released" in lines[0]), (0, True), lines)
+
+    def old_kit(self, version: str) -> str:
+        """A commit whose kit is a 2.x one."""
+        fx.write(self.kit, "quality/VERSION", f"{version}\n")
+        fx.commit(self.kit, "Old kit")
+        return fx.git(self.kit, "rev-parse", "HEAD").strip()
+
+    def test_a_2x_repository_is_never_behind(self) -> None:
+        old = self.old_kit("2.3.0")
+        self.assertEqual(sync.drift_status(old, self.kit)["behind"], "false")  # no release yet
+        self.tag("quality-v2.3.0", old)
+        fx.write(self.kit, "quality/VERSION", "3.0.0\n")
         rel = ".github/workflows/reusable-lint.yml"
         fx.write(self.kit, rel, (self.kit / rel).read_text(encoding="utf-8") + "# more\n")
+        fx.commit(self.kit, "Kit 3")
+        newest = fx.git(self.kit, "rev-parse", "HEAD").strip()
+        self.assertEqual(sync.drift_status(old, self.kit)["behind"], "false")  # before the tag
+        self.tag("v3.0.0")
+        status = sync.drift_status(old, self.kit)
+        self.assertEqual(
+            status, {"behind": "false", "tag": "v3.0.0", "commit": newest, "version": "3.0.0"}
+        )
+
+    def test_a_commit_the_kit_no_longer_has_is_not_behind(self) -> None:
+        self.tag("v3.0.0")
+        for recorded in ("f" * 40, "", "None"):
+            self.assertEqual(sync.drift_status(recorded, self.kit)["behind"], "false")
+
+    def test_copies_of_a_kit_3_would_be_behind(self) -> None:
+        self.tag("v3.0.0")
+        held = self.head
+        self.assertEqual(sync.drift_status(held, self.kit)["behind"], "false")
+        rel = "quality/ruff/ruff.toml"
+        fx.write(self.kit, rel, (self.kit / rel).read_text(encoding="utf-8") + "# more\n")
         fx.commit(self.kit, "Kit change")
-        self.tag("quality-v100.0.0")
-        self.assertEqual(sync.drift_status(self.head, self.kit)["behind"], "true")
+        self.tag("v3.1.0")
+        self.assertEqual(sync.drift_status(held, self.kit)["behind"], "true")
+
+    def test_the_drift_lines_are_what_the_2x_drift_job_reads(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(sync.main(["--drift", "f" * 40]), 0)
+        self.assertIn("behind=false", out.getvalue().splitlines())
+        self.assertTrue(all("=" in line for line in out.getvalue().splitlines()))
 
 
-class PreviewTest(unittest.TestCase):
-    def test_the_format_count_reads_ruff_itself(self) -> None:
-        if shutil.which("ruff") is None:
-            self.skipTest("ruff is not on PATH")
+class CommandTest(unittest.TestCase):
+    """The command line: kit 3 is never written into another repository by a sync."""
+
+    def test_write_is_refused_outside_the_kit_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "a.py").write_text("x=1\ny  =  2\n", encoding="utf-8")
-            Path(tmp, "b.py").write_text("z = 3\n", encoding="utf-8")
-            Path(tmp, "c.py").write_text("w  = 4\n", encoding="utf-8")
-            self.assertEqual(sync.format_count(Path(tmp)), "2")
+            root = fx.consumer(Path(tmp) / "repo")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(sync.main(["--write", str(root)]), 2)
+            self.assertIn("kit_switch.py", err.getvalue())
+            self.assertFalse((root / cq.SOURCE_JSON).exists())
+            with self.assertRaisesRegex(SystemExit, "run, not copied"):
+                sync.write(root)
+            self.assertFalse((root / cq.SOURCE_JSON).exists())
 
 
 class CentralTest(unittest.TestCase):

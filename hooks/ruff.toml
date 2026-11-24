@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The hooks' own floor. pre-commit runs these scripts on whichever python3
+# comes first on a machine's PATH, so they keep to what the oldest of them
+# reads; everything else the kit runs is written for the Python of
+# pyproject.toml, and hooks/launch.py finds one that reads it.
+extend = "../.github/quality/ruff.toml"
+# below-latest: the python3 macOS ships (3.9.6 on macOS 26) starts these hooks
+target-version = "py39"

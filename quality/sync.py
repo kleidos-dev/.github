@@ -1,39 +1,35 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
-"""Copy the Kleidos quality kit into a repository, check it, or preview a change.
+"""The held form of the Kleidos quality kit: copies, blocks and their releases.
 
-The kit lives in kleidos-dev/.github (quality/, docs/quality.md). A
-repository adopts it with one command, and takes every later kit release
-with the same command in a sync pull request:
+From kit 3.0.0 a repository runs the kit and holds none of its code
+(docs/quality.md, "How a repository runs the kit"); tools/kit_switch.py
+moves it there. This script serves what has not moved yet: the kit's home,
+which still records its own copies and blocks, the kit 2.x repositories'
+weekly drift notice, and the kit's own release check. It goes with kit 3.1.
 
     sync.py --write REPO [--profiles base,python,...] [--test-dir tests]
-        writes the copies, the managed blocks (the organization rules in
-        AGENTS.md among them), the files seeded once
-        (.gitleaks.toml, waivers.toml, .markdownlint-cli2.jsonc, the drift
-        caller), points every call to a kit workflow at this checkout's
-        commit, and records it all in REPO/.github/quality/SOURCE.json
+        (kleidos-dev/.github itself, and no other) writes the copies, the
+        managed blocks (the organization rules in AGENTS.md among them),
+        the files seeded once (.gitleaks.toml, waivers.toml,
+        .markdownlint-cli2.jsonc, the drift caller), points every call to
+        a kit workflow at this checkout's commit, and records it all in
+        REPO/.github/quality/SOURCE.json
     sync.py --check REPO [REPO ...]
         check_quality.py against this working tree of the kit (exit 1 on
         any problem), the way kleidos-dev/agents' sync_commit_check.py
         --check compares copies
-    sync.py --preview [--tools] REPO_OR_SLUG [...]
-        applies --write to a throwaway clone and reports what the kit would
-        find there (with --tools, ruff and zizmor too); never fails
-
-Run it from a clean checkout of kleidos-dev/.github at the release to
-record: the commit is HEAD, which --write requires to be the tag
-quality-v<quality/VERSION> on origin/main (--allow-untagged lifts that for a
-throwaway tree), and a dirty tree is refused (--allow-dirty while
-developing the kit). REPO may be kleidos-dev/.github itself, which records
-commit "self".
-
     sync.py --release-check [--on-main]
         kleidos-dev/.github's CI: a change to what repositories receive
-        bumps quality/VERSION, and a version on main is tagged
+        bumps quality/VERSION, and a version on main is tagged and is
+        where the branch v<major> is
     sync.py --drift RECORDED_COMMIT
-        the drift notice: key=value lines naming the newest release and
-        whether RECORDED_COMMIT's kit is behind it
+        the drift notice of a kit 2.x repository (its weekly job runs the
+        default branch's copy of this script): key=value lines naming the
+        newest release and whether RECORDED_COMMIT's kit is behind it. Being
+        behind is never red (owner, 2026-11-24), and kit 3 is not taken by
+        a sync, so a recorded 2.x commit is never behind.
 
 Python 3.15 or newer; PyYAML.
 """
@@ -46,10 +42,8 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -58,6 +52,7 @@ HERE = Path(__file__).resolve().parent
 CENTRAL = HERE.parent
 sys.path.insert(0, str(HERE))
 import check_quality as cq  # noqa: E402  the sibling module, found through the path set above
+import own_files  # noqa: E402  the sibling module, found through the path set above
 import spdx_headers  # noqa: E402  the sibling module, found through the path set above
 
 TOML_HEADER = r"^\s*\[\s*{table}\s*\]\s*(?:#.*)?$"
@@ -70,73 +65,44 @@ SKELETONS = {
 
 # Copies earlier kit versions made and this one does not: a sync removes them.
 RETIRED_COPIES = (".github/quality/requirements-tools.txt",)
-TAG_PREFIX = "quality-v"
-MAIN_REF = "refs/remotes/origin/main"
-# What a repository receives from the kit: a change here is a kit release.
-KIT_TREE = ("quality", ".github/workflows", ".github/commit-check")
+# A release is the tag v<VERSION>; before 3.0.0 it was quality-v<VERSION>.
+TAG_PREFIX = "v"
+OLD_TAG_PREFIX = "quality-v"
+RUN_FORM_MAJOR = 3
+REMOTE = "refs/remotes/origin"
+# What a repository runs or receives from the kit: a change here is a kit release.
+KIT_TREE = (
+    "quality",
+    "hooks",
+    ".pre-commit-hooks.yaml",
+    ".github/workflows",
+    ".github/commit-check",
+)
+ENTRY_WORKFLOWS = ("quick.yml", "check.yml", "sonar.yml")
 
 
 def git(*args: str, cwd: Path = CENTRAL) -> str:
     return subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, check=True, text=True
+        ["git", *args], cwd=cwd, capture_output=True, check=True, text=True
     ).stdout.strip()
 
 
 def git_ok(*args: str, cwd: Path = CENTRAL) -> str | None:
     """A git command's output, or None when it fails."""
-    done = subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, check=False, text=True
-    )
+    done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False, text=True)
     return done.stdout.strip() if done.returncode == 0 else None
-
-
-def central_commit(allow_dirty: bool) -> str:
-    """This checkout's HEAD, refusing a dirty tree unless allowed."""
-    if git("status", "--porcelain") and not allow_dirty:
-        raise SystemExit(
-            "sync: the kit checkout has uncommitted changes; commit them or pass --allow-dirty"
-        )
-    return git("rev-parse", "HEAD")
 
 
 def tag_commit(tag: str, cwd: Path = CENTRAL) -> str | None:
     return git_ok("rev-parse", "-q", "--verify", f"refs/tags/{tag}^{{commit}}", cwd=cwd)
 
 
-def release_commit(version: str, cwd: Path = CENTRAL) -> str:
-    """HEAD, if it is exactly the release tag of this VERSION and on origin/main.
-
-    A repository records only a released kit commit: every call to a kit
-    workflow carries `# quality-v<VERSION>`, and zizmor's online
-    ref-version-mismatch audit fails unless that tag names the same commit.
-    """
-    tag = f"{TAG_PREFIX}{version}"
-    head = git("rev-parse", "HEAD", cwd=cwd)
-    tagged = tag_commit(tag, cwd)
-    if tagged is None:
-        raise SystemExit(
-            f"sync: there is no tag {tag} in this kit checkout: fetch the tags and check out"
-            f" the release (git fetch --tags origin && git checkout {tag}), or tag the merged"
-            ' release first (docs/quality.md, "Changing the kit")'
-        )
-    if tagged != head:
-        raise SystemExit(
-            f"sync: HEAD {head[:12]} is not {tag} ({tagged[:12]}): check out the release"
-            f" (git checkout {tag}); a repository records released kit commits only"
-        )
-    if git_ok("rev-parse", "-q", "--verify", MAIN_REF, cwd=cwd) is None:
-        raise SystemExit("sync: no origin/main in this kit checkout: git fetch origin main")
-    if git_ok("merge-base", "--is-ancestor", head, MAIN_REF, cwd=cwd) is None:
-        raise SystemExit(f"sync: {tag} ({head[:12]}) is not on origin/main: refusing to record it")
-    return head
-
-
 def kit_fingerprint(ref: str, cwd: Path = CENTRAL) -> str:
     """A digest of everything a repository receives from the kit at one commit.
 
-    quality/ (but its tests), the reusable workflows, the commit-message
-    checker, and the bytes of the kit's managed blocks; nothing else of this
-    repository (its own CI, its media hooks, its docs) moves the kit.
+    quality/ (but its tests), the hooks, the entry and reusable workflows,
+    and the bytes of the kit's managed blocks; nothing else of this
+    repository (its own CI, its media hooks, its tools, its docs) moves the kit.
     """
     listing = git("ls-tree", "-r", ref, "--", *KIT_TREE, cwd=cwd)
     digest = hashlib.sha256()
@@ -144,8 +110,9 @@ def kit_fingerprint(ref: str, cwd: Path = CENTRAL) -> str:
         meta, _, path = line.partition("\t")
         if path.startswith("quality/tests/"):
             continue
-        if path.startswith(".github/workflows/") and not PurePosixPath(path).name.startswith(
-            "reusable-"
+        name = PurePosixPath(path).name
+        if path.startswith(".github/workflows/") and not (
+            name.startswith("reusable-") or name in ENTRY_WORKFLOWS
         ):
             continue
         if path.startswith(".github/commit-check/") and not path.endswith("check_commit_msg.py"):
@@ -158,10 +125,16 @@ def kit_fingerprint(ref: str, cwd: Path = CENTRAL) -> str:
     return digest.hexdigest()
 
 
+def version_of(tag: str) -> tuple[int, ...]:
+    """The version a release tag names, as integers."""
+    return tuple(int(n) for n in tag.rpartition("v")[2].split("."))
+
+
 def release_tags(cwd: Path = CENTRAL) -> list[str]:
-    """The kit's release tags, newest first."""
-    out = git("tag", "-l", f"{TAG_PREFIX}*", "--sort=-v:refname", cwd=cwd)
-    return [t for t in out.splitlines() if re.fullmatch(rf"{TAG_PREFIX}\d+\.\d+\.\d+", t)]
+    """The kit's release tags (v3.0.0, quality-v2.3.0), newest version first."""
+    out = git("tag", "-l", cwd=cwd).splitlines()
+    tags = [t for t in out if re.fullmatch(rf"(?:{OLD_TAG_PREFIX}|{TAG_PREFIX})\d+\.\d+\.\d+", t)]
+    return sorted(tags, key=version_of, reverse=True)
 
 
 def release_check(on_main: bool, cwd: Path = CENTRAL) -> tuple[int, list[str]]:
@@ -185,46 +158,71 @@ def release_check(on_main: bool, cwd: Path = CENTRAL) -> tuple[int, list[str]]:
                 ' quality/CHANGELOG.md entry (docs/quality.md, "Versions")'
             )
             return 1, lines
+        branch = f"v{version.split('.')[0]}"
+        at = git_ok("rev-parse", "-q", "--verify", f"{REMOTE}/{branch}", cwd=cwd)
+        if on_main and at != tagged:
+            lines.append(
+                f"::error title=Branch not moved::{tag} is {tagged[:12]} and {branch}, which every"
+                f" repository runs, is at {(at or 'nothing')[:12]}: git fetch origin && git push"
+                f" origin {tag}^{{commit}}:refs/heads/{branch}, then re-run this job"
+            )
+            return 1, lines
         lines.append(f"kit at {tag} ({tagged[:12]}): released")
         return 0, lines
     changelog = (cwd / "quality" / "CHANGELOG.md").read_text(encoding="utf-8")
     if not re.search(rf"^## {re.escape(version)}\b", changelog, re.MULTILINE):
         lines.append(f"::error title=No changelog entry::quality/CHANGELOG.md has no ## {version}")
         return 1, lines
-    if tags:
-        newest = tags[0].removeprefix(TAG_PREFIX)
-        if tuple(map(int, version.split("."))) <= tuple(map(int, newest.split("."))):
-            lines.append(
-                f"::error title=Version not newer::quality/VERSION {version} is not newer than"
-                f" the newest release {tags[0]}"
-            )
-            return 1, lines
+    if tags and tuple(map(int, version.split("."))) <= version_of(tags[0]):
+        lines.append(
+            f"::error title=Version not newer::quality/VERSION {version} is not newer than"
+            f" the newest release {tags[0]}"
+        )
+        return 1, lines
     if on_main:
         lines.append(
             f"::error title=Release not tagged::quality/VERSION is {version} and no tag"
-            f" {tag} exists: tag this commit, signed (git tag -s {tag} -m 'Quality kit"
-            f" {version}' {head} && git push origin {tag}), then re-run this job"
+            f" {tag} exists: release it (git fetch origin && git tag -s {tag} -m 'Quality kit"
+            f" {version}' origin/main && git push origin {tag}"
+            f" refs/remotes/origin/main:refs/heads/v{version.split('.')[0]}),"
+            " then re-run this job"
         )
         return 1, lines
     lines.append(f"::notice title=Kit release {version}::tag {tag} at the merge commit once merged")
     return 0, lines
 
 
+def recorded_major(recorded: str, cwd: Path = CENTRAL) -> int | None:
+    """The major version of the kit at a recorded commit, None when it cannot be read."""
+    known = cq.SHA40.match(recorded)
+    text = git_ok("show", f"{recorded}:quality/VERSION", cwd=cwd) if known else None
+    found = re.match(r"(\d+)\.", text or "")
+    return int(found.group(1)) if found else None
+
+
 def drift_status(recorded: str, cwd: Path = CENTRAL) -> dict[str, str]:
-    """For a repository's drift notice: the newest release and whether it is behind it."""
+    """For a kit 2.x repository's drift notice: the newest release, and "not behind".
+
+    Only a repository that held copies of a kit 3 release could be behind it,
+    and there is none to hold: the kit is run from 3.0.0 on. A commit this
+    clone cannot read (its history was squashed away) is not behind either.
+    """
     tags = release_tags(cwd)
     if not tags:
         return {"behind": "false", "tag": "", "commit": "", "version": ""}
     newest = tags[0]
     commit = tag_commit(newest, cwd) or ""
-    behind = recorded != commit
-    if behind and git_ok("cat-file", "-e", f"{recorded}^{{commit}}", cwd=cwd) is not None:
-        behind = kit_fingerprint(recorded, cwd) != kit_fingerprint(commit, cwd)
+    major = recorded_major(recorded, cwd)
+    behind = (
+        major is not None
+        and major >= RUN_FORM_MAJOR
+        and kit_fingerprint(recorded, cwd) != kit_fingerprint(commit, cwd)
+    )
     return {
         "behind": "true" if behind else "false",
         "tag": newest,
         "commit": commit,
-        "version": newest.removeprefix(TAG_PREFIX),
+        "version": ".".join(map(str, version_of(newest))),
     }
 
 
@@ -273,12 +271,13 @@ def _strip_local_duplicates(
     return out, removed
 
 
-def place_block(path: Path, entry: dict[str, Any], inner: str) -> list[str]:
-    """Write one managed block into path (created if missing).
+def place_block(repo: Path, entry: dict[str, Any], inner: str) -> list[str]:
+    """Write one managed block into its file (created if missing).
 
     Returns the repository's own lines the block displaced (a key it now sets).
     """
     block_id = str(entry["id"])
+    path = own_files.own_file(repo, str(entry["target"]))
     text = path.read_text(encoding="utf-8") if path.is_file() else SKELETONS.get(path.name, "")
     if text and not text.endswith("\n"):
         text += "\n"
@@ -308,8 +307,7 @@ def place_block(path: Path, entry: dict[str, Any], inner: str) -> list[str]:
             lines += [f"[{table}]\n", start_marker, inner, end_marker]
         else:
             lines[after:after] = [start_marker, inner, end_marker]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(lines), encoding="utf-8")
+    own_files.write(repo, str(entry["target"]), "".join(lines))
     return removed
 
 
@@ -406,14 +404,15 @@ def rewrite_uses(repo: Path, commit: str, version: str) -> list[str]:
         text = path.read_text(encoding="utf-8")
         new = "".join(
             pattern.sub(
-                lambda m: f"{m.group(1)}{commit}{m.group(2)} # quality-v{version}", ln.rstrip("\n")
+                lambda m: f"{m.group(1)}{commit}{m.group(2)} # {TAG_PREFIX}{version}",
+                ln.rstrip("\n"),
             )
             + ("\n" if ln.endswith("\n") else "")
             for ln in text.splitlines(keepends=True)
         )
-        if new != text:
-            path.write_text(new, encoding="utf-8")
-            changed.append(path.relative_to(repo).as_posix())
+        rel = path.relative_to(repo).as_posix()
+        if new != text and own_files.write(repo, rel, new):
+            changed.append(rel)
     return changed
 
 
@@ -426,14 +425,11 @@ def write(
     profiles: list[str] | None = None,
     commit: str | None = None,
     test_dir: str | None = None,
-    allow_dirty: bool = False,
-    allow_untagged: bool = False,
 ) -> list[str]:
-    """Bring repo to this kit checkout; return a log of what was written.
+    """Bring repo to this kit checkout's held form; return a log of what was written.
 
-    With no commit given, a repository records HEAD, which must be the
-    release tag of quality/VERSION on origin/main (allow_untagged lifts that
-    for a throwaway tree, never for a sync pull request).
+    Only the kit's home records itself ("self"); for a throwaway tree of
+    another repository (the preview) the caller names the commit.
     """
     repo = repo.resolve()
     kit = cq.DirKit(CENTRAL)
@@ -442,9 +438,7 @@ def write(
     if commit is None and is_central:
         commit = "self"
     elif commit is None:
-        commit = central_commit(allow_dirty)
-        if not allow_untagged:
-            commit = release_commit(version)
+        raise SystemExit("sync: kit 3 is run, not copied: nothing but its home is written")
     old: dict[str, Any] = {}
     source_path = repo / cq.SOURCE_JSON
     if source_path.is_file():
@@ -461,10 +455,8 @@ def write(
     files_rec = []
     for c in copies:
         data = kit.read(str(c["source"]))
-        target = repo / str(c["target"])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.is_file() or target.read_bytes() != data:
-            target.write_bytes(data)
+        target = own_files.own_file(repo, str(c["target"]))
+        if own_files.write(repo, str(c["target"]), data):
             log.append(f"copied {c['target']}")
         if os.access(CENTRAL / str(c["source"]), os.X_OK):
             target.chmod(0o755)
@@ -479,7 +471,7 @@ def write(
             # check reports the block missing until it does.
             log.append(f"skipped block {b['id']}: there is no {b['target']} (docs/agent-docs.md)")
         else:
-            removed = place_block(repo / str(b["target"]), b, inner)
+            removed = place_block(repo, b, inner)
             log.append(f"block {b['id']} in {b['target']}")
             if b.get("kind") == "markdown" and removed:
                 log.append(f"  replaced the hand-written section {removed[0].strip()!r}")
@@ -519,9 +511,8 @@ def write(
             bool(mark) and target.is_file() and str(mark) in target.read_text(encoding="utf-8")
         )
         if not target.exists() or replace:
-            target.parent.mkdir(parents=True, exist_ok=True)
             text = spdx_headers.set_year(kit.read(str(s["source"])).decode("utf-8"), year)
-            target.write_text(text, encoding="utf-8")
+            own_files.write(repo, str(s["target"]), text)
             verb = "replaced the copy at" if replace else "seeded"
             log.append(f"{verb} {s['target']} (the repository's own from now on)")
             if replace:
@@ -545,10 +536,7 @@ def write(
         "files": files_rec,
         "blocks": blocks_rec,
     }
-    source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text(
-        json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    own_files.write(repo, cq.SOURCE_JSON, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     log.append(f"recorded kit {version} at {commit[:12]} in {cq.SOURCE_JSON}")
     return log
 
@@ -570,7 +558,8 @@ def forget_commit_check_copies(repo: Path, replaced: list[str]) -> list[str]:
     if len(left) == len(files):
         return []
     data["files"] = left
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    own_files.write(repo, cq.COMMIT_CHECK_SOURCE, text)
     return [
         f"dropped {', '.join(sorted(replaced))} from {cq.COMMIT_CHECK_SOURCE}: the repository's"
         " commit-check digest test (tests/ci/test_commit_check_copy.py) now expects the"
@@ -579,7 +568,7 @@ def forget_commit_check_copies(repo: Path, replaced: list[str]) -> list[str]:
 
 
 # --------------------------------------------------------------------------
-# --check and --preview
+# --check
 
 
 def check(repos: list[Path]) -> int:
@@ -595,94 +584,11 @@ def check(repos: list[Path]) -> int:
     return 1 if failed else 0
 
 
-def _clone(target: str, dest: Path) -> None:
-    local = Path(target)
-    src = f"file://{local.resolve()}" if local.exists() else f"https://github.com/{target}.git"
-    subprocess.run(["git", "clone", "-q", "--depth", "1", src, str(dest)], check=True)
-
-
-def _count(cmd: list[str], cwd: Path) -> str:
-    exe = shutil.which(cmd[0])
-    if exe is None:
-        return "n/a"
-    out = subprocess.run([exe, *cmd[1:]], cwd=cwd, capture_output=True, text=True, check=False)
-    lines = [ln for ln in out.stdout.splitlines() if re.match(r"^\S+:\d+:\d+: ", ln)]
-    return str(len(lines))
-
-
-def format_count(tree: Path) -> str:
-    """How many files `ruff format` would change in a tree (from its JSON report)."""
-    exe = shutil.which("ruff")
-    if exe is None:
-        return "n/a"
-    out = subprocess.run(
-        [exe, "format", "--check", "--output-format", "json", "."],
-        cwd=tree,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    try:
-        found = json.loads(out.stdout or "[]")
-    except ValueError:
-        return "n/a"
-    return str(len({d.get("filename") for d in found if d.get("code") == "unformatted"}))
-
-
-def preview(targets: list[str], tools: bool, allow_dirty: bool) -> str:
-    """A Markdown table of what the kit would find in each target."""
-    commit = central_commit(allow_dirty)
-    rows = [
-        "| Repository | Kit problems | Weakenings to waive or fix"
-        " | ruff findings | ruff format (files) | zizmor findings |",
-        "| --- | --- | --- | --- | --- | --- |",
-    ]
-    with tempfile.TemporaryDirectory() as tmp:
-        for target in targets:
-            dest = Path(tmp) / re.sub(r"[^\w.-]", "_", target)
-            try:
-                _clone(target, dest)
-            except subprocess.CalledProcessError:
-                rows.append(f"| {target} | not reachable | | | | |")
-                continue
-            write(dest, commit=commit, allow_dirty=True)
-            report = cq.run(dest, kit=cq.DirKit(CENTRAL))
-            unwaived = sum(1 for p in report.problems if "has no waiver" in p.message)
-            ruff = fmt = ziz = "-"
-            if tools:
-                ruff = _count(
-                    ["ruff", "check", "--output-format", "concise", "--exit-zero", "."], dest
-                )
-                fmt = format_count(dest)
-                ziz_out = subprocess.run(
-                    [shutil.which("zizmor") or "zizmor", "--format", "json", "--offline", "."],
-                    cwd=dest,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                try:
-                    ziz = str(len(json.loads(ziz_out.stdout or "[]")))
-                except ValueError:
-                    ziz = "n/a"
-            rows.append(
-                f"| {target} | {len(report.problems) - unwaived} | {unwaived}"
-                f" | {ruff} | {fmt} | {ziz} |"
-            )
-    head = (
-        f"## Quality kit impact preview ({cq.DirKit(CENTRAL).version()} at {commit[:12]})\n\n"
-        "mypy is not counted here: it needs each repository's dependencies,"
-        " and every sync pull request measures and fixes it.\n\n"
-    )
-    return head + "\n".join(rows) + "\n"
-
-
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     group = ap.add_mutually_exclusive_group(required=True)
     group.add_argument("--write", type=Path, metavar="REPO")
     group.add_argument("--check", type=Path, nargs="+", metavar="REPO")
-    group.add_argument("--preview", nargs="+", metavar="REPO_OR_SLUG")
     group.add_argument(
         "--release-check",
         action="store_true",
@@ -700,22 +606,8 @@ def main(argv: list[str] | None = None) -> int:
         "--test-dir", help="also copy the drift test (test_quality_kit.py) into this directory"
     )
     ap.add_argument(
-        "--tools", action="store_true", help="--preview also counts ruff and zizmor findings"
-    )
-    ap.add_argument(
-        "--allow-dirty",
-        action="store_true",
-        help="record HEAD even if the kit checkout has changes",
-    )
-    ap.add_argument(
-        "--allow-untagged",
-        action="store_true",
-        help="--write: record HEAD even if it is not the release tag (throwaway trees only)",
-    )
-    ap.add_argument(
         "--on-main", action="store_true", help="--release-check: this is a commit on main"
     )
-    ap.add_argument("--summary", type=Path, help="--preview appends its table here")
     args = ap.parse_args(argv)
     if args.release_check:
         status, lines = release_check(args.on_main)
@@ -729,30 +621,22 @@ def main(argv: list[str] | None = None) -> int:
         if not args.write.is_dir():
             print(f"sync: {args.write} is not a directory", file=sys.stderr)
             return 2
+        if args.write.resolve() != CENTRAL.resolve():
+            print(
+                "sync: kit 3 is run, not copied: move the repository with tools/kit_switch.py"
+                ' (docs/quality.md, "Switching from kit 2.x")',
+                file=sys.stderr,
+            )
+            return 2
         profiles = [p.strip() for p in args.profiles.split(",")] if args.profiles else None
         for line in write(
             args.write,
             profiles=profiles,
             test_dir=args.test_dir,
-            allow_dirty=args.allow_dirty,
-            allow_untagged=args.allow_untagged,
         ):
             print(line)
         return check([args.write])
-    if args.check:
-        return check(args.check)
-    targets: list[str] = []
-    for target in args.preview:
-        if target.startswith("@"):
-            targets.extend(cq.DirKit(CENTRAL).manifest().get("consumers", {}).get(target[1:], []))
-        else:
-            targets.append(target)
-    table = preview(targets, args.tools, args.allow_dirty)
-    print(table)
-    if args.summary:
-        with args.summary.open("a", encoding="utf-8") as fh:
-            fh.write(table)
-    return 0
+    return check(args.check)
 
 
 if __name__ == "__main__":
