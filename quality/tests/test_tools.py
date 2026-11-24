@@ -7,9 +7,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import itertools
+import os
+import re
 import shutil
 import tarfile
 import tempfile
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -104,6 +108,78 @@ class NoWrapTest(unittest.TestCase):
                 with mock.patch("sys.argv", ["md_nowrap.py", "b.md"]):
                     self.assertEqual(md_nowrap.main(), 0)
 
+    def test_a_path_out_of_the_repository_is_refused(self) -> None:
+        """A path an agent or a script wrote is read only inside the working directory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fx.init(Path(tmp) / "repo")
+            outside = Path(tmp) / "outside.md"
+            outside.write_text("One\nwrapped\n", encoding="utf-8")
+            sibling = Path(tmp) / "repo-evil" / "x.md"
+            sibling.parent.mkdir()
+            sibling.write_text("One\nwrapped\n", encoding="utf-8")
+            (root / "sub").mkdir()
+            (root / "link.md").symlink_to(outside)
+            (root / "sub" / "inner.md").write_text("One\n", encoding="utf-8")
+            (root / "inner-link.md").symlink_to(root / "sub" / "inner.md")
+            with contextlib.chdir(root):
+                for argv in (
+                    ["../outside.md"],
+                    [str(outside)],
+                    ["link.md"],
+                    ["sub/../../outside.md"],
+                    ["../repo-evil/x.md"],
+                    [str(sibling)],
+                ):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        self.assertEqual(md_nowrap.main(argv), 1, argv)
+                    self.assertEqual(
+                        out.getvalue(), f"{argv[0]}: refused: it leads out of the repository\n"
+                    )
+                for argv in (["inner-link.md"], ["sub/inner.md"], ["sub/../sub/inner.md"]):
+                    with contextlib.redirect_stdout(io.StringIO()) as out:
+                        self.assertEqual(md_nowrap.main(argv), 0, argv)
+                    self.assertEqual(out.getvalue(), "")
+                self.assertIsNone(md_nowrap.in_repository(root), "the repository is no file of it")
+                self.assertIsNone(md_nowrap.in_repository(Path(".")))
+
+
+#: The patterns the scans replaced (SonarCloud S8786: each could backtrack
+#: for a time that grows faster than the line); the scans must read every
+#: line exactly as they did.
+OLD_FENCE = re.compile(r"^[ \t]*(?:>[ \t]?)*[ \t]*(?P<fence>`{3,}|~{3,})")
+OLD_QUOTE = re.compile(r"^\s*(>\s?)+(.*)$")
+
+
+class LineScanTest(unittest.TestCase):
+    def test_the_scans_read_every_short_line_as_the_patterns_did(self) -> None:
+        """Every line of up to six characters from the ones that matter, both ways."""
+        alphabet = (" ", "\t", ">", "`", "~", "a", "\u2003")
+        for size in range(7):
+            for chars in itertools.product(alphabet, repeat=size):
+                line = "".join(chars)
+                fence = OLD_FENCE.match(line)
+                self.assertEqual(md_nowrap.fence_of(line), fence["fence"] if fence else "", line)
+                quote = OLD_QUOTE.match(line)
+                self.assertEqual(md_nowrap.quoted(line), quote[2] if quote else None, line)
+
+    def test_a_long_line_is_read_in_linear_time(self) -> None:
+        """A run the old patterns took quadratic time over is read in one pass."""
+        size = 200_000
+        lines = (
+            " " * size + "x",
+            "\t" * size,
+            "> " * size + "x",
+            ">" + " " * size + "x",
+            " " * size + ">" * size,
+            "> \u2003" * size,
+        )
+        start = time.perf_counter()
+        for line in lines:
+            md_nowrap.fence_of(line)
+            md_nowrap.quoted(line)
+            md_nowrap.wrapped_lines(f"{line}\n{line}\n")
+        self.assertLess(time.perf_counter() - start, 5.0)
+
 
 class FetchToolTest(unittest.TestCase):
     def test_the_lock_pins_https_urls_and_digests(self) -> None:
@@ -173,7 +249,7 @@ class InstallTest(unittest.TestCase):
 
     def test_the_pinned_bytes_are_installed(self) -> None:
         target = self.install()
-        self.assertEqual(target, self.dest / "tool")
+        self.assertEqual(target, Path(os.path.realpath(self.dest), "tool"))
         self.assertEqual(target.read_bytes(), self.DATA)
         self.assertEqual(target.stat().st_mode & 0o777, 0o755)
         self.assertEqual(self.install(), target)  # a folder that is there already
@@ -200,6 +276,97 @@ class InstallTest(unittest.TestCase):
     def test_an_unknown_tool_is_refused_by_name(self) -> None:
         with self.assertRaisesRegex(KeyError, r"other is not in tools.lock \(known: tool\)"):
             self.install("other")
+
+    def test_the_file_takes_the_lock_s_name(self) -> None:
+        """A name the lock cannot give a file is refused before anything is fetched."""
+        for name in ("../tool", "a/b", "Tool", ".tool", "-tool", "tool\n", ""):
+            self.lock.write_text(
+                f'["{name.encode("unicode_escape").decode()}"]\nurl = "{self.URL}"\nsha256 = "x"\n',
+                encoding="utf-8",
+            )
+            with (
+                self.subTest(name=name),
+                mock.patch.object(fetch_tool, "_get") as get,
+                self.assertRaisesRegex(ValueError, "which is no file name"),
+            ):
+                fetch_tool.install(name, self.dest, self.lock)
+            get.assert_not_called()
+        self.assertFalse(self.dest.exists())
+
+    def test_a_folder_out_of_the_allowed_ones_is_refused(self) -> None:
+        """DEST_DIR resolves into the working, temporary or runner's directory, or is refused."""
+        work, temp, runner, elsewhere = (self.tmp / n for n in ("work", "temp", "runner", "else"))
+        siblings = [self.tmp / n for n in ("work2", "temp-x", "runner2")]
+        for folder in (work, temp, runner, elsewhere, *siblings):
+            folder.mkdir()
+        (work / "out").symlink_to(elsewhere)
+        with (
+            contextlib.chdir(work),
+            mock.patch.object(tempfile, "gettempdir", return_value=str(temp)),
+            mock.patch.dict("os.environ", {"RUNNER_TEMP": str(runner)}),
+        ):
+            for dest in (
+                elsewhere,
+                elsewhere / "bin",
+                work / "out",
+                work / "out" / "bin",
+                Path("out/bin"),
+                Path("../else/bin"),
+                work / ".." / "else",
+                Path("/"),
+                self.tmp,
+                *siblings,
+                Path("../work2/bin"),
+            ):
+                with (
+                    self.subTest(dest=dest),
+                    mock.patch.object(fetch_tool, "_get") as get,
+                    self.assertRaisesRegex(ValueError, "refusing to install into"),
+                ):
+                    fetch_tool.install("tool", dest, self.lock)
+                get.assert_not_called()
+            for folder in (elsewhere, *siblings):
+                self.assertEqual(list(folder.iterdir()), [], folder)
+            for dest, where in (
+                (Path("bin"), work / "bin"),
+                (Path("."), work),
+                (temp / "bin", temp / "bin"),
+                (runner, runner),
+                (runner / "a" / ".." / "bin", runner / "bin"),
+            ):
+                self.dest = dest
+                with self.subTest(dest=dest):
+                    self.assertEqual(self.install(), Path(os.path.realpath(where)) / "tool")
+            with mock.patch.dict("os.environ", {"RUNNER_TEMP": ""}):
+                self.assertEqual(
+                    fetch_tool.install_roots(),
+                    [os.path.realpath(work), os.path.realpath(temp)],
+                )
+                self.dest = runner
+                with self.assertRaisesRegex(ValueError, "refusing to install into"):
+                    self.install()
+
+    def test_a_link_in_the_file_s_place_is_replaced_not_followed(self) -> None:
+        """DEST_DIR/NAME that is a link to a file elsewhere: the link goes, the file stays."""
+        victim = self.tmp / "victim"
+        victim.write_bytes(b"theirs")
+        self.dest.mkdir(parents=True)
+        (self.dest / "tool").symlink_to(victim)
+        target = self.install()
+        self.assertFalse(target.is_symlink())
+        self.assertEqual(target.read_bytes(), self.DATA)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(victim.read_bytes(), b"theirs")
+        self.assertEqual(victim.stat().st_mode & 0o111, 0)
+        self.assertEqual(sorted(p.name for p in self.dest.iterdir()), ["tool"])
+
+    def test_a_failed_rename_leaves_nothing_behind(self) -> None:
+        with (
+            mock.patch.object(os, "replace", side_effect=OSError("no")),
+            self.assertRaisesRegex(OSError, "no"),
+        ):
+            self.install()
+        self.assertEqual(list(self.dest.iterdir()), [])
 
     def main(self, *argv: str) -> tuple[int, str, str]:
         with (

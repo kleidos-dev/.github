@@ -14,23 +14,74 @@ Usage:
     md_nowrap.py FILE.md [FILE.md ...]    exit 1 and list every wrapped line
     md_nowrap.py                          every tracked *.md of the repository
 
+A file is read only where it resolves, links followed, inside the working
+directory (the repository): a path that leads out of it is refused, and
+counts as a failure.
+
 Standard library only.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-FENCE = re.compile(r"^[ \t]*(?:>[ \t]?)*[ \t]*(?P<fence>`{3,}|~{3,})")
 OPEN_TAG = re.compile(r"^\s*<[A-Za-z][^>]*$")
 LIST = re.compile(r"^\s*([-*+]|\d+[.)])\s+")
 BLOCKISH = re.compile(r"^\s*(#|\||<|---|\*\*\*|___|\[[^\]]+\]:\s)")
-QUOTE = re.compile(r"^\s*(>\s?)+(.*)$")
 ALERT = re.compile(r"^\[![A-Za-z]+\]\s*$")
+
+
+def fence_of(line: str) -> str:
+    """The fence a line opens or closes (its run of backticks or tildes), or "".
+
+    Blanks and tabs may come first, then quote markers, a blank or tab
+    between two of them at most and any after the last, then three or more
+    backticks or tildes. A scan, not a pattern: it reads each character once.
+    """
+    end = len(line)
+    at = _skip(line, 0, " \t")
+    if line.startswith(">", at):
+        at += 1
+        while True:
+            after_blank = at + 1 if line.startswith((" ", "\t"), at) else at
+            if not line.startswith(">", after_blank):
+                break
+            at = after_blank + 1
+        at = _skip(line, at, " \t")
+    if at < end and line[at] in "`~":
+        run = _skip(line, at, line[at]) - at
+        if run >= 3:
+            return line[at] * run
+    return ""
+
+
+def quoted(line: str) -> str | None:
+    """What a block-quote line holds after its markers, or None for a line that is no quote.
+
+    Whitespace may come first, then one or more markers, each with the one
+    whitespace character that follows it. A scan, not a pattern: it reads each
+    character once.
+    """
+    at = len(line) - len(line.lstrip())
+    if not line.startswith(">", at):
+        return None
+    while line.startswith(">", at):
+        at += 1
+        if line[at : at + 1].isspace():
+            at += 1
+    return line[at:]
+
+
+def _skip(line: str, at: int, chars: str) -> int:
+    """The first position from `at` on whose character is not one of `chars`."""
+    while at < len(line) and line[at] in chars:
+        at += 1
+    return at
 
 
 def markdown_lines(text: str) -> Iterator[tuple[int, str, str]]:
@@ -51,16 +102,16 @@ def markdown_lines(text: str) -> Iterator[tuple[int, str, str]]:
     in_indented = False
     for k in range(start, len(lines)):
         ln = lines[k]
-        m_fence = FENCE.match(ln)
+        fence_run = fence_of(ln)
         if fence:
             # Only a fence of the same character, at least as long, closes it.
-            closer = m_fence.group("fence") if m_fence else ""
+            closer = fence_run
             if closer[:1] == fence[:1] and len(closer) >= len(fence):
                 fence = ""
             yield k + 1, ln, "code"
             continue
-        if m_fence:
-            fence = m_fence.group("fence")
+        if fence_run:
+            fence = fence_run
             yield k + 1, ln, "code"
             prev_blank = False
             continue
@@ -103,15 +154,14 @@ def wrapped_lines(text: str) -> list[int]:
         if kind != "text" or not ln.strip():
             prev = None
             continue
-        m_q = QUOTE.match(ln)
-        if m_q:
-            rest = m_q.group(2)
+        rest = quoted(ln)
+        if rest is not None:
             if not rest.strip() or BLOCKISH.match(rest) or ALERT.match(rest):
                 prev = None
                 continue
             if (
                 prev is not None
-                and QUOTE.match(prev)
+                and quoted(prev) is not None
                 and not LIST.match(rest)
                 and not _hard_break(prev)
             ):
@@ -124,7 +174,7 @@ def wrapped_lines(text: str) -> list[int]:
         if LIST.match(ln):
             prev = ln
             continue
-        if prev is not None and not QUOTE.match(prev) and not _hard_break(prev):
+        if prev is not None and quoted(prev) is None and not _hard_break(prev):
             found.append(num)
         prev = ln
     return found
@@ -140,14 +190,32 @@ def tracked_markdown() -> list[Path]:
     return [Path(p) for p in sorted(set(out.split("\0"))) if p]
 
 
+def in_repository(path: Path) -> str | None:
+    """The path with its links resolved, or None when it leads out of the working directory."""
+    root = os.path.realpath(os.getcwd())
+    real = os.path.realpath(path)
+    if real.startswith(root.rstrip(os.sep) + os.sep):
+        return real
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     paths = [Path(a) for a in args] if args else tracked_markdown()
     failed = 0
     for path in paths:
-        if path.suffix.lower() != ".md" or not path.is_file():
+        if path.suffix.lower() != ".md":
             continue
-        for num in wrapped_lines(path.read_text(encoding="utf-8")):
+        real = in_repository(path)
+        if real is None:
+            print(f"{path}: refused: it leads out of the repository")
+            failed += 1
+            continue
+        if not os.path.isfile(real):
+            continue
+        with open(real, encoding="utf-8") as fh:
+            text = fh.read()
+        for num in wrapped_lines(text):
             print(f"{path}:{num}: hard-wrapped prose (join it to the line above)")
             failed += 1
     return 1 if failed else 0
