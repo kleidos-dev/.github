@@ -8,8 +8,10 @@ on the PATH, and the machines have from 3.9 (the one macOS ships) up, while
 the kit's checks are written for a newer one. This starter keeps to what
 3.9 reads, so it can always speak: it runs the hook on this Python when
 that is new enough and has what the hook imports, else on the newest
-python3.x of the PATH that is, else it says in one line what to install
-and fails (the CI runs the same checks, so nobody needs the hooks).
+python3.x of the PATH that is, else on the kit's own environment, which
+the line it says otherwise makes (an externally managed Python, as
+Homebrew's and Debian's are, refuses pip outside one), and fails (the CI
+runs the same checks, so nobody needs the hooks).
 
 Usage: launch.py policy|mypy|commit-msg [ARGUMENT ...]
 
@@ -18,6 +20,7 @@ Exit status: the hook's own, or 2 when no Python can run it.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -79,10 +82,18 @@ def probe(path: str, module: str) -> Python | None:
     return Python(path, (int(parts[0]), int(parts[1])), parts[2] == "1")
 
 
+def environment() -> Path:
+    """The kit's own environment, outside every repository."""
+    data = os.environ.get("XDG_DATA_HOME", "")
+    base = Path(data) if os.path.isabs(data) else Path.home() / ".local" / "share"
+    return base / "kleidos-kit"
+
+
 def candidates(floor: tuple[int, int]) -> list[str]:
-    """This interpreter, then the PATH's python3 and python3.x from the newest down."""
+    """This interpreter, the PATH's from the newest down, then the kit's own environment's."""
     names = ["python3"] + [f"python3.{m}" for m in range(NEWEST_MINOR, floor[1] - 1, -1)]
     found = [sys.executable] + [shutil.which(name) or "" for name in names]
+    found.append(str(environment() / "bin" / "python"))
     return [path for path in dict.fromkeys(found) if path]
 
 
@@ -100,9 +111,11 @@ def choose(hook: Hook, paths: list[str]) -> tuple[Python | None, str]:
             return python, ""
     if new_enough:
         python = new_enough[0]
+        own = environment()
         return None, (
-            f"{python.path} has no {hook.module} module:"
-            f" {python.path} -m pip install '{hook.requirement}'"
+            f"{python.path} has no {hook.module} module; this makes an environment that has:"
+            f" {python.path} -m venv --clear '{own}'"
+            f" && '{own}/bin/python' -m pip install '{hook.requirement}'"
         )
     have = ", ".join(sorted({dotted(python.version) for python in seen})) or "none"
     return None, (

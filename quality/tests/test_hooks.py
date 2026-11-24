@@ -130,7 +130,43 @@ class ChooseTest(unittest.TestCase):
         also = launch.Python("/also", (3, 15), False)
         python, why = self.choose(launch.Python("/old", (3, 13), True), bare, also)
         self.assertIsNone(python)
-        self.assertEqual(why, "/bare has no yaml module: /bare -m pip install 'pyyaml==1'")
+        own = launch.environment()
+        self.assertEqual(
+            why,
+            "/bare has no yaml module; this makes an environment that has:"
+            f" /bare -m venv --clear '{own}' && '{own}/bin/python' -m pip install 'pyyaml==1'",
+        )
+
+    def test_the_kits_own_environment_is_outside_every_repository(self) -> None:
+        home = {"HOME": "/h"}
+        for env, where in (
+            ({}, "/h/.local/share/kleidos-kit"),
+            ({"XDG_DATA_HOME": ""}, "/h/.local/share/kleidos-kit"),
+            ({"XDG_DATA_HOME": "."}, "/h/.local/share/kleidos-kit"),
+            ({"XDG_DATA_HOME": "/d"}, "/d/kleidos-kit"),
+        ):
+            with mock.patch.dict(os.environ, {**home, **env}, clear=True):
+                self.assertEqual(launch.environment(), Path(where))
+
+    def test_the_line_it_prints_works(self) -> None:
+        """The advice itself, run in a shell: the environment it makes is the next one chosen."""
+        with tempfile.TemporaryDirectory() as tmp:
+            local = {**os.environ, "XDG_DATA_HOME": str(Path(tmp) / "with space")}
+            with mock.patch.dict(os.environ, local, clear=True):
+                base = launch.Python(sys.executable, sys.version_info[:2], False)
+                known = {base.path: base}
+                hook = launch.Hook("x.py", (3, 14), "yaml", "pyyaml==1")
+                with mock.patch.object(launch, "probe", side_effect=lambda p, _m: known.get(p)):
+                    _python, why = launch.choose(hook, [base.path])
+                line = why.split("has: ", 1)[1].replace("-m pip install 'pyyaml==1'", "-m pip -V")
+                done = subprocess.run(
+                    ["/bin/sh", "-c", line], capture_output=True, text=True, check=False
+                )
+                self.assertEqual(done.returncode, 0, done.stderr)
+                own = launch.candidates((3, 14))[-1]
+                self.assertEqual(
+                    launch.probe(own, "json"), launch.Python(own, sys.version_info[:2], True)
+                )
 
     def test_an_old_python_is_refused_by_name(self) -> None:
         python, why = self.choose(
@@ -142,12 +178,13 @@ class ChooseTest(unittest.TestCase):
 
     def test_the_candidates_are_this_python_and_the_paths(self) -> None:
         there = {"python3": "/p/python3", "python3.15": "/p/python3.15", "python3.13": "/p/13"}
+        own = str(launch.environment() / "bin" / "python")
         with mock.patch.object(shutil, "which", side_effect=there.get):
             self.assertEqual(
-                launch.candidates((3, 14)), [sys.executable, "/p/python3", "/p/python3.15"]
+                launch.candidates((3, 14)), [sys.executable, "/p/python3", "/p/python3.15", own]
             )
         with mock.patch.object(shutil, "which", return_value=sys.executable):
-            self.assertEqual(launch.candidates((3, 14)), [sys.executable])
+            self.assertEqual(launch.candidates((3, 14)), [sys.executable, own])
         with mock.patch.object(shutil, "which", return_value=None) as which:
             launch.candidates((3, 14))
         asked = [c.args[0] for c in which.call_args_list]
@@ -237,7 +274,20 @@ class PreCommitTest(unittest.TestCase):
                 "      - id: kleidos-kit\n      - id: kleidos-commit-msg\n",
             )
             fx.commit(root)
-            env = {**os.environ, **fx.GIT_ENV, "PRE_COMMIT_HOME": str(Path(tmp) / "cache")}
+            # The Python of this test comes first, whatever else the machine has.
+            first = Path(tmp) / "bin"
+            first.mkdir()
+            (first / "python3").write_text(
+                f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8"
+            )
+            (first / "python3").chmod(0o755)
+            env = {
+                **os.environ,
+                **fx.GIT_ENV,
+                "PATH": f"{first}:{os.environ['PATH']}",
+                "PRE_COMMIT_HOME": str(Path(tmp) / "cache"),
+                "XDG_DATA_HOME": str(Path(tmp) / "data"),
+            }
             for name in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
                 env.pop(name, None)
             run = ["pre-commit", "run", "--all-files", "--verbose"]
