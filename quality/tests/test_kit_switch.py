@@ -299,6 +299,27 @@ class ConvertTest(unittest.TestCase):
         jobs = self.convert(self.old("eslint", "eslint"), ["base", "actions", "ts"])
         self.assertEqual(jobs["check"]["with"], {"types": False, "node-directory": "."})
 
+    def test_each_old_workflow_has_its_new_job(self) -> None:
+        quick = ("lint", "reuse", "secrets")
+        check = ("mypy", "python-tests", "eslint", "osv")
+        wanted = {f"reusable-{n}.yml": "quick" for n in quick}
+        wanted |= {f"reusable-{n}.yml": "check" for n in check}
+        self.assertEqual(ks.NEW_JOB, {**wanted, "reusable-sonarcloud.yml": "sonar"})
+
+    def test_what_starts_a_job(self) -> None:
+        for line, job in (
+            ("  lint:", "lint"),
+            ("  a-b_1:  ", "a-b_1"),
+            ("  lint: # why", "lint"),
+            ("  lint: #", "lint"),
+            ("  lint: x", None),
+            ("    lint:", None),
+            (" lint:", None),
+            ("x  lint:", None),
+        ):
+            found = ks.JOB_LINE.match(line)
+            self.assertEqual(found["id"] if found else None, job, line)
+
     def test_own_jobs_stay_and_need_the_new_ones(self) -> None:
         jobs = self.convert(
             self.old("lint", "lint")
