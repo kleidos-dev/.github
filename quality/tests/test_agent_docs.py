@@ -329,6 +329,13 @@ class AgentDocsTest(unittest.TestCase):
         fx.write(self.root, "quality/agents/block.md", BLOCK + "- A new rule.\n")
         self.assert_finding("block", "differs from the kit's")
 
+    def test_what_is_no_work_tree_is_said(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for path in (Path(tmp), Path(tmp) / "none"):
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    self.assertEqual(ad.main(["--repo", str(path)]), 2)
+                self.assertEqual(err.getvalue(), f"agent-docs: {path} is not a git work tree\n")
+
     def test_the_kit_home_passes(self) -> None:
         self.assertEqual(ad.check(ad.Repo(fx.CENTRAL)), [])
 
