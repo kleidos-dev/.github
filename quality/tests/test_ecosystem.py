@@ -602,6 +602,77 @@ class PullTest(ReportCase):
         self.assertEqual(self.pulls(user={"type": "User"}), [])
 
 
+class PatternTest(unittest.TestCase):
+    """What the report reads in other repositories' text, character by character."""
+
+    def test_a_call_of_the_kit(self) -> None:
+        call = "uses: kleidos-dev/.github/.github/workflows/quick.yml@v3"
+        for line, ref in (
+            (call, "v3"),
+            (f"    {call} # why", "v3"),
+            (f"      - {call}", "v3"),
+            (call.replace("kleidos", "'kleidos") + "'", "v3"),
+            (call.replace("kleidos", '"kleidos') + '"', "v3"),
+            (call.replace("v3", "a" * 40), "a" * 40),
+            (call.replace("@v3", "@"), None),
+            (call.replace("@v3", ""), None),
+            (f"# {call}", None),
+            (f"x{call}", None),
+            (call.replace("/.github/.github", "/xgithub/.github"), None),
+            (call.replace("/.github/.github", "/.github/xgithub"), None),
+            (call.replace("kleidos-dev", "other"), None),
+            (call.replace("quick.yml", "x/quick.yml"), None),
+        ):
+            found = eco.KIT_CALL.search(f"jobs:\n{line}\n")
+            self.assertEqual(found["ref"] if found else None, ref, line)
+
+    def test_the_rev_of_the_hooks(self) -> None:
+        url = "https://github.com/kleidos-dev/.github"
+        for text, rev in (
+            (f"  - repo: {url}\n    rev: v3.0.0\n", "v3.0.0"),
+            (f"  - repo: '{url}.git'\n    # why\n    # more\n    rev: 'v3.0.0' # x\n", "v3.0.0"),
+            (f'  - repo: "{url}"\n    rev: "v3"\n', "v3"),
+            (f"  - repo: {url}\n    hooks: []\n    rev: v3\n", None),
+            (f"  - repo: {url.replace('/.github', '/xgithub')}\n    rev: v3\n", None),
+            (f"  - repo: {url}xgit\n    rev: v3\n", None),
+            (f"  - repo: {url.replace('github.com', 'githubxcom')}\n    rev: v3\n", None),
+            (f"  - repo: {url}/x\n    rev: v3\n", None),
+        ):
+            found = eco.KIT_REV.search(text)
+            self.assertEqual(found["rev"] if found else None, rev, text)
+
+    def test_a_release_tag(self) -> None:
+        for tag, parts in (
+            ("v3.0.0", ("3", "0", "0")),
+            ("v10.21.32", ("10", "21", "32")),
+            ("v3.0", None),
+            ("v3x0.0", None),
+            ("v3.0x0", None),
+            ("v3.0.0-rc", None),
+            ("xv3.0.0", None),
+            ("quality-v2.0.0", None),
+        ):
+            found = eco.RELEASE_TAG.match(tag)
+            self.assertEqual(found.groups() if found else None, parts, tag)
+
+    def test_no_link_is_empty(self) -> None:
+        for text in ("[a](https://)", "<https://>", '<a href="https://">', 'src="https:// x"'):
+            self.assertEqual(eco.links_in(text), [], text)
+
+    def test_the_titles_say_what_each_state_is(self) -> None:
+        self.assertEqual(
+            eco.TITLES,
+            {
+                "red": "Red: broken, or not what is declared",
+                "late": "Late: behind for longer than its limit (fails nothing)",
+                "amber": "Amber: behind",
+                "frozen": "Frozen inputs that differ from their source (no limit)",
+                "note": "Notes",
+                "green": "Green",
+            },
+        )
+
+
 class LinkTest(ReportCase):
     def test_the_links_of_a_readme(self) -> None:
         text = (
