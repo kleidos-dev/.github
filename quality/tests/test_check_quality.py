@@ -261,7 +261,7 @@ class ConformanceTest(unittest.TestCase):
             ("sonar.scanner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
             ("  sonar.scanner.javaExePath ./evil.sh", "sonar.scanner.javaExePath"),
             ("sonar.scanner.javaExePath: ./evil.sh", "sonar.scanner.javaExePath"),
-            ("sonar.sca\\\n  nner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
+            ("sonar.scan\\\n  ner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
             ("\\u0073onar.scanner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
             ("sonar\\.scanner.apiBaseUrl=https://evil.example", "sonar.scanner.apiBaseUrl"),
             ("sonar.host.url=https://evil.example", "sonar.host.url"),

@@ -436,7 +436,7 @@ class CommitTest(ScriptCase):
         self.head("Plant a checker")
         self.assertEqual(self.check().output, "status=1\n")
 
-    def test_the_base_branchs_checker_judges_in_the_kits_home(self) -> None:
+    def test_the_checker_of_the_base_judges_in_the_kits_home(self) -> None:
         home = "kleidos-dev/.github"
         checker = (fx.CENTRAL / "hooks/check_commit_msg.py").read_text(encoding="utf-8")
         for rel in (".github/commit-check/check_commit_msg.py", "hooks/check_commit_msg.py"):

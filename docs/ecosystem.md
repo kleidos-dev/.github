@@ -47,11 +47,13 @@ The public half cannot leak what it cannot read, and does not name it either: it
 - **The kit.** Which name each repository calls it by, the `rev` of its hooks against the newest release, whether the names are sound, and the kit's own pins against upstream.
 - **Pull requests.** The open ones of bots.
 - **Links.** Every link and banner of the public READMEs.
-- **Settings** (local): rulesets and who may bypass them, required checks and the App each comes from, whom the CLA serves, deploy keys, Apps, immutable releases, Dependabot's entries, the SonarQube Cloud projects, the deployed Workers' `/version`.
+- **Settings** (local): rulesets and who may bypass them, required checks, the App each comes from and whether they can be bypassed, whom the CLA serves, deploy keys, Apps, immutable releases, Dependabot's entries, the SonarQube Cloud projects, the deployed Workers' `/version`.
 
 ## The declared list
 
-A change of a setting is a change of [`ecosystem.toml`](../tools/ecosystem.toml) first. It holds what cannot be found by reading: the repositories and which are public, the limits in days, the required checks with their App, the rules of a protected branch, the Apps that may write, whom the CLA should serve, the SonarQube Cloud projects, the Workers, and `hold`, the repositories `land` leaves alone. A repository with `folds_into` is moving into another and will be deleted, so nothing is expected of its settings.
+A change of a setting is a change of [`ecosystem.toml`](../tools/ecosystem.toml) first. It holds what cannot be found by reading: the repositories and which are public, the limits in days, the required checks with their App, the rules of a protected branch, whom the CLA should serve, the SonarQube Cloud projects, the Workers, and `hold`, the repositories `land` leaves alone. A repository with `folds_into` is moving into another and will be deleted, so nothing is expected of its settings.
+
+Which Apps may write, and what, is declared too but not published: `~/.config/kleidos/ecosystem.local.toml` on the machine of the local report, a table `[apps]` with the list of write permissions of each App (`--local` names another file). Without it the report says so in a note and compares no App.
 
 ## The local report
 
@@ -84,16 +86,17 @@ python ../.github/tools/ecosystem.py refresh vendor/boards/SOURCE.json
 python ../.github/tools/ecosystem.py refresh .github/quality/SOURCE.json   # the base configurations, from that checkout
 ```
 
-It copies the bytes, rewrites the digests, the date and the commit it notes, and refuses a frozen copy and a generator's output, which are made again instead. The consumer pulls; no script writes into another repository's checkout.
+It copies the bytes, rewrites the digests, the date and the commit it notes, and refuses a frozen copy and a generator's output, which are made again instead, and a path under `.git/` or through a symbolic link. The consumer pulls; no script writes into another repository's checkout.
 
 ## Landing the bot's pull requests
 
 `python tools/ecosystem.py land` says which of Dependabot's pull requests it would merge, and `--merge` merges them, one at a time. It merges third-party code under the caller's credential with nobody reading the diff, so it holds no standing credential, runs only by hand, and every guard must hold:
 
-- opened by Dependabot from a branch of the same repository; every commit authored by Dependabot and signed by GitHub, but for the merges of `main` this command's own update made;
-- only manifests, lock files, `uses:` lines of workflows and `rev:` lines of the hook list changed;
-- no major version, as Dependabot's own commit states each update;
+- opened by Dependabot from a branch of the same repository; every push to that branch Dependabot's or the caller's, on GitHub's own record of them; every commit authored by Dependabot and signed by GitHub, but for the merges of `main` this command's own update made;
+- nothing under `.github/`, whoever changed it: a pull request brings its own workflows, so `✅ Check` proves nothing there ([`quality.md`, "Merging"](quality.md#merging));
+- only `requirements*.txt` and `.in`, `pyproject.toml`, `package.json` and `package-lock.json` changed, read line by line: each new line is its old one but for the version, a range, the checksum, or the version in an address of `registry.npmjs.org`. A package that was not there, another license, host, option or script is left to a person, and so is the hook list (Dependabot's commits for it do not say what each update is, and it read a sub-crate's tag as a typos release once);
+- no major version, as each of Dependabot's commits states each update;
 - never in this repository (a bump here is a kit release, by hand), nor in one on hold;
-- its branch updated to today's `main`, a run on that, and everything that ran on it green.
+- its branch updated to today's `main`, a run on that, everything that ran on it green, and the gate, `✅ Check` of GitHub Actions, among it (a repository that has not switched has none, so nothing lands there).
 
 [`tools/landing.py`](../tools/landing.py) is the code of it.
