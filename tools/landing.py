@@ -90,7 +90,14 @@ MANIFESTS = (
     (re.compile(r"^package-lock\.json$"), NODE, NONE),
 )
 NAME_LINE = re.compile(r"^- dependency-name: ", re.MULTILINE)
-NAMED = re.compile(r"^- dependency-name: (?P<name>\S+)\s*$", re.MULTILINE)
+# Dependabot quotes a name YAML would read otherwise (`"@types/node"`): the
+# name is what is inside the quotes, and a quote left open, or closed by the
+# other kind, names nothing. One group, so findall gives the names.
+NAMED = re.compile(
+    r"""^- dependency-name: (?:"(?=[^"'\s]+"\s*$)|'(?=[^"'\s]+'\s*$)|(?=[^"'\s]+\s*$))"""
+    r"""(?P<name>[^"'\s]+)["']?\s*$""",
+    re.MULTILINE,
+)
 # A line of package.json that names a version: its key is a package an
 # update names, or it is no package's (an engine, the project's own version).
 KEYED = re.compile(r'^\s*"(?P<key>[^"]+)":\s*"')

@@ -431,6 +431,36 @@ class RefusalTest(unittest.TestCase):
             landing.refusal(pull(), [commit()], [changed("package.json", patch)], [push()], OWNER)
         )
 
+    def test_a_scoped_package_dependabot_quotes_is_named(self) -> None:
+        """Dependabot quotes a scoped name in its commit (kleidos-dev/cla#1): the name is inside."""
+        message = (
+            "Bump @types/node from 22.19.1 to 22.19.2 in /worker\n\n"
+            "Bumps [@types/node](https://github.com/DefinitelyTyped/DefinitelyTyped) "
+            "from 22.19.1 to 22.19.2.\n\n---\nupdated-dependencies:\n"
+            '- dependency-name: "@types/node"\n  dependency-version: 22.19.2\n'
+            "  dependency-type: direct:development\n"
+            "  update-type: version-update:semver-patch\n...\n\n"
+            "Signed-off-by: dependabot[bot] <support@github.com>\n"
+        )
+        patch = '@@\n-    "@types/node": "^22.19.1",\n+    "@types/node": "^22.19.2",'
+        files = [changed("worker/package.json", patch)]
+        self.assertIsNone(landing.refusal(pull(), [commit(message)], files, [push()], OWNER))
+        for name, named in (
+            ('"@types/node"', True),
+            ("'@types/node'", True),
+            ("@types/node", True),
+            ('"@types/node', False),
+            ("\"@types/node'", False),
+            ('"@types/other"', False),
+        ):
+            with self.subTest(name=name):
+                text = message.replace('"@types/node"', name, 1)
+                why = landing.refusal(pull(), [commit(text)], files, [push()], OWNER)
+                if named:
+                    self.assertIsNone(why)
+                else:
+                    self.assertIn("changes @types/node, which no update of it names", str(why))
+
     def test_lines_apart_are_compared_apart(self) -> None:
         for patch, accepted in (
             ("@@\n-x==1\n+x==2\n y==1\n-z==1\n+z==2", True),

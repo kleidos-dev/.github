@@ -66,6 +66,7 @@ import tempfile
 import tokenize
 import tomllib
 import unicodedata
+import warnings
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -1600,12 +1601,23 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
         except tomllib.TOMLDecodeError as exc:
             report.add("gitleaks", rel, f"not valid TOML: {exc}")
             cfg = {}
-        extend = cfg.get("extend") or {}
-        if extend.get("useDefault") is not True:
+        # gitleaks reads every key without regard to case: so does the kit.
+        twice: list[str] = []
+        cfg = fold_keys(cfg, "", twice)
+        for key in twice:
+            report.add(
+                "gitleaks",
+                rel,
+                f"{key} is spelled more than once in different case: gitleaks reads them as one,"
+                " refused (no waiver)",
+            )
+        extend = cfg.get("extend")
+        extend = extend if isinstance(extend, dict) else {}
+        if extend.get("usedefault") is not True:
             report.add(
                 "gitleaks", rel, "[extend] useDefault = true is required: every default rule"
             )
-        if extend.get("disabledRules"):
+        if extend.get("disabledrules"):
             report.add(
                 "gitleaks", rel, "disabledRules turns default rules off: refused (no waiver)"
             )
@@ -1616,10 +1628,10 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
                 "a global [allowlist] reaches every rule: use [[allowlists]] with targetRules",
             )
         gitleaks_allowlists_off(cfg, rel, report)
-        for i, allow in enumerate(cfg.get("allowlists") or []):
+        for i, allow in enumerate(tables(cfg.get("allowlists"))):
             if not str(allow.get("description", "")).strip():
                 report.add("gitleaks", f"{rel} allowlists[{i}]", "needs a description saying why")
-            if not allow.get("targetRules"):
+            if not allow.get("targetrules"):
                 report.add(
                     "gitleaks",
                     f"{rel} allowlists[{i}]",
@@ -1659,15 +1671,35 @@ PROBE_PATHS = (
 PROBE_WORDS = ("word", "Name", "snake_case", "x1y", "CamelCase")
 
 
-def glob_regex(pattern: str, gitignore: bool) -> re.Pattern[str]:
+def glob_class(body: str, start: int) -> tuple[str, int] | None:
+    """The `[...]` or `[!...]` class at body[start] as a regex class, and where it ends.
+
+    None where no `]` closes it: the glob tool refuses such a pattern. A
+    negated class may match a slash too, so it is read as covering more.
+    """
+    i = start + 1
+    negated = i < len(body) and body[i] in "!^"
+    i += negated
+    first = i
+    while i < len(body) and (body[i] != "]" or i == first):
+        i += 1
+    if i >= len(body):
+        return None
+    inner = "".join(c if c == "-" else re.escape(c) for c in body[first:i])
+    return ("[^" if negated else "[") + inner + "]", i + 1
+
+
+def glob_regex(pattern: str, gitignore: bool) -> re.Pattern[str] | None:
     """A glob as a regex over a path: `**` any folders, `*` and `?` within one name.
 
     gitignore (typos): a pattern with no slash but at its end names a file or
-    a folder at any depth, and a folder takes what is in it. Otherwise (Ant,
-    as SonarQube reads it) the pattern is the whole path.
+    a folder at any depth, and a folder takes what is in it; `[...]`, `[!...]`
+    and `{a,b}` are read as globset reads them, and `\\` escapes. Otherwise
+    (Ant, as SonarQube reads it) the pattern is the whole path. None where
+    the kit cannot read the glob.
     """
     body = pattern.strip().lstrip("/") if gitignore else pattern.strip()
-    out, i = "", 0
+    out, i, depth = "", 0, 0
     while i < len(body):
         if body.startswith("**/", i):
             out, i = out + "(?:.*/)?", i + 3
@@ -1675,32 +1707,91 @@ def glob_regex(pattern: str, gitignore: bool) -> re.Pattern[str]:
             out, i = out + ".*", i + 2
         elif body[i] in "*?":
             out, i = out + ("[^/]*" if body[i] == "*" else "[^/]"), i + 1
+        elif gitignore and body[i] == "\\" and i + 1 < len(body):
+            out, i = out + re.escape(body[i + 1]), i + 2
+        elif gitignore and body[i] == "[" and (cls := glob_class(body, i)):
+            out, i = out + cls[0], cls[1]
+        elif gitignore and body[i] in "{},":
+            more = {"{": ("(?:", 1), "}": (")", -1), ",": ("|" if depth else ",", 0)}[body[i]]
+            out, depth, i = out + more[0], depth + more[1], i + 1
         else:
             out, i = out + re.escape(body[i]), i + 1
     if not gitignore:
         return re.compile(out)
     lead = "" if "/" in body.rstrip("/") else "(?:.*/)?"
-    return re.compile(f"{lead}{out.removesuffix('/')}(?:/.*)?" if out else ".*")
+    try:
+        return re.compile(f"{lead}{out.removesuffix('/')}(?:/.*)?" if out else ".*")
+    except re.error:
+        return None
 
 
 def glob_covers_all(pattern: str, gitignore: bool = True) -> bool:
-    """Whether a glob matches every probe path: an exclusion of everything."""
+    """Whether a glob matches every probe path: an exclusion of everything.
+
+    A glob the kit cannot read counts as one of everything: the check fails closed.
+    """
     rx = glob_regex(pattern, gitignore)
-    return all(rx.fullmatch(path) for path in PROBE_PATHS)
+    return rx is None or all(rx.fullmatch(path) for path in PROBE_PATHS)
+
+
+# What Python's re reads otherwise than typos (Rust's regex) and gitleaks (Go's
+# RE2) do, or the tool reads and Python does not: a Unicode class (`\pL`,
+# `\p{L}`), a POSIX class (`[[:alpha:]]`), the flags `U` (lazy by default)
+# and `-u` (bytes). The kit judges a pattern only in the syntax all three
+# share; one outside it counts as covering everything.
+FOREIGN_REGEX = re.compile(r"(?<!\\)(?:\\\\)*\\[pP]|\[:\^?[A-Za-z]+:\]")
+# An inline flag group: `(?flags)`, `(?flags:`, `(?flags-flags:`.
+FLAG_GROUP = re.compile(r"\(\?(?P<on>[A-Za-z]*)(?:-(?P<off>[A-Za-z]*))?(?P<end>[:)])")
+
+
+def python_syntax(pattern: str) -> str | None:
+    """A typos or gitleaks pattern in Python's syntax, or None where Python reads it otherwise.
+
+    Rust's `R` flag (CRLF lines) changes only where a line ends, and is dropped.
+    """
+    if FOREIGN_REGEX.search(pattern):
+        return None
+    foreign = False
+
+    def flags(group: re.Match[str]) -> str:
+        nonlocal foreign
+        on, off = group["on"].replace("R", ""), (group["off"] or "").replace("R", "")
+        foreign = foreign or "U" in on + off or "u" in off
+        if not on and not off:
+            return "(?:" if group["end"] == ":" else ""
+        return f"(?{on}{'-' + off if off else ''}{group['end']}"
+
+    python = FLAG_GROUP.sub(flags, pattern)
+    return None if foreign else python
+
+
+def tool_regex(pattern: str) -> re.Pattern[str] | None:
+    """A typos or gitleaks pattern as Python reads it, or None where it may read it otherwise.
+
+    None too where Python refuses it or warns about it (a nested class, a set
+    operation): Rust and Go may read it, and read it otherwise.
+    """
+    python = python_syntax(pattern)
+    if python is None:
+        return None
+    re.purge()  # a cached pattern would not warn again
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        try:
+            return re.compile(python)
+        except re.error, Warning:
+            return None
 
 
 def regex_covers_all(pattern: str, probes: tuple[str, ...]) -> bool:
     """Whether a regular expression finds something in every probe.
 
     gitleaks allows a path or a secret a pattern finds anywhere in it, and
-    typos an identifier or a word. A pattern that is no regular expression
-    is the tool's to refuse.
+    typos an identifier or a word. A pattern the kit cannot read as the tool
+    does counts as one that finds everything: the check fails closed.
     """
-    try:
-        rx = re.compile(pattern)
-    except re.error:
-        return False
-    return all(rx.search(probe) for probe in probes)
+    rx = tool_regex(pattern)
+    return rx is None or all(rx.search(probe) for probe in probes)
 
 
 # Two letters together: what a word needs to be checked at all.
@@ -1712,12 +1803,12 @@ def ignores_every_word(pattern: str) -> bool:
 
     Only what the pattern spans is skipped, so `[a-z]` leaves nothing of any
     word but capitals, while `e` leaves most of them (typos 1.52.2: 7 typos,
-    1 with `[a-z]`, 0 with `.`, 4 with `e`).
+    1 with `[a-z]`, 0 with `.`, 4 with `e`). A pattern the kit cannot read
+    as typos does leaves nothing: the check fails closed.
     """
-    try:
-        rx = re.compile(pattern)
-    except re.error:
-        return False
+    rx = tool_regex(pattern)
+    if rx is None:
+        return True
     left = (rx.sub(lambda m: " " if m.group() else "", probe) for probe in PROBE_WORDS)
     return not any(LETTERS.search(text) for text in left)
 
@@ -1732,11 +1823,18 @@ TYPOS_TABLES = (("tool",), ("package", "metadata"), ("workspace", "metadata"))
 
 
 def has_typos_table(text: str) -> bool:
-    """Whether a pyproject.toml or Cargo.toml holds a typos configuration typos reads."""
+    """Whether a pyproject.toml or Cargo.toml holds a typos configuration typos reads.
+
+    typos reads a file that starts with a byte order mark, and TOML 1.1
+    (an inline table over several lines, `\\e`), which tomllib before
+    Python 3.15 refuses. A file tomllib cannot read holds one wherever its
+    text names typos: the check fails closed.
+    """
+    text = text.removeprefix("﻿")
     try:
         cfg = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
-        return False  # typos skips it too, and checks the folder as before (1.52.2)
+        return "typos" in text
     for path in TYPOS_TABLES:
         table: Any = cfg
         for key in path:
@@ -1850,8 +1948,52 @@ def check_markdownlint_configs(repo: Repo, report: Report) -> None:
 
 
 def tables(value: Any) -> list[dict[str, Any]]:
-    """The tables of a TOML array of tables, whatever else a hand wrote there."""
+    """The tables of a TOML array of tables, whatever else a hand wrote there.
+
+    gitleaks 8.30.1 reads one table alone (`[allowlists]`) as an array of one.
+    """
+    if isinstance(value, dict):
+        return [value]
     return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def fold_keys(value: Any, where: str, twice: list[str]) -> Any:
+    """A parsed configuration with every key in lower case, as gitleaks 8.30.1 reads it.
+
+    gitleaks reads `[[Rules]]`, `ID`, `Paths` or `DisabledRules` as the
+    lower-case key. Two spellings of one key are both kept, arrays end to end
+    and tables merged, and each such key is named in `twice`.
+    """
+    if isinstance(value, list):
+        return [fold_keys(v, where, twice) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out: dict[str, Any] = {}
+    for key, item in value.items():
+        low = str(key).lower()
+        path = f"{where}.{low}" if where else low
+        folded = fold_keys(item, path, twice)
+        if low in out:
+            twice.append(path)
+            folded = merge_folded(out[low], folded)
+        out[low] = folded
+    return out
+
+
+def merge_folded(first: Any, second: Any) -> Any:
+    """Two values of one key spelled twice, so that the rules read both.
+
+    Arrays end to end, tables merged, a table and an array as one array; of
+    two other values the second (the key is refused either way).
+    """
+    if isinstance(first, list) and isinstance(second, list):
+        return first + second
+    if isinstance(first, dict) and isinstance(second, dict):
+        merged = dict(first)
+        for key, item in second.items():
+            merged[key] = merge_folded(merged[key], item) if key in merged else item
+        return merged
+    return [*tables(first), *tables(second)] or second
 
 
 # A repository's own gitleaks rule takes an id no default rule has. One of a
@@ -1882,22 +2024,36 @@ def gitleaks_allowlists_off(cfg: dict[str, Any], rel: str, report: Report) -> No
             allowlist_off(rule["allowlist"], f"{where} allowlist", report)
 
 
+def strings(value: Any) -> list[str]:
+    """A list of strings as gitleaks reads it: one string alone is a list of one."""
+    if isinstance(value, str):
+        return [value]
+    return [str(v) for v in value] if isinstance(value, list) else []
+
+
 def allowlist_off(allow: dict[str, Any], where: str, report: Report) -> None:
-    """One allowlist whose paths cover every file, or whose regexes cover every secret."""
-    paths = [str(p) for p in allow.get("paths") or []]
-    secrets = [str(r) for r in allow.get("regexes") or []]
-    if any(regex_covers_all(p, PROBE_PATHS) for p in paths):
-        report.add(
-            "gitleaks",
-            where,
-            "its paths cover every file: it turns its rules off, refused (no waiver)",
-        )
-    if any(regex_covers_all(r, GITLEAKS_PROBES) for r in secrets):
-        report.add(
-            "gitleaks",
-            where,
-            "its regexes cover every secret: it turns its rules off, refused (no waiver)",
-        )
+    """One allowlist whose paths cover every file, or whose regexes cover every secret.
+
+    A pattern the kit cannot read as gitleaks (Go's RE2) does is refused too.
+    """
+    for key, probes, what in (
+        ("paths", PROBE_PATHS, "every file"),
+        ("regexes", GITLEAKS_PROBES, "every secret"),
+    ):
+        patterns = strings(allow.get(key))
+        if any(tool_regex(p) is None for p in patterns):
+            report.add(
+                "gitleaks",
+                where,
+                f"its {key} hold a pattern the kit cannot read as gitleaks does (\\p, a POSIX"
+                " class, the flag U or -u, or one Python refuses): refused (no waiver)",
+            )
+        elif any(regex_covers_all(p, probes) for p in patterns):
+            report.add(
+                "gitleaks",
+                where,
+                f"its {key} cover {what}: it turns its rules off, refused (no waiver)",
+            )
 
 
 GITLEAKS_PROBES = (

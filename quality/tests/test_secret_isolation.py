@@ -59,6 +59,24 @@ RUNS = {
     "Install the kit's tools (hashed)": HASHED,
     "The hooks that read the deny-list": 'python "${KIT}/quality/deny_hooks.py" "${HOOKS}"',
 }
+# What such a job may hold, and where it runs: a runner of GitHub's, one job.
+# A matrix, a self-hosted runner, a container or an env for every step would
+# each change what runs beside the secret.
+JOB_KEYS = frozenset({"name", "if", "permissions", "runs-on", "steps", "timeout-minutes"})
+FOR_EVERY_STEP = frozenset({"env", "defaults", "container", "services"})
+RUNNER = "ubuntu-latest"
+# The environment each script step may set: a variable such as PYTHONPATH,
+# BASH_ENV or PIP_INDEX_URL would change what the script runs.
+SCRIPT_ENV = {
+    "The kit this workflow is part of": frozenset({"KIT_REPO", "KIT_SHA"}),
+    "Install the kit's tools (hashed)": frozenset({"KIT"}),
+    "The hooks that read the deny-list": frozenset(
+        {"KIT", "HOOKS", "KLEIDOS_DENY_EXTRA", "KLEIDOS_DENY_OPTIONAL"}
+    ),
+    "Post, update or remove the comment": frozenset({"KIT", "GITHUB_TOKEN", "HEAD_SHA"}),
+    "OIDC token available": frozenset({"EVENT", "HEAD_REPO", "REPO"}),
+    "SonarCloud accepted the analysis": frozenset({"SONAR_HOST_URL"}),
+}
 # What a step of such a job may hold. Anything else changes how it runs: a
 # shell, a working directory, a soft failure, a condition.
 STEP_KEYS = frozenset({"name", "id", "uses", "with", "env", "run", "timeout-minutes"})
@@ -106,8 +124,11 @@ def leaks(workflow: dict[Any, Any]) -> list[str]:
             continue
         if not to_lose(workflow, job):
             continue
-        for_all = [k for k in ("env", "defaults", "container", "services") if k in job]
-        out += [f"{job_id}: sets {key} for every step" for key in for_all]
+        for key in sorted(set(job) - JOB_KEYS):
+            every = " for every step" if key in FOR_EVERY_STEP else ""
+            out.append(f"{job_id}: sets {key}{every}")
+        if job.get("runs-on") != RUNNER:
+            out.append(f"{job_id}: runs on {job.get('runs-on')!r}, not on {RUNNER}")
         steps = job["steps"]
         for index, step in enumerate(steps):
             name = str(step.get("name") or step.get("uses"))
@@ -125,6 +146,9 @@ def leaks(workflow: dict[Any, Any]) -> list[str]:
                 out.append(f"{job_id}: {name} runs more than {RUNS[name]}")
             elif name == KIT_STEP:
                 out += [f"{job_id}: {name} {why}" for why in kit_step(str(step["run"]))]
+            if "uses" not in step and name in SCRIPTS:
+                extra = sorted(set(step.get("env") or {}) - SCRIPT_ENV.get(name, frozenset()))
+                out += [f"{job_id}: {name} is given {key} in its environment" for key in extra]
             out += [f"{job_id}: {name} {why}" for why in how(name, step)]
             kit = (step.get("env") or {}).get("KIT")
             if kit is not None and kit != KIT_DIR:
@@ -250,6 +274,50 @@ class PlantedTest(unittest.TestCase):
         planted = copy.deepcopy(self.deny)
         planted["env"] = {"A": "${{ secrets.deny }}"}
         self.assertEqual(len(leaks(planted)), 1)
+
+    def test_where_the_job_runs_is_held(self) -> None:
+        """A runner of the organization's, or a matrix, changes what runs beside the secret."""
+        for job, needle in (
+            ({"runs-on": "self-hosted"}, "deny: runs on 'self-hosted', not on ubuntu-latest"),
+            ({"runs-on": ["ubuntu-latest"]}, "deny: runs on ['ubuntu-latest']"),
+            ({"runs-on": "${{ inputs.runner }}"}, "deny: runs on '${{ inputs.runner }}'"),
+            ({"strategy": {"matrix": {"x": [1, 2]}}}, "deny: sets strategy"),
+            ({"continue-on-error": True}, "deny: sets continue-on-error"),
+            ({"environment": "production"}, "deny: sets environment"),
+            ({"needs": "lint"}, "deny: sets needs"),
+        ):
+            with self.subTest(job=job):
+                found = self.leak(0, None, **job)
+                self.assertEqual(len(found), 1, found)
+                self.assertTrue(found[0].startswith(needle), found)
+        planted = copy.deepcopy(self.deny)
+        del planted["jobs"]["deny"]["runs-on"]
+        self.assertEqual(leaks(planted), ["deny: runs on None, not on ubuntu-latest"])
+
+    def test_a_script_step_is_given_only_its_listed_environment(self) -> None:
+        steps = self.deny["jobs"]["deny"]["steps"]
+        for index, key in (
+            (len(steps) - 1, "PYTHONPATH"),
+            (len(steps) - 1, "BASH_ENV"),
+            (len(steps) - 2, "PIP_INDEX_URL"),
+            (1, "GIT_DIR"),
+            (1, "KIT"),
+        ):
+            with self.subTest(index=index, key=key):
+                planted = copy.deepcopy(self.deny)
+                planted["jobs"]["deny"]["steps"][index].setdefault("env", {})[key] = "x"
+                found = [line for line in leaks(planted) if "takes the kit from" not in line]
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(f"is given {key} in its environment", found[0])
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for job in workflow["jobs"].values():
+                if "uses" in job or not to_lose(workflow, job):
+                    continue
+                for step in job["steps"]:
+                    if "run" in step:
+                        with self.subTest(step=step["name"]):
+                            self.assertEqual(set(step.get("env") or {}), SCRIPT_ENV[step["name"]])
 
     def test_a_secret_in_a_job_of_hooks_is_found(self) -> None:
         lint = yaml.safe_load((WORKFLOWS / "reusable-lint.yml").read_text(encoding="utf-8"))

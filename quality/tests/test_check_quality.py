@@ -14,6 +14,12 @@ from kit_fixtures import check_quality as cq
 from kit_fixtures import sync
 
 TODAY = dt.date(2026, 11, 22)
+FOREIGN = (
+    "hold a pattern the kit cannot read as gitleaks does (\\p, a POSIX class, the flag U or -u,"
+    " or one Python refuses): refused (no waiver)"
+)
+FOREIGN_PATHS = f"its paths {FOREIGN}"
+FOREIGN_REGEXES = f"its regexes {FOREIGN}"
 
 
 class ConformanceTest(unittest.TestCase):
@@ -222,13 +228,17 @@ class ConformanceTest(unittest.TestCase):
             ("paths = ['^exports\\.json$']\n", ""),
             ("paths = ['\\.']\n", "its paths cover every file"),  # every file with a dot
             ("paths = ['\\.md$']\n", ""),
-            ("paths = ['(']\n", ""),
+            ("paths = ['(']\n", FOREIGN_PATHS),
             ("regexes = ['^[0-9a-f]{64}$']\n", ""),
         ):
             with self.subTest(more=more):
                 fx.write(self.root, ".gitleaks.toml", fx.header() + body + more)
                 found = [f for f in self.found() if "[gitleaks]" in f]
-                wanted = f"{refused}: it turns its rules off, refused (no waiver)"
+                wanted = (
+                    refused
+                    if refused.startswith("its paths hold")
+                    else f"{refused}: it turns its rules off, refused (no waiver)"
+                )
                 where = ".gitleaks.toml allowlists[0]: [gitleaks]"
                 self.assertEqual(found, [f"{where} {wanted}"] if refused else [])
 
@@ -275,6 +285,196 @@ class ConformanceTest(unittest.TestCase):
         )
         self.assertEqual([f for f in self.found() if "[gitleaks]" in f], [])
 
+    def gitleaks_found(self, body: str) -> list[str]:
+        fx.write(self.root, ".gitleaks.toml", fx.header() + body)
+        return [f for f in self.found() if "[gitleaks]" in f]
+
+    def test_gitleaks_keys_are_read_without_regard_to_case(self) -> None:
+        """gitleaks 8.30.1 reads every key without regard to case (2 leaks, then none for each)."""
+        head = "[extend]\nuseDefault = true\n"
+        rule = ".gitleaks.toml rules[0]: [gitleaks] its id is not one of the repository's own"
+        allow = ".gitleaks.toml allowlists[0]: [gitleaks] "
+        every = "its paths cover every file: it turns its rules off, refused (no waiver)"
+        targets = "needs targetRules: an allowlist never covers every rule"
+        for body, wanted in (
+            (head + "[[Rules]]\nid = 'generic-api-key'\nentropy = 99\n", [rule]),
+            (head + "[[RULES]]\nID = 'generic-api-key'\nEntropy = 99\n", [rule]),
+            (
+                head + "[[Allowlists]]\ndescription = 'd'\npaths = ['.']\n",
+                [allow + every, allow + targets],
+            ),
+            (
+                head + "[[allowlists]]\ndescription = 'd'\ntargetRules = ['x']\nPaths = ['.']\n",
+                [allow + every],
+            ),
+            (
+                head + "[[allowlists]]\nDescription = 'd'\nTargetRules = ['x']\nPaths = ['.']\n",
+                [allow + every],
+            ),
+            (head + "[Allowlist]\npaths = ['.']\n", ["a global [allowlist] reaches every rule"]),
+            (head + "DisabledRules = ['generic-api-key']\n", ["disabledRules turns default"]),
+            ("[EXTEND]\nUseDefault = true\n", []),
+            ("[extend]\nUSEDEFAULT = false\n", ["useDefault = true is required"]),
+            (
+                head + "UseDefault = false\n",
+                [
+                    "extend.usedefault is spelled more than once in different case",
+                    "useDefault = true is required",
+                ],
+            ),
+            (
+                head
+                + "[[allowlists]]\ndescription = 'd'\ntargetRules = ['x']\npaths = ['^a$']\n"
+                + "[[Allowlists]]\ndescription = 'd'\ntargetRules = ['x']\npaths = ['.']\n",
+                [
+                    "allowlists is spelled more than once in different case",
+                    ".gitleaks.toml allowlists[1]: [gitleaks] " + every,
+                ],
+            ),
+            # One table alone is an array of one, one string a list of one (gitleaks 8.30.1).
+            (
+                head + "[allowlists]\ndescription = 'd'\ntargetRules = ['x']\npaths = ['.']\n",
+                [allow + every],
+            ),
+            (
+                head + "[[allowlists]]\ndescription = 'd'\ntargetRules = ['x']\npaths = '.'\n",
+                [allow + every],
+            ),
+            (head + "[rules]\nid = 'generic-api-key'\nentropy = 99\n", [rule]),
+        ):
+            with self.subTest(body=body):
+                found = self.gitleaks_found(body)
+                self.assertEqual(len(found), len(wanted), found)
+                ordered = sorted(found, key=lambda f: "spelled" not in f)
+                for needle, line in zip(wanted, ordered, strict=True):
+                    self.assertIn(needle, line)
+
+    def test_a_gitleaks_pattern_the_kit_cannot_read_is_refused(self) -> None:
+        """Go's RE2 reads these, and allows every path or secret (gitleaks 8.30.1: no leaks)."""
+        body = (
+            "[extend]\nuseDefault = true\n[[allowlists]]\ndescription = 'd'\ntargetRules = ['r']\n"
+        )
+        where = ".gitleaks.toml allowlists[0]: [gitleaks] "
+        for more, wanted in (
+            ("paths = ['[[:alnum:]]']\n", FOREIGN_PATHS),
+            ("paths = ['\\pL']\n", FOREIGN_PATHS),
+            ("paths = ['\\p{L}']\n", FOREIGN_PATHS),
+            ("paths = ['\\PN']\n", FOREIGN_PATHS),
+            ("regexes = ['\\pL']\n", FOREIGN_REGEXES),
+            ("regexes = ['[[:alnum:]]']\n", FOREIGN_REGEXES),
+            ("regexes = ['(?U).']\n", FOREIGN_REGEXES),
+            ("regexes = ['(?-u:.)']\n", FOREIGN_REGEXES),
+            ("regexes = ['[\\w--\\d]']\n", FOREIGN_REGEXES),  # a set operation Python warns on
+            ("paths = ['(?i)^exports\\.json$']\n", ""),
+            ("paths = ['\\\\pL']\n", ""),  # a backslash, then pL
+            ("regexes = ['(?i)^[0-9a-f]{64}$']\n", ""),
+        ):
+            with self.subTest(more=more):
+                found = self.gitleaks_found(body + more)
+                self.assertEqual(found, [where + wanted] if wanted else [])
+
+    def test_a_pattern_python_reads_otherwise_counts_as_covering(self) -> None:
+        for pattern, foreign in (
+            ("\\pL", True),
+            ("\\p{L}+", True),
+            ("x\\\\\\pL", True),
+            ("[[:alpha:]]", True),
+            ("[^[:space:]]", True),
+            ("(?U).+", True),
+            ("(?-u:\\w)", True),
+            ("(?iU)x", True),
+            ("[a&&b]", True),
+            ("(", True),
+            ("a(?i)b", True),  # Python takes a flag only at the start
+            ("\\\\pL", False),
+            ("(?i)x", False),
+            ("(?Rm)^x$", False),
+            ("(?R)x", False),
+            ("(?R:x)", False),
+            ("(?-i:x)", False),
+            ("(?u)\\w", False),
+            ("(?P<n>x)", False),
+        ):
+            with self.subTest(pattern=pattern):
+                self.assertIs(cq.tool_regex(pattern) is None, foreign)
+                if foreign:
+                    self.assertTrue(cq.regex_covers_all(pattern, cq.PROBE_WORDS))
+                    self.assertTrue(cq.ignores_every_word(pattern))
+        self.assertTrue(cq.ignores_every_word("(?Rm)^.*$"))
+        self.assertFalse(cq.ignores_every_word("(?Rm)^.*spellchecker:disable-line$"))
+
+    def test_typos_patterns_the_kit_cannot_read_are_weakenings(self) -> None:
+        """typos 1.52.2 finds 7 typos with no configuration and none with each of these."""
+        for text, what in (
+            ("[default]\nextend-ignore-re = ['\\p{L}+']\n", ["default.extend-ignore-re:\\p{L}+"]),
+            ("[default]\nextend-ignore-re = ['\\pL']\n", ["default.extend-ignore-re:\\pL"]),
+            (
+                "[default]\nextend-ignore-re = ['[[:alpha:]]']\n",
+                ["default.extend-ignore-re:[[:alpha:]]"],
+            ),
+            (
+                "[default]\nextend-ignore-re = ['(?-u:\\w)']\n",
+                ["default.extend-ignore-re:(?-u:\\w)"],
+            ),
+            ("[default]\nextend-ignore-re = ['(?U).+']\n", ["default.extend-ignore-re:(?U).+"]),
+            (
+                "[default]\nextend-ignore-identifiers-re = ['\\p{L}']\n",
+                ["default.extend-ignore-identifiers-re:\\p{L}"],
+            ),
+            (
+                "[default]\nextend-ignore-words-re = ['[[:alpha:]]']\n",
+                ["default.extend-ignore-words-re:[[:alpha:]]"],
+            ),
+            (
+                "[default]\nextend-ignore-re = ['(?Rm)^.*$']\n",
+                ["default.extend-ignore-re:(?Rm)^.*$"],
+            ),
+            ("[default]\nextend-ignore-re = ['(?Rm)^.*spellchecker:disable-line$']\n", []),
+            ("[default]\nextend-ignore-re = ['\\\\pL']\n", []),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.typos_off(text), what)
+
+    def test_typos_globs_with_classes_and_alternates(self) -> None:
+        """typos 1.52.2 reads globset's classes and alternates: no typo left with each of these."""
+        for pattern, everything in (
+            ("[!_]*", True),
+            ("[^_]*", True),
+            ("[a-zA-Z.]*", True),
+            ("*[a-z]", True),
+            ("{*,.*}", True),
+            ("*.{md,txt,py,ts,yml}", True),
+            ("[abc].md", False),
+            ("[]a]*", False),
+            ("{a,b}.md", False),
+            ("\\*", False),
+            ("[", False),
+        ):
+            with self.subTest(pattern=pattern):
+                self.assertIs(cq.glob_covers_all(pattern), everything)
+                text = f"[files]\nextend-exclude = ['{pattern}']\n"
+                self.assertEqual(
+                    self.typos_off(text), [f"extend-exclude:{pattern}"] if everything else []
+                )
+        for pattern in ("{*", "a}"):  # globs the kit cannot read, nor typos
+            self.assertTrue(cq.glob_covers_all(pattern), pattern)
+
+    def test_a_typos_table_tomllib_cannot_read_is_one(self) -> None:
+        """typos reads a byte order mark and TOML 1.1, which tomllib before 3.15 refuses."""
+        for text, held in (
+            ("\ufeff[workspace.metadata.typos.default]\ncheck-file = false\n", True),
+            ("\ufeff[tool.typos.default]\ncheck-file = false\n", True),
+            ("\ufeff[tool.ruff]\n", False),
+            ("[tool.typos\n", True),
+            ('x = "\\q"\n[tool.typos.default]\ncheck-file = false\n', True),
+            ("[tool.ruff\n", False),
+        ):
+            with self.subTest(text=text):
+                self.assertIs(cq.has_typos_table(text), held)
+        path = self.root / "Cargo.toml"
+        path.write_bytes(b"\xef\xbb\xbf[workspace.metadata.typos.default]\ncheck-file = false\n")
+        self.weakened("[typos] config:Cargo.toml")
+
     def weakened(self, needle: str) -> None:
         """A weakening the report names, with no waiver for it."""
         self.assertFound(f"{needle} weakens a kit rule and has no waiver")
@@ -315,7 +515,7 @@ class ConformanceTest(unittest.TestCase):
         fx.write(self.root, "pkg/notypos.toml", fx.header())
         fx.write(self.root, "pkg/Cargo.toml", fx.header() + "[package]\nname = 'typos-free'\n")
         fx.write(self.root, "a/pyproject.toml", "[tool.ruff]\n# [tool.typos]\nx = 'tool.typos'\n")
-        fx.write(self.root, "b/pyproject.toml", "[tool.typos\n")  # typos skips it and checks
+        fx.write(self.root, "b/pyproject.toml", "[tool.ruff\n")  # no typos table, read or not
         fx.write(self.root, "c/Cargo.toml", "package = 3\n[workspace.metadata]\ntypo = 1\n")
         self.assertEqual(self.typos_found(), [])
 
@@ -382,7 +582,7 @@ class ConformanceTest(unittest.TestCase):
             ("[default]\nextend-ignore-re = ['\\bPNGs\\b']\n", []),
             ("[default]\nextend-ignore-re = ['\\b[0-9a-f]{7,64}\\b']\n", []),
             ("[default]\nextend-ignore-re = ['e']\n", []),
-            ("[default]\nextend-ignore-re = ['(']\n", []),
+            ("[default]\nextend-ignore-re = ['(']\n", ["default.extend-ignore-re:("]),
             ("= not toml\n", []),
         ):
             with self.subTest(text=text):
