@@ -538,15 +538,19 @@ def sync_comment(
 
 
 # --- command line ------------------------------------------------------------
-def read_file(path: str, cwd: str | None = None) -> str:
-    """A file of this repository, of its git folder or of the temporary folder, and no other."""
+def own_path(path: str, cwd: str | None = None) -> str:
+    """A path in this repository, its git folder or the temporary folder, and no other."""
     roots = [cwd or os.getcwd(), tempfile.gettempdir(), os.environ.get("RUNNER_TEMP", "")]
     with contextlib.suppress(RuntimeError):  # no repository: the other folders are left
         roots.append(git(["rev-parse", "--absolute-git-dir"], cwd).strip())
     real = os.path.realpath(path)
     if not any(real.startswith(os.path.realpath(root) + os.sep) for root in roots if root):
         raise OSError(f"{path} is neither in this repository nor in the temporary folder")
-    with open(real, encoding="utf-8") as fh:
+    return real
+
+
+def read_file(path: str, cwd: str | None = None) -> str:
+    with open(own_path(path, cwd), encoding="utf-8") as fh:
         return fh.read()
 
 
@@ -666,8 +670,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.json_out == "-":
             sys.stdout.write(data)
         else:
-            with open(args.json_out, "w", encoding="utf-8") as fh:
-                fh.write(data)
+            try:
+                with open(own_path(args.json_out, args.cwd), "w", encoding="utf-8") as fh:
+                    fh.write(data)
+            except OSError as exc:
+                print(f"check_commit_msg: {exc}", file=sys.stderr)
+                return 2
     return 1 if result["errors"] else 0
 
 

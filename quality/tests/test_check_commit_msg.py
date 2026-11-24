@@ -787,6 +787,14 @@ class ReadFileTest(unittest.TestCase):
                 for rel in ("out/o", "repo2/x", "repo/link", "repo/../out/o", "repo", "none"):
                     with self.assertRaises(OSError, msg=rel):
                         ccm.read_file(rel, "repo")
+                with mock.patch.object(ccm, "check_range", return_value=result_with()):
+                    argv = ["--range", "a..b", "-C", "repo", "--json"]
+                    quiet = contextlib.redirect_stdout(io.StringIO())
+                    with quiet, contextlib.redirect_stderr(io.StringIO()):
+                        self.assertEqual(ccm.main([*argv, "repo/new.json"]), 1)
+                        self.assertTrue((repo / "new.json").is_file())
+                        self.assertEqual(ccm.main([*argv, "out/new.json"]), 2)
+                self.assertFalse((home / "out/new.json").exists())
                 os.environ["RUNNER_TEMP"] = ""
                 with self.assertRaisesRegex(OSError, "runner/r is neither in this repository"):
                     ccm.read_file("runner/r", "repo")

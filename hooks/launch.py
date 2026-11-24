@@ -6,14 +6,16 @@
 pre-commit runs a `language: script` hook on whichever python3 comes first
 on the PATH, and the machines have from 3.9 (the one macOS ships) up, while
 the kit's checks are written for a newer one. This starter keeps to what
-3.9 reads, so it can always speak: it runs the hook on this Python when
-that is new enough and has what the hook imports, else on the newest
-python3.x of the PATH that is, else on the kit's own environment, which
-the line it says otherwise makes (an externally managed Python, as
-Homebrew's and Debian's are, refuses pip outside one), and fails (the CI
-runs the same checks, so nobody needs the hooks).
+3.9 reads, so it can always speak. The commit-message check keeps to it too
+and runs in this Python. The others run on this Python when that is new
+enough and has what the hook imports, else on the newest python3.x of the
+PATH that is, else on the kit's own environment, which the line it says
+otherwise makes (an externally managed Python, as Homebrew's and Debian's
+are, refuses pip outside one), and fails (the CI runs the same checks, so
+nobody needs the hooks).
 
-Usage: launch.py policy|mypy|commit-msg MESSAGE-FILE
+Usage: launch.py policy|mypy
+       launch.py commit-msg MESSAGE-FILE
 
 Exit status: the hook's own, or 2 when no Python can run it.
 """
@@ -32,6 +34,9 @@ KIT = Path(__file__).resolve().parent.parent
 NEWEST_MINOR = 30
 
 
+COMMIT_MSG = "commit-msg"
+
+
 class Hook(NamedTuple):
     """One hook: the script, the oldest Python that reads it, what it imports."""
 
@@ -39,8 +44,6 @@ class Hook(NamedTuple):
     floor: tuple[int, int]
     module: str = ""
     requirement: str = ""
-    # How many arguments pre-commit gives it: the message file, or none.
-    arguments: int = 0
 
 
 HOOKS = {
@@ -48,7 +51,6 @@ HOOKS = {
     "policy": Hook("quality/policy.py", (3, 14), "yaml", "pyyaml==6.0.4"),
     # mypy itself is the one on the PATH: the repository's environment has it.
     "mypy": Hook("quality/mypy_groups.py", (3, 14)),
-    "commit-msg": Hook("hooks/check_commit_msg.py", (3, 9), arguments=1),
 }
 
 
@@ -128,18 +130,22 @@ def choose(hook: Hook, paths: list[str]) -> tuple[Python | None, str]:
 
 def main(argv: list[str]) -> int:
     """Run the hook argv names, on a Python that can."""
-    hook = HOOKS.get(argv[0]) if argv else None
-    if hook is None or len(argv) - 1 != hook.arguments:
-        print(f"usage: launch.py {'|'.join(HOOKS)} MESSAGE-FILE", file=sys.stderr)
+    if len(argv) == 2 and argv[0] == COMMIT_MSG:
+        sys.path.insert(0, str(KIT / "hooks"))
+        import check_commit_msg
+
+        return check_commit_msg.main(["--", argv[1]])
+    hook = HOOKS.get(argv[0]) if len(argv) == 1 else None
+    if hook is None:
+        usage = f"usage: launch.py {'|'.join(HOOKS)}, or launch.py {COMMIT_MSG} MESSAGE-FILE"
+        print(usage, file=sys.stderr)
         return 2
     python, why = choose(hook, candidates(hook.floor))
     if python is None:
         print(f"kleidos quality kit, hook {argv[0]}: {why}", file=sys.stderr)
         print("(the CI runs the same check on every pull request)", file=sys.stderr)
         return 2
-    # After "--" the message file is a file, whatever its name.
-    given = ["--", *argv[1:]] if hook.arguments else []
-    return subprocess.call([python.path, str(KIT / hook.script), *given])
+    return subprocess.call([python.path, str(KIT / hook.script)])
 
 
 if __name__ == "__main__":

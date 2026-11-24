@@ -55,7 +55,8 @@ class ManifestTest(unittest.TestCase):
                 self.assertEqual(hook["stages"], stages.get(str(hook["id"]), ["pre-commit"]))
                 script, name = str(hook["entry"]).split()
                 self.assertTrue(os.access(fx.CENTRAL / script, os.X_OK), script)
-                self.assertTrue((fx.CENTRAL / launch.HOOKS[name].script).is_file(), name)
+                if name != launch.COMMIT_MSG:
+                    self.assertTrue((fx.CENTRAL / launch.HOOKS[name].script).is_file(), name)
 
     def test_the_policy_hook_runs_whatever_changed(self) -> None:
         hook = next(h for h in self.hooks() if h["id"] == "kleidos-kit")
@@ -89,7 +90,7 @@ class OldPythonTest(unittest.TestCase):
                     [path, str(HOOKS / "launch.py")], capture_output=True, text=True, check=False
                 )
                 self.assertEqual(done.returncode, 2)
-                self.assertIn("usage: launch.py policy|mypy|commit-msg", done.stderr)
+                self.assertIn("usage: launch.py policy|mypy, or launch.py commit-msg", done.stderr)
 
     def test_the_commit_hook_runs_on_every_python_of_this_machine(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -229,15 +230,23 @@ class LaunchTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             return launch.main(list(argv)), err.getvalue()
 
-    def test_a_hook_gets_its_arguments_and_gives_its_status(self) -> None:
+    def test_the_message_is_checked_in_this_python(self) -> None:
+        with (
+            mock.patch.object(subprocess, "call") as call,
+            mock.patch.object(fx.check_commit_msg, "main", return_value=7) as check,
+            mock.patch.object(sys, "path", ["x"]),
+        ):
+            self.assertEqual(self.launch("commit-msg", "--MSG"), (7, ""))
+            self.assertEqual(sys.path, [str(HOOKS), "x"])
+        call.assert_not_called()
+        check.assert_called_once_with(["--", "--MSG"])
+
+    def test_a_hook_gives_its_status(self) -> None:
         chosen = (launch.Python("/py", (3, 15), True), "")
         with (
             mock.patch.object(subprocess, "call", return_value=7) as call,
             mock.patch.object(launch, "choose", return_value=chosen),
         ):
-            status, said = self.launch("commit-msg", "--MSG")
-            self.assertEqual((status, said), (7, ""))
-            call.assert_called_once_with(["/py", str(HOOKS / "check_commit_msg.py"), "--", "--MSG"])
             for name in ("policy", "mypy"):
                 self.assertEqual(self.launch(name)[0], 7)
                 script = fx.CENTRAL / launch.HOOKS[name].script
