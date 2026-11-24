@@ -1,0 +1,1277 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# What every workflow of this repository does, word for word but its
+# comments, with the reason of each job and each step (why). They run in
+# every repository at the branch v3, so test_workflow_contract.py compares
+# them with this file: a step, a condition, a permission or a line of a
+# script changes here too, on purpose, with its reason.
+check.yml:
+  name: Quality kit, check
+  'on':
+    workflow_call:
+      inputs:
+        python:
+          description: What pip installs before the tests and mypy (its arguments; empty for nothing)
+          type: string
+          default: ''
+        install:
+          description: A command instead of python, for what pip's arguments cannot say
+          type: string
+          default: ''
+        tests:
+          description: The test command, which writes the coverage report (empty for no tests job)
+          type: string
+          default: ''
+        coverage-report:
+          description: The coverage report the tests write (empty for none)
+          type: string
+          default: coverage.xml
+        coverage-artifact:
+          description: The artifact the report is uploaded as, for sonar.yml
+          type: string
+          default: coverage
+        timeout-minutes:
+          description: The bound of the tests job
+          type: number
+          default: 15
+        types:
+          description: Run mypy (false only where the tree holds no Python)
+          type: boolean
+          default: true
+        types-install:
+          description: What mypy needs installed, where it differs from the tests (a command)
+          type: string
+          default: ''
+        python-version-file:
+          description: The file that names the Python of the tests and mypy
+          type: string
+          default: .python-version
+        node-directory:
+          description: The folder of package.json, for ESLint and tsc (empty for no TypeScript job)
+          type: string
+          default: ''
+        node-projects:
+          description: Space-separated tsconfig files tsc checks, relative to node-directory
+          type: string
+          default: tsconfig.json
+        node-version:
+          description: The Node.js to run with
+          type: string
+          default: lts/*
+  permissions: {}
+  jobs:
+    tests:
+      name: 🧪 Tests
+      if: inputs.tests != ''
+      uses: ./.github/workflows/reusable-python-tests.yml
+      with:
+        install: ${{ inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+        run: ${{ inputs.tests }}
+        python-version-file: ${{ inputs.python-version-file }}
+        coverage-report: ${{ inputs.coverage-report }}
+        coverage-artifact: ${{ inputs.coverage-artifact }}
+        timeout-minutes: ${{ inputs.timeout-minutes }}
+      permissions:
+        contents: read
+      why: no tests job without a test command; reads the code and nothing else
+    types:
+      name: 🔎 Types
+      if: inputs.types
+      uses: ./.github/workflows/reusable-mypy.yml
+      with:
+        install: ${{ inputs.types-install || inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+        python-version-file: ${{ inputs.python-version-file }}
+      permissions:
+        contents: read
+      why: on unless the tree holds no Python, which the checker judges
+    typescript:
+      name: 🔎 TypeScript
+      if: inputs.node-directory != ''
+      uses: ./.github/workflows/reusable-eslint.yml
+      with:
+        working-directory: ${{ inputs.node-directory }}
+        projects: ${{ inputs.node-projects }}
+        node-version: ${{ inputs.node-version }}
+      permissions:
+        contents: read
+      why: where the tree holds TypeScript, which the checker judges
+    osv:
+      name: 🛡️ Dependencies
+      uses: ./.github/workflows/reusable-osv.yml
+      permissions:
+        contents: read
+      why: always, so the weekly run sees new advisories
+ci.yml:
+  name: CI
+  'on':
+    pull_request:
+      branches:
+      - main
+    push:
+      branches:
+      - main
+    schedule:
+    - cron: 0 5 * * 1
+    workflow_dispatch: null
+  permissions:
+    contents: read
+  concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+  jobs:
+    quick:
+      name: ⚡ Quick
+      uses: ./.github/workflows/quick.yml
+      with:
+        skip: kleidos-quality-kit-tests
+        deny-hooks: kleidos-media-stamp,kleidos-media-metadata
+      secrets:
+        deny: ${{ secrets.KLEIDOS_DENY_EXTRA }}
+      permissions:
+        contents: read
+      why: the kit's own first caller, by ./ path, with the deny-list for the media hooks
+    check:
+      name: 🧪 Check
+      needs: quick
+      uses: ./.github/workflows/check.yml
+      with:
+        install: python -m pip install -r requirements.txt && python -m pip install --require-hashes -r quality/requirements-tools.txt
+        tests: python -m coverage run -m unittest discover -s tests -v && python -m coverage run --append -m unittest discover -s quality/tests -v && python -m coverage xml -o coverage.xml && python -m coverage report && python quality/coverage_floor.py
+      permissions:
+        contents: read
+      why: every test of this repository, its coverage measured and held to its floors
+    release:
+      name: 🏷️ Kit release and its tag
+      needs: quick
+      runs-on: ubuntu-latest
+      timeout-minutes: 5
+      why: no token beyond the workflow's read
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version-file: .python-version
+      - why: every package is checked against its SHA-256
+        name: Install the kit's tools (hashed)
+        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+      - why: on main the version must be tagged and the branch moved; a pull request must carry a new version
+        name: The kit at this commit is a release, or a new version
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          git fetch -q --tags --force origin
+          on_main=()
+          if [ "${EVENT}" != pull_request ]; then
+            on_main=(--on-main)
+          fi
+          python quality/sync.py --release-check "${on_main[@]}"
+    preview:
+      name: 🔭 Impact on the public consumers
+      needs: check
+      if: github.event_name != 'schedule'
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      why: 'not weekly: it clones the public repositories'
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version-file: .python-version
+      - why: every package is checked against its SHA-256
+        name: Install the kit's tools (hashed)
+        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+      - why: 'informs, with the public repositories only: no --all'
+        name: Apply the kit to throwaway clones and count what it finds
+        run: python tools/ecosystem.py preview --summary "${GITHUB_STEP_SUMMARY}"
+    sonar:
+      name: 📊 Sonar
+      needs: check
+      if: github.event_name != 'schedule'
+      uses: ./.github/workflows/sonar.yml
+      permissions:
+        contents: read
+        id-token: write
+      why: 'not weekly: a schedule is no analysis'
+    done:
+      name: ✅ Check
+      needs:
+      - quick
+      - check
+      - release
+      - preview
+      - sonar
+      if: always()
+      runs-on: ubuntu-latest
+      timeout-minutes: 5
+      permissions: {}
+      why: 'the required check: always runs, needs every other job, has no token'
+      steps:
+      - why: 'the gate: reads every job''s result whatever happened, steered by nothing outside the step'
+        name: Every job of this file succeeded
+        shell: /bin/bash --noprofile --norc -p -e -o pipefail {0}
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          MAY_SKIP: preview sonar
+        run: |
+          set -euo pipefail
+          export PATH=/usr/bin:/bin HOME=/nonexistent
+          echo "${NEEDS}" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "${NEEDS}" | jq -e --arg may " ${MAY_SKIP} " '
+            length > 0 and all(to_entries[];
+              .value.result == "success"
+              or (.value.result == "skipped" and (.key as $job | $may | contains(" \($job) "))))' > /dev/null || {
+            echo "::error title=Not every job succeeded::a job that failed, was cancelled or was skipped without leave is listed above"
+            exit 1
+          }
+commit-check-comment.yml:
+  name: Commit check comment
+  'on':
+    workflow_run:
+      workflows:
+      - CI
+      types:
+      - completed
+  permissions: {}
+  concurrency:
+    group: commit-check-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+    cancel-in-progress: false
+  jobs:
+    comment:
+      name: 🙋 Commit-check comment
+      uses: ./.github/workflows/reusable-commit-check-comment.yml
+      permissions:
+        actions: read
+        pull-requests: write
+      why: follows the gate's workflow, grants what the comment needs
+ecosystem.yml:
+  name: Ecosystem report
+  'on':
+    schedule:
+    - cron: 0 6 * * 1
+    workflow_dispatch: null
+    pull_request:
+      branches:
+      - main
+      paths:
+      - .github/workflows/ecosystem.yml
+      - tools/ecosystem.py
+      - tools/ecosystem.toml
+  permissions:
+    contents: read
+  concurrency:
+    group: ecosystem-${{ github.ref }}
+    cancel-in-progress: true
+  jobs:
+    report:
+      name: 🌍 Public repositories
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      why: the workflow's read token and no secret
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version-file: .python-version
+      - why: every package is checked against its SHA-256
+        name: Install the kit's tools (hashed)
+        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+      - why: 'the public half only: no --all, the job''s own read token; red fails it, but on a pull request'
+        name: Read the public repositories
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          status=0
+          python tools/ecosystem.py report --summary "${GITHUB_STEP_SUMMARY}" || status=$?
+          if [ "${status}" = 1 ] && [ "${EVENT}" = pull_request ]; then
+            echo "::notice title=Ecosystem report::something is red today; this trial run does not fail for it"
+            status=0
+          fi
+          exit "${status}"
+quick.yml:
+  name: Quality kit, quick
+  'on':
+    workflow_call:
+      inputs:
+        skip:
+          description: Comma-separated ids of the repository's own hooks that cannot run in CI
+          type: string
+          default: ''
+        deny-hooks:
+          description: Comma-separated ids of its own local hooks that read the deny-list
+          type: string
+          default: ''
+      secrets:
+        deny:
+          description: The deny-list of private values (KLEIDOS_DENY_EXTRA), one pattern per line
+          required: false
+  permissions: {}
+  jobs:
+    lint:
+      name: 🧹 Lint
+      uses: ./.github/workflows/reusable-lint.yml
+      with:
+        skip: ${{ inputs.skip }}
+        deny-hooks: ${{ inputs.deny-hooks }}
+      permissions:
+        contents: read
+      why: always; the hooks the caller skips are judged inside
+    deny:
+      name: 🕵️ Deny-list
+      if: inputs.deny-hooks != ''
+      uses: ./.github/workflows/reusable-deny.yml
+      with:
+        hooks: ${{ inputs.deny-hooks }}
+      secrets:
+        deny: ${{ secrets.deny }}
+      permissions:
+        contents: read
+      why: where the caller has hooks that read the deny-list; the one job with the secret
+    reuse:
+      name: ⚖️ Licensing
+      uses: ./.github/workflows/reusable-reuse.yml
+      permissions:
+        contents: read
+      why: 'always: every file has a license'
+    secrets:
+      name: 🔐 Secrets
+      uses: ./.github/workflows/reusable-secrets.yml
+      permissions:
+        contents: read
+      why: 'always: the whole history, every run'
+    commits:
+      name: ✍️ Commits
+      if: github.event_name == 'pull_request'
+      uses: ./.github/workflows/reusable-commit-check.yml
+      permissions:
+        contents: read
+      why: a push has no pull request to check; every pull request has
+reusable-commit-check-comment.yml:
+  name: Commit check comment
+  'on':
+    workflow_call: null
+  permissions: {}
+  jobs:
+    comment:
+      name: 🙋 Post the commit-check comment
+      if: github.event.workflow_run.event == 'pull_request' && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
+      runs-on: ubuntu-latest
+      timeout-minutes: 5
+      permissions:
+        actions: read
+        pull-requests: write
+      why: only for a pull request's run that ended, with a token that may write one comment and cannot read the code
+      steps:
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          kit="${RUNNER_TEMP}/kit"
+          git init -q "${kit}"
+          git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+          git -C "${kit}" checkout -q FETCH_HEAD
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: a run that left no result has nothing to post, which is no failure
+        name: Fetch the check's result
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: commit-check
+          path: ${{ runner.temp }}/commit-check
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - why: the kit's checker reads the artifact as data, for the head the check ran on
+        name: Post, update or remove the comment
+        if: steps.download.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: |
+          python3 "$KIT/hooks/check_commit_msg.py" \
+            --comment "$RUNNER_TEMP/commit-check/result.json" \
+            --repo "$GITHUB_REPOSITORY" --head-sha "$HEAD_SHA"
+reusable-commit-check.yml:
+  name: Commit check
+  'on':
+    workflow_call: null
+  permissions: {}
+  jobs:
+    commit-messages:
+      name: ✍️ Check the commits
+      runs-on: ubuntu-latest
+      timeout-minutes: 5
+      permissions:
+        contents: read
+      why: 'a read token: it runs the pull request''s history, not its code'
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: every commit of the pull request, with the kit's checker, in the kit's home with the base branch's; only the two bots are excused
+        name: Check the pull request's commits
+        id: check
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          case "$PR_AUTHOR" in
+            'dependabot[bot]' | 'renovate[bot]')
+              echo "Opened by $PR_AUTHOR, which authors its own commit messages: not checked." | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "status=0" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          out="$RUNNER_TEMP/commit-check"
+          mkdir -p "$out"
+          if [ "$GITHUB_REPOSITORY" = kleidos-dev/.github ]; then
+            # The base branch's checker, where kit 2.x kept it or where it is now.
+            git show "$BASE_SHA:hooks/check_commit_msg.py" > "$out/check_commit_msg.py" 2>/dev/null \
+              || git show "$BASE_SHA:.github/commit-check/check_commit_msg.py" > "$out/check_commit_msg.py"
+          else
+            cp "$KIT/hooks/check_commit_msg.py" "$out/check_commit_msg.py"
+          fi
+          status=0
+          python3 "$out/check_commit_msg.py" --range "$BASE_SHA..$HEAD_SHA" \
+            --pr "$PR_NUMBER" --head-sha "$HEAD_SHA" --json "$out/result.json" || status=$?
+          if [ -f "$out/result.json" ]; then
+            python3 "$out/check_commit_msg.py" --render "$out/result.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - why: data for the comment, kept a week; none when nothing was checked
+        name: Keep the result for the comment workflow
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: commit-check
+          path: ${{ runner.temp }}/commit-check/result.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - why: the check's own status fails the job, after the result was kept
+        name: Fail on a rule the commits break
+        if: steps.check.outputs.status != '0'
+        env:
+          STATUS: ${{ steps.check.outputs.status }}
+        run: |
+          echo "The commit messages break the rules listed above (exit $STATUS)."
+          exit 1
+reusable-deny.yml:
+  name: Quality kit deny-list
+  'on':
+    workflow_call:
+      inputs:
+        hooks:
+          description: Comma-separated ids of the repository's own local hooks that read the deny-list
+          type: string
+          required: true
+      secrets:
+        deny:
+          description: The deny-list of private values, one pattern per line
+          required: false
+  permissions: {}
+  jobs:
+    deny:
+      name: 🕵️ Private values
+      runs-on: ubuntu-latest
+      timeout-minutes: 10
+      permissions:
+        contents: read
+      why: 'a read token, and no condition: the caller decides whether there is something to run'
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.15'
+      - why: every package is checked against its SHA-256
+        name: Install the kit's tools (hashed)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+      - why: the one step with the secret, the last of a job where no third party's code ran; without it the checks say so
+        name: The hooks that read the deny-list
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+          HOOKS: ${{ inputs.hooks }}
+          KLEIDOS_DENY_EXTRA: ${{ secrets.deny }}
+          KLEIDOS_DENY_OPTIONAL: ${{ secrets.deny == '' && '1' || '0' }}
+        run: python "${KIT}/quality/deny_hooks.py" "${HOOKS}"
+reusable-eslint.yml:
+  name: Quality kit TypeScript
+  'on':
+    workflow_call:
+      inputs:
+        working-directory:
+          description: The folder that holds package.json, package-lock.json and the ESLint config
+          type: string
+          default: .
+        projects:
+          description: Space-separated tsconfig files tsc checks, relative to working-directory
+          type: string
+          default: tsconfig.json
+        node-version:
+          description: The Node.js to run with
+          type: string
+          default: lts/*
+  permissions: {}
+  jobs:
+    eslint:
+      name: 🔎 ESLint and tsc
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      permissions:
+        contents: read
+      defaults:
+        run:
+          working-directory: ${{ inputs.working-directory }}
+      why: a read token; every step runs in the package's folder
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: one Node.js everywhere, not the runner's
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - why: the lockfile's versions and no others
+        name: Install the repository's pinned tools
+        run: npm ci
+      - why: a warning fails it, and ESLint is the repository's pinned one
+        name: ESLint (a warning fails too)
+        run: npx --no-install eslint --max-warnings 0 .
+      - why: every named project, and at least one
+        name: tsc on every project
+        env:
+          PROJECTS: ${{ inputs.projects }}
+        run: |
+          set -euo pipefail
+          read -r -a projects <<< "${PROJECTS}"
+          if [ "${#projects[@]}" -eq 0 ]; then
+            echo "::error::projects names no tsconfig: tsc checks at least one project"
+            exit 1
+          fi
+          for project in "${projects[@]}"; do
+            echo "tsc --noEmit -p ${project}"
+            npx --no-install tsc --noEmit -p "${project}"
+          done
+reusable-lint.yml:
+  name: Quality kit lint
+  'on':
+    workflow_call:
+      inputs:
+        python-version:
+          description: The Python that runs the tools
+          type: string
+          default: '3.15'
+        skip:
+          description: Comma-separated ids of the repository's own hooks that cannot run here; a kit hook named here fails the kit check
+          type: string
+          default: ''
+        deny-hooks:
+          description: Comma-separated ids of the repository's own local hooks that read the deny-list, skipped here
+          type: string
+          default: ''
+  permissions: {}
+  jobs:
+    lint:
+      name: 🧹 Kit check, hooks and zizmor
+      runs-on: ubuntu-latest
+      timeout-minutes: 20
+      permissions:
+        contents: read
+      why: 'a read token, no secret: third parties'' hooks run here'
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - why: every package is checked against its SHA-256
+        name: Install the kit's tools (hashed)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+      - why: every policy check but the header lines, which have their own job; a hook the caller skips is judged; its failure fails the job
+        name: The kit's policy checks
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+          KIT_SHA: ${{ steps.kit.outputs.sha }}
+          OWN_HOOKS: ${{ inputs.skip }},${{ inputs.deny-hooks }}
+        run: python "${KIT}/quality/policy.py" --without spdx-headers --lint-skip "${OWN_HOOKS}" --github --summary "${GITHUB_STEP_SUMMARY}" --kit-sha "${KIT_SHA}"
+      - why: speed only; the key is the hook list, and no other job restores it
+        name: Cache the hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - why: all files, not the changed ones; only the hooks that other jobs run, and the caller's own, are skipped
+        name: Every pre-commit hook on every file
+        env:
+          OWN_HOOKS: ${{ inputs.skip }},${{ inputs.deny-hooks }}
+        run: |
+          # The policy checks ran above from the kit itself; mypy, reuse lint
+          # and the header lines have workflows of their own. The first five
+          # ids are the hooks of a repository that still holds kit 2.x copies.
+          export SKIP="kleidos-quality,kleidos-md-nowrap,kleidos-agent-docs,kleidos-spdx-headers,mypy,kleidos-kit,kleidos-mypy,reuse,${OWN_HOOKS}"
+          pre-commit run --all-files --show-diff-on-failure --color always
+      - why: the audits the offline hook cannot make; a finding fails the job
+        name: zizmor, online audits included
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --no-progress .
+reusable-mypy.yml:
+  name: Quality kit types
+  'on':
+    workflow_call:
+      inputs:
+        python-version:
+          description: The Python to check against (empty reads python-version-file)
+          type: string
+          default: ''
+        python-version-file:
+          description: The file naming that Python
+          type: string
+          default: .python-version
+        install:
+          description: The command that installs the repository's dependencies
+          type: string
+          default: ''
+  permissions: {}
+  jobs:
+    mypy:
+      name: 🔎 mypy (strict)
+      runs-on: ubuntu-latest
+      timeout-minutes: 20
+      permissions:
+        contents: read
+      why: 'a read token: the repository''s dependencies are installed here'
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: ${{ inputs.python-version }}
+          python-version-file: ${{ inputs.python-version == '' && inputs.python-version-file || '' }}
+      - why: every package is checked against its SHA-256
+        name: Install the kit's tools (hashed)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+      - why: the caller's command, in a shell that stops at the first failure, from the environment and never pasted into the script
+        name: Install the repository's dependencies
+        if: inputs.install != ''
+        env:
+          INSTALL: ${{ inputs.install }}
+        run: bash -euo pipefail -c "${INSTALL}"
+      - why: mypy's verdict, every group of it, fails the job
+        name: mypy, once per group
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python "${KIT}/quality/mypy_groups.py" --github
+reusable-osv.yml:
+  name: Quality kit dependencies
+  'on':
+    workflow_call: null
+  permissions: {}
+  jobs:
+    osv:
+      name: 🛡️ OSV-Scanner
+      runs-on: ubuntu-latest
+      timeout-minutes: 10
+      permissions:
+        contents: read
+      why: a read token, no condition
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: the binary is the one tools.lock pins
+        name: Install OSV-Scanner (pinned, SHA-256 checked)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python3 "${KIT}/quality/fetch_tool.py" osv-scanner "${RUNNER_TEMP}/bin"
+      - why: a known vulnerability, and any error of the scanner, fails the job; only no manifest at all passes besides a clean scan
+        name: Scan every manifest and lockfile
+        run: |
+          set -uo pipefail
+          status=0
+          "${RUNNER_TEMP}/bin/osv-scanner" scan source --recursive --format markdown . > "${RUNNER_TEMP}/osv.md" || status=$?
+          { echo "## OSV-Scanner"; echo; cat "${RUNNER_TEMP}/osv.md"; } >> "${GITHUB_STEP_SUMMARY}"
+          cat "${RUNNER_TEMP}/osv.md"
+          case "${status}" in
+            0) echo "No known vulnerability." ;;
+            128) echo "No manifest or lockfile in the tree: nothing to scan." ;;
+            *) echo "::error::OSV-Scanner found known vulnerabilities (exit ${status}): fix them, or record each in osv-scanner.toml with a reason and an ignoreUntil"; exit "${status}" ;;
+          esac
+reusable-python-tests.yml:
+  name: Python tests
+  'on':
+    workflow_call:
+      inputs:
+        python-version:
+          description: The Python to test with (empty reads python-version-file)
+          type: string
+          default: ''
+        python-version-file:
+          description: The file naming that Python (check_quality.py requires .python-version)
+          type: string
+          default: .python-version
+        install:
+          description: The command that installs the repository's pinned dependencies
+          type: string
+          default: python -m pip install -r requirements.txt
+        run:
+          description: The test command; it writes the coverage report
+          type: string
+          required: true
+        coverage-report:
+          description: The coverage report the test command writes (empty for none)
+          type: string
+          default: coverage.xml
+        coverage-artifact:
+          description: The artifact the report is uploaded as, for the SonarCloud job
+          type: string
+          default: coverage
+        timeout-minutes:
+          description: The bound for the whole job
+          type: number
+          default: 15
+  permissions: {}
+  jobs:
+    tests:
+      name: 🧪 Tests and coverage
+      runs-on: ubuntu-latest
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      permissions:
+        contents: read
+      why: 'a read token: the repository''s code runs here'
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: ${{ inputs.python-version }}
+          python-version-file: ${{ inputs.python-version == '' && inputs.python-version-file || '' }}
+      - why: the caller's command, in a shell that stops at the first failure, from the environment and never pasted into the script
+        name: Install the repository's dependencies
+        if: inputs.install != ''
+        env:
+          INSTALL: ${{ inputs.install }}
+        run: bash -euo pipefail -c "${INSTALL}"
+      - why: the caller's command, in a shell that stops at the first failure
+        name: Tests
+        env:
+          RUN: ${{ inputs.run }}
+        run: bash -euo pipefail -c "${RUN}"
+      - why: a report that was promised and is not there fails the job
+        name: Hand the coverage report to the SonarCloud job
+        if: inputs.coverage-report != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ inputs.coverage-artifact }}
+          path: ${{ inputs.coverage-report }}
+          if-no-files-found: error
+          retention-days: 1
+reusable-quality-drift.yml:
+  name: Quality kit drift
+  'on':
+    workflow_call: null
+  permissions: {}
+  jobs:
+    drift:
+      name: 🔭 Compare with the newest kit release
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      permissions:
+        contents: read
+      why: 'a read token: it writes nowhere'
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.15'
+      - why: a kit 2.x repository asks the newest kit, which answers
+        name: Is the recorded kit behind the newest release?
+        id: compare
+        run: |
+          set -euo pipefail
+          kit="${RUNNER_TEMP}/kit"
+          git clone -q --filter=blob:none https://github.com/kleidos-dev/.github "${kit}"
+          recorded="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
+          python -m pip install -q --require-hashes -r "${kit}/quality/requirements-tools.txt"
+          # The kit's own sync.py names the newest quality-v* tag and compares
+          # what a repository receives at the two commits (key=value lines).
+          python "${kit}/quality/sync.py" --drift "${recorded}" > "${RUNNER_TEMP}/drift.txt"
+          cat "${RUNNER_TEMP}/drift.txt"
+          tag="$(sed -n 's/^tag=//p' "${RUNNER_TEMP}/drift.txt")"
+          behind="$(sed -n 's/^behind=//p' "${RUNNER_TEMP}/drift.txt")"
+          if [ "${behind}" = true ]; then
+            git -C "${kit}" checkout -q "${tag}"
+          fi
+          {
+            echo "kit=${kit}"
+            echo "tag=${tag}"
+            echo "commit=$(sed -n 's/^commit=//p' "${RUNNER_TEMP}/drift.txt")"
+            echo "behind=${behind}"
+          } >> "${GITHUB_OUTPUT}"
+      - why: only when behind, which kit 3 never answers; kept for the 2.x callers
+        name: Dry-run the new kit on a copy of this tree
+        if: steps.compare.outputs.behind == 'true'
+        env:
+          KIT: ${{ steps.compare.outputs.kit }}
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+          tree="${RUNNER_TEMP}/tree"
+          cp -a "${GITHUB_WORKSPACE}" "${tree}"
+          python "${KIT}/quality/sync.py" --write "${tree}" > "${RUNNER_TEMP}/sync.log" || true
+          python "${KIT}/quality/check_quality.py" --kit "${KIT}" --repo "${tree}" --json "${RUNNER_TEMP}/check.json" > /dev/null || true
+          (cd "${tree}" && ruff check --output-format concise --exit-zero . > "${RUNNER_TEMP}/ruff.txt" 2>&1 || true)
+          git -C "${tree}" add -A
+          git -C "${tree}" diff --cached --stat > "${RUNNER_TEMP}/diffstat.txt"
+      - why: only when behind, as above
+        name: Report what a sync would bring
+        if: steps.compare.outputs.behind == 'true'
+        env:
+          KIT: ${{ steps.compare.outputs.kit }}
+          RELEASE_COMMIT: ${{ steps.compare.outputs.commit }}
+          TAG: ${{ steps.compare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 - "${RUNNER_TEMP}" <<'PY' >> "${GITHUB_STEP_SUMMARY}"
+          import json, os, sys
+          tmp = sys.argv[1]
+          kit = os.environ["KIT"]
+          commit = os.environ["RELEASE_COMMIT"]
+          new = open(os.path.join(kit, "quality", "VERSION"), encoding="utf-8").read().strip()
+          old = json.load(open(".github/quality/SOURCE.json", encoding="utf-8")).get("version", "?")
+          path = os.path.join(tmp, "check.json")
+          check = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {"problems": []}
+          ruff = [ln for ln in open(os.path.join(tmp, "ruff.txt"), encoding="utf-8").read().splitlines() if ln.count(":") >= 3]
+          diffstat = open(os.path.join(tmp, "diffstat.txt"), encoding="utf-8").read().strip()
+          print(f"## Quality kit {new} available")
+          print()
+          tag = os.environ["TAG"]
+          print(f"The Kleidos quality kit's newest release is **{new}** ([{tag}](https://github.com/kleidos-dev/.github/tree/{tag}), {commit[:12]}); this repository records **{old}**.")
+          print()
+          print(f"A sync is one pull request: check out `{tag}` in a clone of kleidos-dev/.github beside this repository, run `python3 ../.github/quality/sync.py --write .`, then fix every new finding in the same pull request (docs/quality.md in kleidos-dev/.github, \"Taking a new kit release\"). The kit's quality/CHANGELOG.md says what changed.")
+          print()
+          print(f"A dry run of the new kit on this repository's default branch found **{len(check['problems'])}** kit problem(s) and **{len(ruff)}** ruff finding(s); mypy is not counted here (it needs the repository's dependencies).")
+          print()
+          for p in check["problems"][:30]:
+              print(f"- `{p['where']}` [{p['rule']}] {p['message']}")
+          if len(check["problems"]) > 30:
+              print(f"- ... and {len(check['problems']) - 30} more")
+          print()
+          print("<details><summary>Files the sync would change</summary>")
+          print()
+          print("```text")
+          print(diffstat or "(none)")
+          print("```")
+          print()
+          print("</details>")
+          PY
+          echo "::error title=Quality kit behind::kleidos-dev/.github has released quality kit ${TAG}; the job summary says what a sync would bring."
+          exit 1
+reusable-reuse.yml:
+  name: Quality kit licensing
+  'on':
+    workflow_call: null
+  permissions: {}
+  jobs:
+    reuse:
+      name: ⚖️ reuse lint and header lines
+      runs-on: ubuntu-latest
+      timeout-minutes: 10
+      permissions:
+        contents: read
+      why: a read token, the whole history for the years
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.15'
+      - why: every package is checked against its SHA-256
+        name: Install the kit's tools (hashed)
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+      - why: REUSE's own verdict fails the job
+        name: Every file states its copyright and license (reuse lint)
+        run: reuse lint
+      - why: the header lines and the owner's statement, the one check the lint job leaves to this one
+        name: Every file that can carry a comment carries both lines
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+          KIT_SHA: ${{ steps.kit.outputs.sha }}
+        run: python "${KIT}/quality/policy.py" --only spdx-headers --kit-sha "${KIT_SHA}"
+reusable-secrets.yml:
+  name: Quality kit secrets
+  'on':
+    workflow_call: null
+  permissions: {}
+  jobs:
+    gitleaks:
+      name: 🔐 gitleaks, history and tree
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      permissions:
+        contents: read
+      why: a read token, the whole history
+      steps:
+      - why: the code under check; no credential is left for the steps after it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
+        name: The kit this workflow is part of
+        id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
+          else
+            kit="${RUNNER_TEMP}/kit"
+            git init -q "${kit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
+            git -C "${kit}" checkout -q FETCH_HEAD
+          fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
+      - why: one Python everywhere, not the runner's
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.15'
+      - why: the binary is the one tools.lock pins, and it comes first on the PATH
+        name: Install gitleaks (pinned, SHA-256 checked) and the kit's tools
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: |
+          python3 "${KIT}/quality/fetch_tool.py" gitleaks "${RUNNER_TEMP}/bin"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+      - why: the whole history, every default rule, inline allow comments ignored, a finding fails the job
+        name: History, default rules
+        run: gitleaks git . --config .gitleaks.toml --no-banner --redact --ignore-gitleaks-allow --verbose
+      - why: the whole history again, with the MAC rules that extend nothing
+        name: History, MAC rules
+        run: gitleaks git . --config .gitleaks-mac.toml --no-banner --redact --ignore-gitleaks-allow --verbose
+      - why: 'the tree too: what a history scan''s path rules may skip'
+        name: Tree, default rules
+        run: gitleaks dir . --config .gitleaks.toml --no-banner --redact --ignore-gitleaks-allow --verbose
+      - why: the tree with the MAC rules
+        name: Tree, MAC rules
+        run: gitleaks dir . --config .gitleaks-mac.toml --no-banner --redact --ignore-gitleaks-allow --verbose
+      - why: proves the rules still find what they are for; its failure fails the job
+        name: The MAC rules fire on planted real shapes and spare the fakes
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+        run: python "${KIT}/quality/check_quality.py" --plant-mac
+reusable-sonarcloud.yml:
+  name: SonarCloud
+  'on':
+    workflow_call:
+      inputs:
+        coverage-artifact:
+          description: The artifact holding the coverage report sonar-project.properties names (empty for none)
+          type: string
+          default: coverage
+  permissions: {}
+  jobs:
+    sonarcloud:
+      name: 📊 Analysis
+      if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main')
+      runs-on: ubuntu-latest
+      timeout-minutes: 15
+      permissions:
+        contents: read
+        id-token: write
+      why: main and pull requests against it, and nothing else; the OIDC token is the job's purpose
+      steps:
+      - why: a pull request GitHub gives no token ends green with a notice; anything else must be analyzed
+        name: OIDC token available
+        id: oidc
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${EVENT}" = pull_request ] && { [ "${HEAD_REPO}" != "${REPO}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; }; then
+            echo "::notice title=SonarCloud skipped::GitHub gives this pull request (from ${HEAD_REPO}) no OIDC token, so the secretless analysis cannot run; it runs once the change is on main."
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          fi
+      - why: the code under check; no credential is left for the steps after it
+        if: steps.oidc.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - why: the report of the tests job of this run
+        name: Fetch the coverage report
+        if: steps.oidc.outputs.run == 'true' && inputs.coverage-artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ${{ inputs.coverage-artifact }}
+      - why: a project's token for 30 minutes, and no stored secret
+        name: SonarCloud token from the OIDC token
+        if: steps.oidc.outputs.run == 'true'
+        id: auth
+        uses: SonarSource/sonarqube-auth-action@b372e2c2930aadfcc4f4399446da1e12772709ad
+      - why: the scan's failure fails the job
+        name: SonarCloud Scan
+        if: steps.oidc.outputs.run == 'true'
+        uses: SonarSource/sonarqube-scan-action@70bad232163b09d998ea0707ee80c0ec80798c16
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+      - why: an analysis the server refuses fails the job, and so does no answer
+        name: SonarCloud accepted the analysis
+        if: steps.oidc.outputs.run == 'true'
+        timeout-minutes: 10
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+        run: |
+          set -euo pipefail
+          task="$(sed -n 's/^ceTaskId=//p' .scannerwork/report-task.txt)"
+          if [ -z "${task}" ]; then
+            echo "::error::The scanner wrote no ceTaskId to .scannerwork/report-task.txt"
+            exit 1
+          fi
+          while :; do
+            body="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+              --retry 3 --retry-all-errors \
+              -H "Authorization: Bearer ${SONAR_TOKEN}" \
+              "${SONAR_HOST_URL}/api/ce/task?id=${task}")"
+            status="$(jq -r '.task.status' <<<"${body}")"
+            case "${status}" in
+              SUCCESS)
+                echo "SonarCloud accepted analysis $(jq -r '.task.analysisId' <<<"${body}")"
+                break
+                ;;
+              PENDING|IN_PROGRESS)
+                sleep 5
+                ;;
+              *)
+                reason="$(jq -r '.task.errorMessage // "no reason given"' <<<"${body}")"
+                echo "::error::SonarCloud did not accept the analysis (${status}): ${reason}"
+                exit 1
+                ;;
+            esac
+          done
+sonar.yml:
+  name: Quality kit, sonar
+  'on':
+    workflow_call:
+      inputs:
+        coverage-artifact:
+          description: The artifact check.yml uploaded the coverage report as (empty for none)
+          type: string
+          default: coverage
+  permissions: {}
+  jobs:
+    sonarcloud:
+      name: 📊 SonarCloud
+      uses: ./.github/workflows/reusable-sonarcloud.yml
+      with:
+        coverage-artifact: ${{ inputs.coverage-artifact }}
+      permissions:
+        contents: read
+        id-token: write
+      why: the one call that may buy a token

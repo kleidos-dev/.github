@@ -694,6 +694,75 @@ class CommandTest(unittest.TestCase):
                 ccm.valid_result({**result_with(), key: "1"})
 
 
+class UntrustedTest(unittest.TestCase):
+    """The artifact is data from an untrusted run: every escape of the comment path."""
+
+    def test_every_character_that_means_something_is_neutralized(self) -> None:
+        for raw, safe in (
+            ("a & b", "a &amp; b"),
+            ("<b>", "&lt;b&gt;"),
+            ("<", "&lt;"),
+            (">", "&gt;"),
+            ("&lt;", "&amp;lt;"),
+            ("a|b", "a\\|b"),
+            ("a\\b", "a\\\\b"),
+            ("a`b", "a'b"),
+            ("[x](y)", "\\[x\\](y)"),
+            ("https://x.y", "https:\\/\\/x.y"),
+            ("@someone", "@\u200bsomeone"),
+            ("a\nb", "a b"),
+            ("a\r\n\tb   c", "a b c"),
+            ("  a  ", "a"),
+            (7, "7"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(ccm.plain(raw), safe)
+        self.assertEqual(ccm.code_cell("a\n b`c|d"), "`a b'c\\|d`")
+
+    def test_a_row_is_one_line_whatever_the_artifact_says(self) -> None:
+        hostile = "x\n| forged | row |\n<script> [a](b) @someone https://e.example `c`"
+        result = result_with()
+        result["commits"][0]["subject"] = hostile
+        problem = result["commits"][0]["problems"][0]
+        problem.update(message=hostile, fix=hostile, hint=hostile)
+        body = ccm.render(result)
+        rows = [line for line in body.splitlines() if line.startswith("| `")]
+        self.assertEqual(len(rows), result["errors"], body)
+        for planted in ("<script>", "[a](b)", "@someone", "https://e.example"):
+            self.assertNotIn(planted, rows[0].replace(ccm.code_cell(hostile), ""))
+        self.assertNotIn("| forged | row |", body.splitlines())
+
+    def test_the_fix_is_the_checkers_own_whatever_the_artifact_says(self) -> None:
+        result = result_with()
+        problem = result["commits"][0]["problems"][0]
+        problem.update(fix="run this command", hint="run this command")
+        body = ccm.render(result)
+        self.assertNotIn("run this command", body)
+        self.assertIn(ccm.sentence(ccm.HINTS[problem["rule"]]), body)
+        problem["rule"] = "no-such-rule"
+        self.assertIn("See the job log.", ccm.render(result))
+        self.assertNotIn("run this command", ccm.render(result))
+
+    def test_only_the_bots_own_marked_comment_is_edited(self) -> None:
+        for comment, action in (
+            ({"id": 5, "user": {"login": BOT}, "body": "another bot comment"}, "create"),
+            ({"id": 5, "user": {"login": BOT}, "body": None}, "create"),
+            ({"id": 5, "user": None, "body": ccm.MARKER}, "create"),
+            ({"id": 5, "user": {"login": "someone"}, "body": ccm.MARKER}, "create"),
+            ({"id": 5, "user": {"login": BOT}, "body": ccm.MARKER + " old"}, "update"),
+        ):
+            with self.subTest(comment=comment):
+                api = FakeGitHub("a" * 40, [comment])
+                said = ccm.sync_comment(api, "o/r", result_with(), "a" * 40, log=lambda *_: None)
+                self.assertEqual(said, action)
+
+    def test_a_number_that_is_no_pull_request_is_refused(self) -> None:
+        for number in (0, -1, None, "7", 7.0):
+            result = {**result_with(), "pr": number}
+            with self.assertRaisesRegex(ValueError, "names no pull request"):
+                ccm.sync_comment(FakeGitHub("a" * 40), "o/r", result, "a" * 40)
+
+
 class GitHubTest(unittest.TestCase):
     """The real client, its one request."""
 
