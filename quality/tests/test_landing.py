@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import subprocess
 import unittest
@@ -756,16 +757,19 @@ class LanderTest(unittest.TestCase):
         self.assertIn("moved meanwhile", self.said[0])
 
     def test_the_kit_the_held_and_the_leaving_are_never_walked(self) -> None:
-        declared = ecosystem.load()
-        self.land(
-            only=[r.slug for r in declared.repositories if r.hold or r.folds_into] + [declared.kit]
+        shipped = ecosystem.load()
+        leaving = ecosystem.Repository(
+            "kleidos-dev/leaving", public=False, folds_into="kleidos-dev/brand"
         )
+        declared = dataclasses.replace(shipped, repositories=(*shipped.repositories, leaving))
+        only = [r.slug for r in declared.repositories if r.hold or r.folds_into] + [declared.kit]
+        landing.land(declared, only, True, self.lander())
         self.assertEqual(self.api.gets, ["user"])
         self.assertEqual(self.api.puts, [])
         said = "\n".join(self.said)
         self.assertIn(f"skipped: {declared.kit}: the kit's releases are made by hand", said)
         self.assertIn("skipped: jmrplens/kleidos: on hold", said)
-        self.assertIn("skipped: kleidos-dev/social: it moves into kleidos-dev/brand", said)
+        self.assertIn("skipped: kleidos-dev/leaving: it moves into kleidos-dev/brand", said)
 
     def test_what_it_says_it_merged(self) -> None:
         for change, merge, landed in (

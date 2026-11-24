@@ -75,13 +75,6 @@ public = true
 cla = true
 sonar = "kleidos-dev_cla"
 
-# Moved into brand's social/ (kleidos-dev/brand#23); to be deleted.
-[[repository]]
-slug = "kleidos-dev/social"
-public = true
-sonar = "kleidos-dev_social"
-folds_into = "kleidos-dev/brand"
-
 [[repository]]
 slug = "kleidos-dev/agents"
 public = false
@@ -89,12 +82,6 @@ public = false
 [[repository]]
 slug = "kleidos-dev/meter"
 public = false
-
-# Moved into videos' posts/ (kleidos-dev/videos#4); to be deleted.
-[[repository]]
-slug = "kleidos-dev/posts"
-public = false
-folds_into = "kleidos-dev/videos"
 
 # Waits for the firmware to be public (owner, 2026-11-24).
 [[repository]]
