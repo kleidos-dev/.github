@@ -430,6 +430,15 @@ class OwnerStatementTest(unittest.TestCase):
                 problems, notes = self.found()
                 self.assertEqual((len(problems), len(notes)), (0, 1) if held else (1, 0))
 
+    def test_the_lines_of_every_license_text_are_read(self) -> None:
+        wrong = "Copyright (c) 2026 J. M. Requena Plens\n"
+        for rel in ("LICENSE", "LICENSES/MIT.txt", "docs/COPYING"):
+            fx.write(self.root, rel, wrong)
+        fx.write(self.root, "NOTICE", wrong)
+        problems, _notes = self.found()
+        self.assertEqual(len(problems), 3, problems)
+        self.assertTrue(all("the owner's copyright line is" in p for p in problems), problems)
+
     def test_the_whole_check_reports_both(self) -> None:
         fx.write(self.root, "LICENSE", f"Copyright (c) 2026 {H} <{self.MAIL}>\n")
         fx.commit(self.root)
