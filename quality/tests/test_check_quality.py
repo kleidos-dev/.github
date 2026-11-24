@@ -385,6 +385,7 @@ class ConformanceTest(unittest.TestCase):
             ("(?iU)x", True),
             ("[a&&b]", True),
             ("(", True),
+            ("x\\", True),  # a backslash at the end
             ("a(?i)b", True),  # Python takes a flag only at the start
             ("\\\\pL", False),
             ("(?i)x", False),

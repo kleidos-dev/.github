@@ -1739,30 +1739,44 @@ def glob_covers_all(pattern: str, gitignore: bool = True) -> bool:
 # `\p{L}`), a POSIX class (`[[:alpha:]]`), the flags `U` (lazy by default)
 # and `-u` (bytes). The kit judges a pattern only in the syntax all three
 # share; one outside it counts as covering everything.
-FOREIGN_REGEX = re.compile(r"(?<!\\)(?:\\\\)*\\[pP]|\[:\^?[A-Za-z]+:\]")
+POSIX_CLASS = re.compile(r"\[:\^?[A-Za-z]+:\]")
 # An inline flag group: `(?flags)`, `(?flags:`, `(?flags-flags:`.
 FLAG_GROUP = re.compile(r"\(\?(?P<on>[A-Za-z]*)(?:-(?P<off>[A-Za-z]*))?(?P<end>[:)])")
 
 
+def escapes(pattern: str) -> list[str]:
+    """The letter after each backslash that escapes one, read left to right (`\\\\p` has none)."""
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern[i] == "\\" and i + 1 < len(pattern):
+            out.append(pattern[i + 1])
+            i += 2
+        else:
+            i += 1
+    return out
+
+
+def foreign_flags(group: re.Match[str]) -> bool:
+    """Whether a flag group asks what Python reads otherwise: `U`, or `u` switched off."""
+    off = group["off"] or ""
+    return "U" in group["on"] + off or "u" in off
+
+
+def python_flags(group: re.Match[str]) -> str:
+    """A flag group without Rust's `R` (CRLF lines), which changes only where a line ends."""
+    on, off = group["on"].replace("R", ""), (group["off"] or "").replace("R", "")
+    if not on and not off:
+        return "(?:" if group["end"] == ":" else ""
+    return f"(?{on}{'-' + off if off else ''}{group['end']}"
+
+
 def python_syntax(pattern: str) -> str | None:
-    """A typos or gitleaks pattern in Python's syntax, or None where Python reads it otherwise.
-
-    Rust's `R` flag (CRLF lines) changes only where a line ends, and is dropped.
-    """
-    if FOREIGN_REGEX.search(pattern):
+    """A typos or gitleaks pattern in Python's syntax, or None where Python reads it otherwise."""
+    if set(escapes(pattern)) & {"p", "P"} or POSIX_CLASS.search(pattern):
         return None
-    foreign = False
-
-    def flags(group: re.Match[str]) -> str:
-        nonlocal foreign
-        on, off = group["on"].replace("R", ""), (group["off"] or "").replace("R", "")
-        foreign = foreign or "U" in on + off or "u" in off
-        if not on and not off:
-            return "(?:" if group["end"] == ":" else ""
-        return f"(?{on}{'-' + off if off else ''}{group['end']}"
-
-    python = FLAG_GROUP.sub(flags, pattern)
-    return None if foreign else python
+    if any(foreign_flags(group) for group in FLAG_GROUP.finditer(pattern)):
+        return None
+    return FLAG_GROUP.sub(python_flags, pattern)
 
 
 def tool_regex(pattern: str) -> re.Pattern[str] | None:
