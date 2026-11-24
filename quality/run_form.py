@@ -37,7 +37,7 @@ import posixpath
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import check_quality as cq
@@ -113,6 +113,21 @@ def base_configs(kit: cq.Kit, profiles: Iterable[str]) -> dict[str, str]:
 
 # --------------------------------------------------------------------------
 # Records of copies
+
+
+def target_problem(root: Path, rel: str) -> str | None:
+    """Why a path of a record is not one of the repository's own files, or None."""
+    parts = PurePosixPath(rel).parts
+    if any(part.lower() == ".git" for part in parts):
+        return f"{rel} is in git's own folder"
+    if not parts or PurePosixPath(rel).is_absolute() or ".." in parts:
+        return f"{rel} is not in the repository"
+    path = root
+    for part in parts:
+        path /= part
+        if path.is_symlink():
+            return f"{path.relative_to(root).as_posix()} is a symbolic link"
+    return None
 
 
 def record_problems(data: dict[str, Any], today: dt.date) -> list[str]:

@@ -25,8 +25,10 @@ fails), late (a copy or a bot's pull request past its limit: first in the
 list, fails nothing), amber (behind), frozen, note, green. Being behind is
 never red (owner, 2026-11-24).
 
-The declared list is ecosystem.toml beside this file. Reads only: git clones
-and GET requests through gh; only land --merge writes, and only merges.
+The declared list is ecosystem.toml beside this file; what is not published,
+the Apps that may write, is ~/.config/kleidos/ecosystem.local.toml. Reads
+only: git clones and GET requests through gh; only land --merge writes, and
+only merges.
 
 Python 3.14 or newer, git and gh; PyYAML for preview and refresh.
 """
@@ -57,6 +59,8 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 CENTRAL = HERE.parent
 DECLARED = HERE / "ecosystem.toml"
+# What is declared but not published: the Apps that may write.
+LOCAL = Path.home() / ".config" / "kleidos" / "ecosystem.local.toml"
 STATES = ("red", "late", "amber", "frozen", "note", "green")
 TITLES = {
     "red": "Red: broken, or not what is declared",
@@ -272,6 +276,7 @@ class Report:
     reader: Reader
     now: dt.datetime
     everything: bool
+    local: Path = LOCAL
     rows: list[Row] = field(default_factory=list)
     withheld: int = 0
 
@@ -600,8 +605,12 @@ def check_links(report: Report) -> None:
 
 def branch_rules(
     rulesets: list[dict[str, Any]], include: str
-) -> tuple[set[str], set[str], dict[str, Any]]:
-    """The rule types, the bypass actors and the required checks on one ref pattern."""
+) -> tuple[set[str], set[str], dict[str, Any], set[str]]:
+    """The rules on one ref pattern.
+
+    The rule types, the bypass actors, the required checks, and of those the
+    ones no ruleset requires without anybody who may bypass it.
+    """
     chosen = [
         r
         for r in rulesets
@@ -609,21 +618,27 @@ def branch_rules(
     ]
     types = {rule["type"] for r in chosen for rule in r["rules"]}
     who = {b["actor_type"] for r in chosen for b in r.get("bypass_actors") or []}
-    checks = {
-        c["context"]: c.get("integration_id")
-        for r in chosen
-        for rule in r["rules"]
-        if rule["type"] == "required_status_checks"
-        for c in rule["parameters"]["required_status_checks"]
-    }
-    return types, who, checks
+    checks: dict[str, Any] = {}
+    firm = set()
+    for found in chosen:
+        for rule in found["rules"]:
+            if rule["type"] != "required_status_checks":
+                continue
+            for check in rule["parameters"]["required_status_checks"]:
+                checks[check["context"]] = check.get("integration_id")
+                if not found.get("bypass_actors"):
+                    firm.add(check["context"])
+    return types, who, checks, set(checks) - firm
 
 
 def check_rules(
-    report: Report, where: str, found: tuple[set[str], set[str], dict[str, Any]], wanted: list[str]
+    report: Report,
+    where: str,
+    found: tuple[set[str], set[str], dict[str, Any], set[str]],
+    wanted: list[str],
 ) -> None:
     """A ruleset against the rules and the bypass the list declares."""
-    types, who, _checks = found
+    types, who, _checks, _loose = found
     lacking = sorted(set(wanted) - types)
     if lacking:
         report.add("red", "setting", f"{where}: no rule {', '.join(lacking)}")
@@ -644,6 +659,8 @@ def check_repository(report: Report, repo: Repository, served: set[str]) -> None
             report.add(
                 "red", "setting", f"{repo.slug} main: {context} of App {app} is not required"
             )
+        elif context in main[3]:
+            report.add("red", "setting", f"{repo.slug} main: {context} may be bypassed")
     if repo.cla and repo.slug not in served:
         report.add("red", "setting", f"{repo.slug}: the CLA does not serve it")
     if repo.slug != report.declared.kit:
@@ -689,8 +706,11 @@ def check_settings(report: Report) -> None:
 
 
 def check_apps(report: Report) -> None:
-    """The installed Apps that can write, against the declared ones."""
-    declared = report.declared.raw["apps"]
+    """The installed Apps that can write, against the local list."""
+    if not report.local.is_file():
+        report.add("note", "setting", f"no list of the Apps that may write at {report.local}")
+        return
+    declared = tomllib.loads(report.local.read_text(encoding="utf-8"))["apps"]
     path = f"orgs/{report.declared.login}/installations?per_page=100"
     for app in report.reader.items(path, key="installations"):
         watched = ("actions", "administration", "checks", "contents", "statuses", "workflows")
@@ -815,7 +835,8 @@ def run_report(args: argparse.Namespace) -> int:
         return 2
     with tempfile.TemporaryDirectory(prefix="ecosystem-") as tmp:
         reader = Reader(Path(tmp), ssh=args.all)
-        report = Report(load(args.declared), reader, dt.datetime.now(dt.UTC), args.all)
+        now = dt.datetime.now(dt.UTC)
+        report = Report(load(args.declared), reader, now, args.all, args.local)
         head = build(report, kit_pins_behind)
     text = render(report, head)
     if not report.everything and names_private(report.declared, text):
@@ -884,6 +905,7 @@ def main(argv: list[str] | None = None) -> int:
     verbs = ap.add_subparsers(dest="verb", required=True)
     report = verbs.add_parser("report", help="what is behind, broken or undeclared")
     report.add_argument("--all", action="store_true", help="every repository (a person's machine)")
+    report.add_argument("--local", type=Path, default=LOCAL, help="another local list")
     report.add_argument("--out", type=Path, help="also write it here, as ecosystem-<date>.md")
     report.add_argument("--notify", action="store_true", help="also raise a desktop notification")
     report.add_argument("--summary", type=Path, help="also append it here (GITHUB_STEP_SUMMARY)")

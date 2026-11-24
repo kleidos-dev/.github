@@ -49,8 +49,6 @@ worker = 7
 main = ["deletion", "update"]
 kit_branch = ["creation"]
 kit_tags = ["deletion"]
-[apps]
-known = ["checks"]
 [[worker]]
 url = "https://cla.example/version"
 repository = "kleidos-dev/cla"
@@ -139,7 +137,8 @@ class ReportCase(unittest.TestCase):
         self._tmp.cleanup()
 
     def fresh(self, everything: bool = False) -> eco.Report:
-        self.report = eco.Report(eco.load(self.path), self.reader, NOW, everything)
+        local = self.path.with_name("local.toml")
+        self.report = eco.Report(eco.load(self.path), self.reader, NOW, everything, local)
         return self.report
 
     def rows(self, state: str | None = None, kind: str | None = None) -> list[str]:
@@ -413,6 +412,7 @@ class PublicTest(ReportCase):
             path = "orgs/kleidos-dev/installations?per_page=100"
             self.reader.answers[path] = {"installations": [app]}
             report = self.fresh(everything)
+            report.local.write_text("[apps]\n", encoding="utf-8")
             text = eco.render(report, eco.build(report, lambda: ["a pin"]))
             self.assertEqual({r.kind for r in report.rows}, kinds)
             self.assertEqual("the App odd can write contents" in text, everything)
@@ -657,11 +657,15 @@ class SettingTest(ReportCase):
         for slug in (KIT, BOARDS, CLA, SECRET, FIRMWARE):
             self.reader.put(slug, ".github/dependabot.yml", "- package-ecosystem: pre-commit")
         for n, slug in enumerate((KIT, BOARDS, CLA)):
-            self.answers[f"repos/{slug}/rulesets"] = [{"id": n}]
+            self.answers[f"repos/{slug}/rulesets"] = [{"id": n}, {"id": n + 4}]
             self.answers[f"repos/{slug}/rulesets/{n}"] = self.rules(
                 "branch", "~DEFAULT_BRANCH", ["deletion", "update"]
             )
-        self.answers[f"repos/{KIT}/rulesets"] = [{"id": 0}, {"id": 8}, {"id": 9}]
+            # The required checks are a ruleset of their own, which nobody may bypass.
+            self.answers[f"repos/{slug}/rulesets/{n + 4}"] = self.rules(
+                "branch", "~DEFAULT_BRANCH", []
+            )
+        self.answers[f"repos/{KIT}/rulesets"] += [{"id": 8}, {"id": 9}]
         self.answers[f"repos/{KIT}/rulesets/8"] = self.rules(
             "branch", "refs/heads/v[0-9]*", ["creation"]
         )
@@ -678,8 +682,8 @@ class SettingTest(ReportCase):
             "target": target,
             "enforcement": "active",
             "conditions": {"ref_name": {"include": [include]}},
-            "bypass_actors": [{"actor_type": "OrganizationAdmin"}],
-            "rules": [{"type": t} for t in types] + ([required] if target == "branch" else []),
+            "bypass_actors": [{"actor_type": "OrganizationAdmin"}] if types else [],
+            "rules": [{"type": t} for t in types] + ([] if types else [required]),
             **more,
         }
 
@@ -707,6 +711,7 @@ class SettingTest(ReportCase):
         self.assert_red(f"{KIT} tags: no rule deletion")
         self.answers[f"repos/{BOARDS}/rulesets"] = None
         self.assert_red(f"{BOARDS} main: no rule deletion, update")
+        self.assert_red(f"{BOARDS} main: gate of App 1 is not required")
 
     def test_who_may_bypass(self) -> None:
         self.answers[f"repos/{BOARDS}/rulesets/1"]["bypass_actors"].append(
@@ -715,12 +720,25 @@ class SettingTest(ReportCase):
         self.assert_red(f"{BOARDS} main: Integration may bypass the rules")
 
     def test_a_check_from_another_app_is_not_the_check(self) -> None:
-        rules = self.answers[f"repos/{BOARDS}/rulesets/1"]["rules"]
+        rules = self.answers[f"repos/{BOARDS}/rulesets/5"]["rules"]
         for app in (2, None):
             rules[-1]["parameters"]["required_status_checks"][0]["integration_id"] = app
             self.assert_red(f"{BOARDS} main: gate of App 1 is not required")
         rules.pop()
         self.assert_red(f"{BOARDS} main: gate of App 1 is not required")
+
+    def test_a_required_check_nobody_may_bypass(self) -> None:
+        checks = self.answers[f"repos/{BOARDS}/rulesets/5"]
+        main = self.answers[f"repos/{BOARDS}/rulesets/1"]
+        for who in ("OrganizationAdmin", "Integration"):
+            checks["bypass_actors"] = [{"actor_type": who}]
+            self.assert_red(f"{BOARDS} main: gate may be bypassed")
+        checks["bypass_actors"] = None
+        self.assertEqual(self.check(), [])
+        main["rules"] += checks["rules"]
+        self.assertEqual(self.check(), [])  # the one that can be bypassed adds nothing
+        checks["enforcement"] = "disabled"
+        self.assert_red(f"{BOARDS} main: gate may be bypassed")
 
     def test_the_rest(self) -> None:
         self.reader.put(CLA, "registry/config.json", "{}")
@@ -753,6 +771,12 @@ class SettingTest(ReportCase):
         }
         report = self.fresh(everything=True)
         eco.check_apps(report)
+        self.assertEqual(
+            self.rows("note"), [f"no list of the Apps that may write at {report.local}"]
+        )
+        report.rows.clear()
+        report.local.write_text('[apps]\nknown = ["checks"]\n', encoding="utf-8")
+        eco.check_apps(report)
         self.assertEqual(self.rows(), [])
         self.answers[path]["installations"] += [
             {"app_slug": "known", "permissions": {"checks": "write", "workflows": "write"}},
@@ -766,6 +790,12 @@ class SettingTest(ReportCase):
                 "the App new can write contents, statuses",
             ],
         )
+
+    def test_the_published_list_says_nothing_of_the_apps(self) -> None:
+        raw = eco.load().raw
+        self.assertNotIn("apps", raw)
+        self.assertNotIn("workflows", eco.DECLARED.read_text(encoding="utf-8"))
+        self.assertEqual(eco.LOCAL, Path.home() / ".config/kleidos/ecosystem.local.toml")
 
     def test_the_workers(self) -> None:
         url = "https://cla.example/version"
@@ -823,6 +853,12 @@ class CommandTest(ReportCase):
         patched = mock.patch.dict(os.environ)
         patched.start()
         self.addCleanup(patched.stop)
+
+    def test_the_local_list_is_the_one_named(self) -> None:
+        for argv, local in (([], eco.LOCAL), (["--local", "/x.toml"], Path("/x.toml"))):
+            with mock.patch.object(eco, "render", return_value="") as render:
+                self.run_report("--all", *argv)
+            self.assertEqual(render.call_args.args[0].local, local)
 
     def test_only_red_fails(self) -> None:
         for rows, status in (

@@ -148,6 +148,18 @@ class SwitchTest(unittest.TestCase):
         self.switch()
         self.assertTrue(outside.is_file())
 
+    def test_a_dirty_tree_is_refused(self) -> None:
+        fx.commit(self.root, "Hold the kit")
+        for rel in ("AGENTS.md", "new.txt"):
+            fx.git(self.root, "reset", "-q", "--hard")
+            with (self.root / rel).open("a", encoding="utf-8") as fh:
+                fh.write("mine\n")
+            before = fx.git(self.root, "status", "--porcelain")
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(ks.main(["--write", str(self.root)]), 2)
+            self.assertIn("has uncommitted changes: commit them first", err.getvalue())
+            self.assertEqual(fx.git(self.root, "status", "--porcelain"), before)
+
 
 class ConfigsTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -175,6 +187,33 @@ class ConfigsTest(unittest.TestCase):
         record = json.loads((self.root / cq.SOURCE_JSON).read_text(encoding="utf-8"))
         self.assertEqual(record["upstream"]["commit"], "f" * 40)
         self.assertIn("shell", record["kit"]["profiles"])
+
+    def test_nothing_is_written_through_a_link_or_in_gits_folder(self) -> None:
+        outside = self.root.parent / "outside"
+        outside.mkdir()
+        (outside / "zizmor.yml").write_text("keep\n", encoding="utf-8")
+        target = self.root / ".github/zizmor.yml"
+        target.unlink()
+        target.symlink_to(outside / "zizmor.yml")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(ks.main(["--configs", str(self.root)]), 2)
+        self.assertIn(".github/zizmor.yml is a symbolic link", err.getvalue())
+        self.assertEqual((outside / "zizmor.yml").read_text(encoding="utf-8"), "keep\n")
+        linked = self.root / "linked"
+        linked.symlink_to(outside)
+        for rel, why in (
+            (".git/config", "is in git's own folder"),
+            ("sub/.GIT/hooks/x", "is in git's own folder"),
+            ("linked/zizmor.yml", "linked is a symbolic link"),
+            ("linked/new/x", "linked is a symbolic link"),
+            ("linked", "linked is a symbolic link"),
+            ("../outside/zizmor.yml", "is not in the repository"),
+            ("/etc/x", "is not in the repository"),
+            (".", "is not in the repository"),
+        ):
+            with self.assertRaisesRegex(ks.RefusedError, why):
+                ks.own_file(self.root, rel)
+        self.assertEqual(ks.own_file(self.root, "new/x"), self.root / "new/x")
 
     def test_an_old_configuration_is_written_again(self) -> None:
         (self.root / ".github/zizmor.yml").write_text("old\n", encoding="utf-8")
@@ -323,6 +362,7 @@ class CommandTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = fx.consumer(Path(tmp) / "repo")
             sync.write(root, commit=fx.FAKE_COMMIT)
+            fx.commit(root, "Hold the kit")
             status, said = self.run_main("--write", str(root))
             self.assertEqual(status, 0)
             self.assertIn("calls the entry workflows", said)

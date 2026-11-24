@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -177,6 +178,37 @@ class RefreshTest(unittest.TestCase):
         kp.refresh(self.record, None)
         fresh = json.loads(self.record.read_text(encoding="utf-8"))
         self.assertEqual(fresh["taken"], dt.datetime.now(tz=dt.UTC).date().isoformat())
+
+    def test_nothing_is_written_in_gits_folder_or_through_a_link(self) -> None:
+        fx.write(self.source, ".GIT2/config", "evil\n")
+        config = (self.root / ".git/config").read_bytes()
+        fx.write(self.source, "evil", "evil\n")
+        fx.commit(self.source, "Plant")
+        for more, name in (
+            ({"root": "."}, ".git/config"),
+            ({"root": "."}, "sub/.Git/config"),
+            ({}, "../../.git/config"),
+        ):
+            self.write(files={name: "0" * 64}, sources={name: "evil"}, **more)
+            self.refuse("is in git's own folder")
+        self.assertEqual((self.root / ".git/config").read_bytes(), config)
+        outside = self.root.parent / "outside"
+        outside.mkdir()
+        fx.write(outside, "front.svg", "keep\n")
+        folder = self.root / "vendor/boards/a"
+        shutil.rmtree(folder)
+        folder.symlink_to(outside)
+        self.write()
+        self.refuse("vendor/boards/a is a symbolic link")
+        folder.unlink()
+        folder.mkdir()
+        (folder / "front.svg").symlink_to(outside / "front.svg")
+        self.refuse("vendor/boards/a/front.svg is a symbolic link")
+        self.assertEqual((outside / "front.svg").read_text(encoding="utf-8"), "keep\n")
+        moved = outside / "SOURCE.json"
+        self.record.rename(moved)
+        self.record.symlink_to(moved)
+        self.refuse("vendor/boards/SOURCE.json is a symbolic link")
 
     def test_a_record_that_lacks_only_its_date_is_refreshed(self) -> None:
         self.write(taken="")

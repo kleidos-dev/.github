@@ -28,7 +28,8 @@ worker = 7
 "kleidos-dev/boards" = 30
 "kleidos-dev/meter" = 30
 
-# The checks every public main requires, each from the App that posts it.
+# The checks every public main requires, each from the App that posts it, in
+# a ruleset nobody may bypass.
 [required_checks]
 "✅ Check" = 15368   # GitHub Actions
 "📝 CLA" = 5879825   # kleidos-cla
@@ -38,14 +39,6 @@ worker = 7
 main = ["deletion", "non_fast_forward", "required_signatures", "update"]
 kit_branch = ["creation", "deletion", "non_fast_forward", "required_signatures", "update"]
 kit_tags = ["creation", "deletion", "update"]
-
-# The Apps that may write, and what. Another one, or another permission, is red.
-[apps]
-coderabbitai = ["checks", "contents", "statuses", "workflows"]
-greptile-apps = ["checks", "contents", "statuses", "workflows"]
-kleidos-cla = ["actions", "checks"]
-socket-security = ["checks", "contents"]
-sonarqubecloud = ["checks", "statuses"]
 
 # The Workers that answer /version with the tree they were deployed from.
 [[worker]]

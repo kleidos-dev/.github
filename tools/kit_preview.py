@@ -35,9 +35,8 @@ import run_form  # noqa: E402  the kit's module, as above
 import spdx_headers  # noqa: E402  the kit's module, as above
 import sync  # noqa: E402  the kit's module, as above
 
-
-class RefreshError(Exception):
-    """A copy that cannot be refreshed, and why."""
+# A copy that cannot be refreshed, and why.
+RefreshError = kit_switch.RefusedError
 
 
 @dataclass(frozen=True)
@@ -183,8 +182,9 @@ def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> l
         what = "frozen" if data["mode"] == "frozen" else "a generator's output"
         raise RefreshError(f"{record} is {what}: it is made again, not refreshed")
     source = source_checkout(named, record, upstream["repo"])
-    root = Path(git_out(record.parent, "rev-parse", "--show-toplevel"))
-    rel = record.resolve().relative_to(root.resolve()).as_posix()
+    root = Path(git_out(record.parent, "rev-parse", "--show-toplevel")).resolve()
+    rel = (record.parent.resolve() / record.name).relative_to(root).as_posix()
+    kit_switch.own_file(root, rel)
     log = []
     fresh: dict[str, bytes] = {}
     targets = run_form.record_targets(rel, data)
@@ -196,6 +196,7 @@ def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> l
         origin = (source / path).resolve()
         if target is None or not origin.is_relative_to(source.resolve()) or not origin.is_file():
             raise RefreshError(f"{upstream['repo']} has no {path}")
+        kit_switch.own_file(root, target)
         fresh[name] = origin.read_bytes()
     for name, content in fresh.items():
         digest = cq.sha256(content)

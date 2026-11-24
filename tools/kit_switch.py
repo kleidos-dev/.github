@@ -99,6 +99,18 @@ RULES_SECTION = (
 JOB_LINE = re.compile(r"^  (?P<id>[\w-]+):\s*(?:#.*)?$")
 
 
+class RefusedError(Exception):
+    """What a tool will not do, and why."""
+
+
+def own_file(root: Path, rel: str) -> Path:
+    """The path of one of the repository's own files; refused when it leads elsewhere."""
+    why = run_form.target_problem(root, rel)
+    if why:
+        raise RefusedError(why)
+    return root / rel
+
+
 def head_of(path: Path) -> str:
     """The commit a checkout is at."""
     done = subprocess.run(
@@ -113,17 +125,18 @@ def head_of(path: Path) -> str:
 
 def write_configs(repo: Path, kit: cq.Kit, commit: str, today: dt.date) -> list[str]:
     """Write the base configurations the tree calls for and their record."""
-    path = repo / cq.SOURCE_JSON
+    path = own_file(repo, cq.SOURCE_JSON)
     old = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     recorded = (old.get("kit") or {}).get("profiles") or old.get("profiles") or []
     chosen = {"base", *recorded} | cq.detect_profiles(cq.Repo(repo))
     profiles = [p for p in cq.KNOWN_PROFILES if p in chosen]
     configs = run_form.base_configs(kit, profiles)
+    places = {target: own_file(repo, target) for target in configs}
     log = []
     files = {}
     for target, source in sorted(configs.items()):
         data = kit.read(source)
-        dest = repo / target
+        dest = places[target]
         if not dest.is_file() or dest.read_bytes() != data:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
@@ -450,11 +463,20 @@ def main(argv: list[str] | None = None) -> int:
     if not (repo / ".git").exists():
         print(f"kit_switch: {repo} is not the top of a git work tree", file=sys.stderr)
         return 2
+    dirty = ["git", "-C", str(repo), "status", "--porcelain"]
+    if args.write and subprocess.run(dirty, capture_output=True, check=True).stdout:
+        print(f"kit_switch: {repo} has uncommitted changes: commit them first", file=sys.stderr)
+        return 2
     kit = cq.DirKit(KIT)
     commit = args.commit or head_of(KIT)
     today = dt.datetime.now(tz=dt.UTC).date()
     work = switch if args.write else write_configs
-    for line in work(repo.resolve(), kit, commit, today):
+    try:
+        log = work(repo.resolve(), kit, commit, today)
+    except RefusedError as exc:
+        print(f"kit_switch: {exc}", file=sys.stderr)
+        return 2
+    for line in log:
         print(line)
     return 0
 
