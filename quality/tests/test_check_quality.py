@@ -247,6 +247,35 @@ class ConformanceTest(unittest.TestCase):
         fx.write(self.root, "osv-scanner.toml", "= 3\n")
         self.assertFound("osv-scanner.toml: [osv] not valid TOML")
 
+    def test_where_the_scan_runs_and_what_it_runs_is_the_kits(self) -> None:
+        rel = "sonar-project.properties"
+        head = fx.header() + "! one\nsonar.sources=a,\\\n  b\n"
+        self.assertEqual(self.found(), [])
+        for line, key in (
+            ("sonar.scanner.autoconfig.enabled=false", ""),
+            ("sonar.scanner.autoconfig.enabled : false ", ""),
+            ("sonar.qualitygate.wait=true", ""),
+            ("# sonar.host.url=https://evil.example", ""),
+            ("sonar.projectDescription=see\\\n sonar.host.url=x", ""),
+            ("sonar.scanner.autoconfig.enabled=true", "sonar.scanner.autoconfig.enabled"),
+            ("sonar.scanner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
+            ("  sonar.scanner.javaExePath ./evil.sh", "sonar.scanner.javaExePath"),
+            ("sonar.scanner.javaExePath: ./evil.sh", "sonar.scanner.javaExePath"),
+            ("sonar.sca\\\n  nner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
+            ("\\u0073onar.scanner.javaExePath=./evil.sh", "sonar.scanner.javaExePath"),
+            ("sonar\\.scanner.apiBaseUrl=https://evil.example", "sonar.scanner.apiBaseUrl"),
+            ("sonar.host.url=https://evil.example", "sonar.host.url"),
+            ("sonar.region=us", "sonar.region"),
+            ("sonar.nodejs.executable=./evil.sh", "sonar.nodejs.executable"),
+            ("sonar.working.directory=planted", "sonar.working.directory"),
+            ("sonar.scanner.x", "sonar.scanner.x"),
+        ):
+            with self.subTest(line=line):
+                fx.write(self.root, rel, f"{head}{line}\n")
+                found = [f for f in self.found() if "[sonar]" in f]
+                wanted = f"{rel}: [sonar] {key} is refused: the kit's job runs the scan"
+                self.assertEqual(found, [wanted] if key else [])
+
     def test_a_waiver_is_for_the_file_it_names(self) -> None:
         self.append("pyproject.toml", '\n[tool.ruff.lint]\nignore = ["E501"]\n')
         waiver = (

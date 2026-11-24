@@ -1676,6 +1676,50 @@ def manifest_dirs(repo: Repo) -> dict[str, set[str]]:
     return out
 
 
+def properties_keys(text: str) -> list[tuple[str, str]]:
+    """The (key, value) pairs of a Java properties file, as the scanner reads it."""
+    pairs: list[tuple[str, str]] = []
+    logical = ""
+    for raw in text.splitlines():
+        line = raw.lstrip(" \t\f")
+        if not logical and (not line or line[0] in "#!"):
+            continue
+        logical += line
+        if (len(logical) - len(logical.rstrip("\\"))) % 2:
+            logical = logical[:-1]  # the line goes on
+            continue
+        found = re.match(r"((?:\\.|[^\\=:\s])*)[ \t\f]*[=:]?[ \t\f]*(.*)", logical)
+        key, value = found.groups() if found else (logical, "")
+        pairs.append((unescaped(key), unescaped(value).rstrip()))
+        logical = ""
+    return pairs
+
+
+def unescaped(text: str) -> str:
+    """A key or a value of a properties file without its escapes."""
+    return re.sub(
+        r"\\(?:u([0-9a-fA-F]{4})|(.))", lambda m: chr(int(m[1], 16)) if m[1] else m[2], text
+    )
+
+
+# Where the scan runs and what it runs is the kit's: a tree that names a Java,
+# a Node.js or a server for it would run its own code, or send its own, there.
+SONAR_REFUSED = re.compile(
+    r"^sonar\.(?:scanner\..*|host\.url|region|nodejs\.executable|working\.directory)$"
+)
+SONAR_ALLOWED = {"sonar.scanner.autoconfig.enabled": "false"}
+
+
+def check_sonar(repo: Repo, report: Report) -> None:
+    """The scanner's own settings are the kit's, not the repository's."""
+    rel = "sonar-project.properties"
+    if not repo.exists(rel):
+        return
+    for key, value in properties_keys(repo.text(rel)):
+        if SONAR_REFUSED.match(key) and SONAR_ALLOWED.get(key) != value:
+            report.add("sonar", rel, f"{key} is refused: the kit's job runs the scan")
+
+
 def check_dependabot(repo: Repo, report: Report, central: bool, run: bool = False) -> None:
     rel = ".github/dependabot.yml"
     if not repo.exists(rel):
@@ -3023,6 +3067,7 @@ def check_shared(
     check_pre_commit_globals(repo, report)
     check_gitleaks(repo, report)
     check_osv(repo, report, today)
+    check_sonar(repo, report)
     check_markdownlint(repo, kit, report)
     check_reuse(repo, report)
     check_typos(repo, report)
