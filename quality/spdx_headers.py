@@ -22,7 +22,7 @@ every file has both.
 
 The owner's copyright statement is year and name and nothing else, in every
 file and in the license texts too (LICENSE, LICENSES/): no e-mail address
-ever follows the name. In a repository that still holds kit 2.x copies the
+ever goes with the name. In a repository that still holds kit 2.x copies the
 license texts are a note, and a problem from the switch to the run form.
 
 Usage:
@@ -52,6 +52,7 @@ import re
 import subprocess
 import sys
 import tomllib
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -186,8 +187,18 @@ AGENTS_COPY_MARK = "Vendored from kleidos-dev/agents"
 # The owner's statement: the year (or years) and the name; a header may add in
 # parentheses which part it covers ("(Spanish translation)").
 OWNER_VALUE = re.compile(rf"^\d{{4}}(?:\s*[-,]\s*\d{{4}})* {HOLDER}(?: \([^()@]+\))?$")
-OWNER_NAME = re.compile(r"Jos[eé] M\. Requena Plens")
-OWNER_EMAIL = re.compile(OWNER_NAME.pattern + r"\W{0,4}[\w.+-]+@[\w-]+\.[\w.-]+")
+# However it is written: initials, no accent, capitals, the surname first.
+OWNER_NAME = re.compile(
+    r"(?:(?:jos[eé]|\bj\.)\s*(?:m\.?\s*)?)?requena\W+plens(?:\W+(?:jos[eé]|j\.)(?:\s*m\b\.?)?)?",
+    re.IGNORECASE,
+)
+ADDRESS = r"[\w.+-]+(?:@|\W+at\W+)[\w-]+(?:\.|\W+dot\W+)\w[\w.-]*"
+# An address before or after the name, with nothing but marks and a label between.
+OWNER_EMAIL = re.compile(
+    rf"(?:{OWNER_NAME.pattern})\W{{0,12}}(?:(?:e-?mail|mail|contact)\W{{1,4}})?{ADDRESS}"
+    rf"|{ADDRESS}\W{{1,12}}(?:{OWNER_NAME.pattern})",
+    re.IGNORECASE,
+)
 COPYRIGHT_WORD = re.compile(r"copyright|\(c\)|©", re.IGNORECASE)
 LICENSE_TEXT = re.compile(r"^(?:LICEN[CS]E|COPYING)(?:[-.].*)?$")
 LICENSE_LINE = re.compile(
@@ -401,38 +412,49 @@ def license_text_problems(rel: str, text: str) -> list[str]:
 
 
 def owner_statements(root: Path) -> list[tuple[str, int, str]]:
-    """Every text line of the tree that names the owner: (path, line number, line)."""
+    """Every text line of the tree that names the owner, with the next: (path, number, text)."""
     done = subprocess.run(
         [
-            *("git", "-C", str(root), "grep", "--line-number", "--null", "-I", "--no-color"),
-            *("--untracked", "--fixed-strings", "Requena Plens"),
+            *("git", "-C", str(root), "grep", "--name-only", "--null", "-I", "--no-color"),
+            *("--untracked", "--ignore-case", "requena"),
         ],
         capture_output=True,
         check=False,
     )
     found = []
-    for raw in done.stdout.decode("utf-8", "replace").splitlines():
-        rel, num, line = raw.split("\0", 2)
-        found.append((rel, int(num), line))
+    for rel in filter(None, done.stdout.decode("utf-8", "replace").split("\0")):
+        text = (root / rel).read_bytes().decode("utf-8", "replace")
+        lines = [*unicodedata.normalize("NFC", text).splitlines(), ""]
+        found += [
+            (rel, num, f"{line}\n{lines[num]}")
+            for num, line in enumerate(lines[:-1], 1)
+            if OWNER_NAME.search(line)
+        ]
     return found
 
 
 def owner_problems(root: Path) -> tuple[list[str], list[str]]:
-    """(problems, notes): an e-mail after the owner's name, anywhere; the license texts."""
-    problems = [
-        f"{rel}:{num}: a copyright statement carries the owner's e-mail: year and name only"
-        for rel, num, line in owner_statements(root)
-        if COPYRIGHT_WORD.search(line) and OWNER_EMAIL.search(line)
-        if not is_license_text(rel)
-    ]
-    texts = []
+    """(problems, notes): an e-mail beside the owner's name, anywhere; the license texts."""
+    problems: list[str] = []
+    texts: dict[str, str] = {}  # one line of them, one problem
+    for rel, num, text in owner_statements(root):
+        if COPYRIGHT_WORD.search(text.splitlines()[0]) and OWNER_EMAIL.search(text):
+            why = "a copyright statement carries the owner's e-mail: year and name only"
+            if is_license_text(rel):
+                texts[f"{rel}:{num}"] = why
+            else:
+                problems.append(f"{rel}:{num}: {why}")
     for rel in tracked(root):
-        text = text_of(root, rel) if is_license_text(rel) else None
-        if text is not None:
-            texts += license_text_problems(rel, text)
+        body = text_of(root, rel) if is_license_text(rel) else None
+        for line in license_text_problems(rel, body or ""):
+            where, _sep, why = line.partition(": ")
+            texts.setdefault(where, why)
+    of_texts = [f"{where}: {why}" for where, why in texts.items()]
     if holds_kit_copies(root):
-        return problems, [f"{line} (a problem from the switch to the run form)" for line in texts]
-    return problems + texts, []
+        return problems, [
+            f"{line} (a problem from the switch to the run form)" for line in of_texts
+        ]
+    return problems + of_texts, []
 
 
 def is_license_text(rel: str) -> bool:

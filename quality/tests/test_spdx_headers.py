@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -334,6 +335,80 @@ class OwnerStatementTest(unittest.TestCase):
             [p.split(": ")[0] for p in sorted(problems)], ["a.md:3", "b.py:1"], problems
         )
         self.assertEqual(notes, [])
+
+    def test_however_it_is_written(self) -> None:
+        mail = "owner@example.org"
+        plain = unicodedata.normalize("NFD", H)
+        for text, found in (
+            (f"# Copyright (c) 2026 {H} <{mail}>", True),
+            (f"# Copyright (c) 2026 {H} ({mail})", True),
+            (f"# Copyright (c) 2026 <{mail}> {H}", True),
+            (f"# Copyright (c) 2026 {mail}, {H}", True),
+            (f"# Copyright (c) 2026 {H}, e-mail: {mail}", True),
+            (f"# Copyright (c) 2026 {H} (email {mail})", True),
+            (f"# Copyright (c) 2026 {H}, contact {mail}", True),
+            (f"# Copyright (c) 2026 J. M. Requena Plens <{mail}>", True),
+            (f"# Copyright (c) 2026 Jose M Requena Plens <{mail}>", True),
+            (f"# Copyright (c) 2026 José Requena Plens <{mail}>", True),
+            (f"# Copyright (c) 2026 {H.upper()} <{mail}>", True),
+            (f"# Copyright (c) 2026 {H.upper()} <{mail.upper()}>", True),
+            (f"# Copyright (c) 2026 {plain} <{mail}>", True),
+            (f"# Copyright (c) 2026 Requena Plens, José M. <{mail}>", True),
+            (f"# Copyright (c) 2026 Requena Plens, José <{mail}>", True),
+            (f"# Copyright (c) 2026 Requena Plens <{mail}>", True),
+            (f"# Copyright (c) 2026 {H} <owner at example dot org>", True),
+            (f"# Copyright (c) 2026 {H} owner [at] example [dot] org", True),
+            (f"# Copyright (c) 2026 {H}\n# <{mail}>", True),
+            (f"# Copyright (c) 2026 {H}\n# e-mail: {mail}", True),
+            (f"# Copyright (c) 2026 {H}\n#\n# {mail}", False),
+            (f"# Copyright (c) 2026 {H}", False),
+            (f"# Copyright (c) 2026 {H}. Write to {mail}", False),
+            (f"# Copyright (c) 2026 {H} looked at the dot", False),
+            (f"# {H} <{mail}>", False),
+            (f"# {H}\n# Copyright (c) 2026 Someone <{mail}>", False),
+            (f"# Copyright (c) 2026 Someone <{mail}>", False),
+            (f"# Copyright (c) 2026 Juan Requena <{mail}>", False),
+        ):
+            with self.subTest(text=text):
+                for rel, number in (("a.py", 3), ("NOTICE", 1), ("LICENSES/MIT.txt", 1)):
+                    fx.write(self.root, rel, "x\n" * (number - 1) + text + "\n")
+                    problems, notes = self.found()
+                    named = f"{rel}:{number}: a copyright statement carries the owner's e-mail"
+                    self.assertEqual(
+                        any(p.startswith(named) for p in problems), found, problems + notes
+                    )
+                    (self.root / rel).unlink()
+
+    def test_the_owner_in_a_license_text_however_written(self) -> None:
+        for name in (H.upper(), "J. M. Requena Plens", "Requena Plens, José M.", "Requena Plens"):
+            found = sh.license_text_problems("LICENSE", f"Copyright (c) 2026 {name}\n")
+            self.assertEqual(found == [], name == H.upper(), name)
+
+    def test_an_e_mail_in_reuse_toml_or_a_header(self) -> None:
+        for value, found in (
+            (f"2026 {H}", False),
+            (f"2026 {H} <{self.MAIL}>", True),
+            (f"2026 {H} {self.MAIL}", True),
+            ("2026 Someone someone@example.org", True),
+            ("2026 Someone <x@y>", True),
+            ("2026 Someone", False),
+        ):
+            with self.subTest(value=value):
+                fx.write(
+                    self.root,
+                    "REUSE.toml",
+                    f'# {C} 2026 {H}\n# {L} MIT\nversion = 1\n[[annotations]]\npath = ["x"]\n'
+                    f'{C} "{value}"\n{L} "MIT"\n'.replace(f'{C} "', f'{C[:-1]} = "').replace(
+                        f'{L} "', f'{L[:-1]} = "'
+                    ),
+                )
+                fx.commit(self.root)
+                problems = [p for p in sh.check_repo(self.root)[0] if "e-mail address" in p]
+                self.assertEqual(len(problems), int(found), problems)
+                if found:
+                    self.assertTrue(problems[0].startswith("REUSE.toml: a copyright"), problems)
+                problems = sh.check_text("a.py", f"# {C} {value}\n# {L} MIT\n", None)
+                self.assertEqual(any("e-mail address" in p for p in problems), found, problems)
 
     def test_a_license_text_is_a_problem_unless_copies_are_held(self) -> None:
         fx.write(self.root, "LICENSES/MIT.txt", f"Copyright (c) 2026 {H} <{self.MAIL}>\n")
