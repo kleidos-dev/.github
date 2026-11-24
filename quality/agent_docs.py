@@ -124,8 +124,10 @@ class Repo:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        if not root.is_dir():
+            raise NotAWorkTreeError(f"{root} is not a git work tree")
         listing = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=False
+            ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False
         )
         if listing.returncode != 0:
             raise NotAWorkTreeError(f"{root} is not a git work tree")
@@ -147,7 +149,8 @@ class Repo:
     def ignored(self, rel: str) -> bool:
         if rel not in self._ignored:
             done = subprocess.run(
-                ["git", "-C", str(self.root), "check-ignore", "-q", "--no-index", rel],
+                ["git", "check-ignore", "-q", "--no-index", "--", rel],
+                cwd=self.root,
                 capture_output=True,
                 check=False,
             )

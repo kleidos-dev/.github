@@ -17,8 +17,8 @@ from unittest import mock
 import kit_fixtures as fx
 from kit_fixtures import check_quality as cq
 from kit_fixtures import kit_preview as kp
+from kit_fixtures import kit_switch, sync
 from kit_fixtures import run_form as rf
-from kit_fixtures import sync
 
 TODAY = dt.date(2026, 11, 24)
 KIT = cq.DirKit(fx.CENTRAL)
@@ -48,6 +48,15 @@ class PreviewTest(unittest.TestCase):
 
     def test_a_2x_repository_is_judged_in_both_forms(self) -> None:
         root = self.held()
+        # What the first form's sync adds is gone before the second is judged.
+        with mock.patch.object(kit_switch, "switch") as switch:
+            switch.side_effect = lambda repo, *_: left.append(fx.git(repo, "status", "--porcelain"))
+            left: list[str] = []
+            with mock.patch.object(sync, "write") as write:
+                write.side_effect = lambda repo, **_: fx.write(repo, "new/x.txt", "x\n")
+                kp.examine(root, KIT)
+        self.assertEqual(left, [""])
+        fx.git(root, "reset", "-q", "--hard")
         self.assertEqual(kp.examine(root, KIT), kp.Found("2.x", "0", "not behind", Counter()))
 
     def test_a_license_line_is_met_at_the_switch(self) -> None:

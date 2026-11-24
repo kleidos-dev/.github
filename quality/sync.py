@@ -52,6 +52,7 @@ HERE = Path(__file__).resolve().parent
 CENTRAL = HERE.parent
 sys.path.insert(0, str(HERE))
 import check_quality as cq  # noqa: E402  the sibling module, found through the path set above
+import own_files  # noqa: E402  the sibling module, found through the path set above
 import spdx_headers  # noqa: E402  the sibling module, found through the path set above
 
 TOML_HEADER = r"^\s*\[\s*{table}\s*\]\s*(?:#.*)?$"
@@ -82,15 +83,13 @@ ENTRY_WORKFLOWS = ("quick.yml", "check.yml", "sonar.yml")
 
 def git(*args: str, cwd: Path = CENTRAL) -> str:
     return subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, check=True, text=True
+        ["git", *args], cwd=cwd, capture_output=True, check=True, text=True
     ).stdout.strip()
 
 
 def git_ok(*args: str, cwd: Path = CENTRAL) -> str | None:
     """A git command's output, or None when it fails."""
-    done = subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, check=False, text=True
-    )
+    done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False, text=True)
     return done.stdout.strip() if done.returncode == 0 else None
 
 
@@ -195,7 +194,8 @@ def release_check(on_main: bool, cwd: Path = CENTRAL) -> tuple[int, list[str]]:
 
 def recorded_major(recorded: str, cwd: Path = CENTRAL) -> int | None:
     """The major version of the kit at a recorded commit, None when it cannot be read."""
-    text = git_ok("show", f"{recorded}:quality/VERSION", cwd=cwd) if recorded else None
+    known = cq.SHA40.match(recorded)
+    text = git_ok("show", f"{recorded}:quality/VERSION", cwd=cwd) if known else None
     found = re.match(r"(\d+)\.", text or "")
     return int(found.group(1)) if found else None
 
@@ -271,12 +271,13 @@ def _strip_local_duplicates(
     return out, removed
 
 
-def place_block(path: Path, entry: dict[str, Any], inner: str) -> list[str]:
-    """Write one managed block into path (created if missing).
+def place_block(repo: Path, entry: dict[str, Any], inner: str) -> list[str]:
+    """Write one managed block into its file (created if missing).
 
     Returns the repository's own lines the block displaced (a key it now sets).
     """
     block_id = str(entry["id"])
+    path = own_files.own_file(repo, str(entry["target"]))
     text = path.read_text(encoding="utf-8") if path.is_file() else SKELETONS.get(path.name, "")
     if text and not text.endswith("\n"):
         text += "\n"
@@ -306,8 +307,7 @@ def place_block(path: Path, entry: dict[str, Any], inner: str) -> list[str]:
             lines += [f"[{table}]\n", start_marker, inner, end_marker]
         else:
             lines[after:after] = [start_marker, inner, end_marker]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(lines), encoding="utf-8")
+    own_files.write(repo, str(entry["target"]), "".join(lines))
     return removed
 
 
@@ -410,9 +410,9 @@ def rewrite_uses(repo: Path, commit: str, version: str) -> list[str]:
             + ("\n" if ln.endswith("\n") else "")
             for ln in text.splitlines(keepends=True)
         )
-        if new != text:
-            path.write_text(new, encoding="utf-8")
-            changed.append(path.relative_to(repo).as_posix())
+        rel = path.relative_to(repo).as_posix()
+        if new != text and own_files.write(repo, rel, new):
+            changed.append(rel)
     return changed
 
 
@@ -455,10 +455,8 @@ def write(
     files_rec = []
     for c in copies:
         data = kit.read(str(c["source"]))
-        target = repo / str(c["target"])
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.is_file() or target.read_bytes() != data:
-            target.write_bytes(data)
+        target = own_files.own_file(repo, str(c["target"]))
+        if own_files.write(repo, str(c["target"]), data):
             log.append(f"copied {c['target']}")
         if os.access(CENTRAL / str(c["source"]), os.X_OK):
             target.chmod(0o755)
@@ -473,7 +471,7 @@ def write(
             # check reports the block missing until it does.
             log.append(f"skipped block {b['id']}: there is no {b['target']} (docs/agent-docs.md)")
         else:
-            removed = place_block(repo / str(b["target"]), b, inner)
+            removed = place_block(repo, b, inner)
             log.append(f"block {b['id']} in {b['target']}")
             if b.get("kind") == "markdown" and removed:
                 log.append(f"  replaced the hand-written section {removed[0].strip()!r}")
@@ -513,9 +511,8 @@ def write(
             bool(mark) and target.is_file() and str(mark) in target.read_text(encoding="utf-8")
         )
         if not target.exists() or replace:
-            target.parent.mkdir(parents=True, exist_ok=True)
             text = spdx_headers.set_year(kit.read(str(s["source"])).decode("utf-8"), year)
-            target.write_text(text, encoding="utf-8")
+            own_files.write(repo, str(s["target"]), text)
             verb = "replaced the copy at" if replace else "seeded"
             log.append(f"{verb} {s['target']} (the repository's own from now on)")
             if replace:
@@ -539,10 +536,7 @@ def write(
         "files": files_rec,
         "blocks": blocks_rec,
     }
-    source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text(
-        json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    own_files.write(repo, cq.SOURCE_JSON, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     log.append(f"recorded kit {version} at {commit[:12]} in {cq.SOURCE_JSON}")
     return log
 
@@ -564,7 +558,8 @@ def forget_commit_check_copies(repo: Path, replaced: list[str]) -> list[str]:
     if len(left) == len(files):
         return []
     data["files"] = left
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    own_files.write(repo, cq.COMMIT_CHECK_SOURCE, text)
     return [
         f"dropped {', '.join(sorted(replaced))} from {cq.COMMIT_CHECK_SOURCE}: the repository's"
         " commit-check digest test (tests/ci/test_commit_check_copy.py) now expects the"

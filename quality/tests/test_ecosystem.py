@@ -437,6 +437,7 @@ class PublicTest(ReportCase):
             ("git@github.com:jmrplens/kleidos.git", True),
             ("kleidos-dev/hidden-not", False),
             ("kleidos-dev/hiddenly", False),
+            ("kleidos-dev/hidden.tools", False),
             ("kleidos-dev/boards", False),
             ("jmrplens/kleidoscope", False),
             ("hidden", False),
@@ -590,10 +591,12 @@ class PullTest(ReportCase):
         for created, state in (("2026-11-10T00:00:00Z", "amber"), ("2026-11-09T00:00:00Z", "late")):
             self.assertEqual([s for s, _t in self.pulls(created_at=created)], [state], created)
         runs = f"repos/{BOARDS}/commits/{SHA}/check-runs?per_page=100"
-        self.reader.answers[runs] = {"check_runs": [{"name": "CI", "conclusion": "failure"}]}
-        self.assertEqual(self.pulls(), [("red", f"{BOARDS}#3 open 4 d: Bump x [failing: CI]")])
-        self.reader.answers[runs] = {"check_runs": [{"name": "CI", "conclusion": "cancelled"}]}
-        self.assertEqual([s for s, _t in self.pulls()], ["amber"])
+        for conclusion in ("failure", "timed_out", "startup_failure"):
+            self.reader.answers[runs] = {"check_runs": [{"name": "CI", "conclusion": conclusion}]}
+            self.assertEqual(self.pulls(), [("red", f"{BOARDS}#3 open 4 d: Bump x [failing: CI]")])
+        for other in ("cancelled", "skipped", "neutral", "success", None):
+            self.reader.answers[runs] = {"check_runs": [{"name": "CI", "conclusion": other}]}
+            self.assertEqual([s for s, _t in self.pulls()], ["amber"])
 
     def test_a_persons_pull_request_is_theirs(self) -> None:
         self.assertEqual(self.pulls(user={"type": "User"}), [])
@@ -964,9 +967,12 @@ class CommandTest(ReportCase):
                 done = subprocess.CompletedProcess([], 0, token, "")
                 with (
                     mock.patch.dict(os.environ, env, clear=True),
-                    mock.patch.object(subprocess, "run", return_value=done),
+                    mock.patch.object(subprocess, "run", return_value=done) as run,
                 ):
                     self.assertEqual(eco.kit_pins_behind(), ["x"])
+                    for call in run.call_args_list:  # no session is no error
+                        self.assertEqual(call.args[0], ["gh", "auth", "token"])
+                        self.assertIs(call.kwargs["check"], False)
                     self.assertEqual(os.environ.get("GH_TOKEN"), expected)
 
 
@@ -990,6 +996,7 @@ class ReaderTest(unittest.TestCase):
         with self.gh(0, '{"a": 1}') as run:
             self.assertEqual(self.reader.api("x"), {"a": 1})
         self.assertEqual(run.call_args.args[0], ["gh", "api", "--method", "GET", "x"])
+        self.assertIs(run.call_args.kwargs["check"], False)  # a refusal is listed, not raised
         with self.gh(0, "[[1], [2, 3]]") as run:
             self.assertEqual(self.reader.api("x", pages=True), [1, 2, 3])
         self.assertEqual(run.call_args.args[0][-2:], ["--paginate", "--slurp"])

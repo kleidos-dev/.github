@@ -41,6 +41,7 @@ KIT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT / "quality"))
 import agent_docs  # noqa: E402  the kit's module, found through the path set above
 import check_quality as cq  # noqa: E402  the kit's module, as above
+import own_files  # noqa: E402  the kit's module, as above
 import run_form  # noqa: E402  the kit's module, as above
 import spdx_headers  # noqa: E402  the kit's module, as above
 
@@ -99,22 +100,10 @@ RULES_SECTION = (
 JOB_LINE = re.compile(r"^  (?P<id>[\w-]+):\s*(?:#.*)?$")
 
 
-class RefusedError(Exception):
-    """What a tool will not do, and why."""
-
-
-def own_file(root: Path, rel: str) -> Path:
-    """The path of one of the repository's own files; refused when it leads elsewhere."""
-    why = run_form.target_problem(root, rel)
-    if why:
-        raise RefusedError(why)
-    return root / rel
-
-
 def head_of(path: Path) -> str:
     """The commit a checkout is at."""
     done = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
     )
     return done.stdout.strip()
 
@@ -125,21 +114,19 @@ def head_of(path: Path) -> str:
 
 def write_configs(repo: Path, kit: cq.Kit, commit: str, today: dt.date) -> list[str]:
     """Write the base configurations the tree calls for and their record."""
-    path = own_file(repo, cq.SOURCE_JSON)
+    path = own_files.own_file(repo, cq.SOURCE_JSON)
     old = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     recorded = (old.get("kit") or {}).get("profiles") or old.get("profiles") or []
     chosen = {"base", *recorded} | cq.detect_profiles(cq.Repo(repo))
     profiles = [p for p in cq.KNOWN_PROFILES if p in chosen]
     configs = run_form.base_configs(kit, profiles)
-    places = {target: own_file(repo, target) for target in configs}
+    for target in configs:
+        own_files.own_file(repo, target)  # all of them, before the first is written
     log = []
     files = {}
     for target, source in sorted(configs.items()):
         data = kit.read(source)
-        dest = places[target]
-        if not dest.is_file() or dest.read_bytes() != data:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
+        if own_files.write(repo, target, data):
             log.append(f"wrote {target}")
         files[target] = cq.sha256(data)
     record = {
@@ -165,8 +152,7 @@ def write_configs(repo: Path, kit: cq.Kit, commit: str, today: dt.date) -> list[
     text = json.dumps(record, indent=2, ensure_ascii=False) + "\n"
     if old.get("files") == files and old.get("schema") == run_form.SCHEMA:
         return log  # the bytes are the ones recorded: the date says when they were taken
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    own_files.write(repo, cq.SOURCE_JSON, text)
     log.append(f"recorded {len(files)} base configurations in {cq.SOURCE_JSON}")
     return log
 
@@ -370,18 +356,19 @@ def convert_ci(text: str, kit: cq.Kit, profiles: list[str]) -> str:
 
 def rewrite_needs(line: str, new_of: dict[str, str]) -> str:
     """A `needs:` line with the 2.x kit jobs replaced by the ones that took their checks."""
-    found = re.match(r"^(?P<lead>    needs:\s*)\[?(?P<ids>[\w ,-]+)\]?\s*$", line)
-    if not found:
+    lead, sep, value = line.partition("needs:")
+    ids = value.strip().removeprefix("[").removesuffix("]")
+    if lead != "    " or not sep or not re.fullmatch(r"[\w ,-]+", ids):
         return line
-    ids = [new_of.get(i, i) for i in re.split(r"[ ,]+", found["ids"].strip())]
-    return f"{found['lead']}[{', '.join(dict.fromkeys(ids))}]\n"
+    new = [new_of.get(i, i) for i in re.split(r"[ ,]+", ids.strip())]
+    return f"    needs: [{', '.join(dict.fromkeys(new))}]\n"
 
 
 def point_at(line: str, job: dict[str, Any]) -> str:
     """A `uses:` line of a kit workflow the repository keeps calling itself, at the branch."""
     if not kit_file(job) or not line.startswith("    uses:"):
         return line
-    return re.sub(r"@\S+.*$", "@v3", line.rstrip("\n")) + "\n"
+    return line.partition("@")[0] + "@v3\n"
 
 
 def gate_text(kit: cq.Kit, ids: list[str], skippable: list[str]) -> str:
@@ -416,33 +403,36 @@ def switch(repo: Path, kit: cq.Kit, commit: str, today: dt.date) -> list[str]:
     for rel in ("pyproject.toml", ".typos.toml"):
         path = repo / rel
         if path.is_file():
-            path.write_text(drop_markers(path.read_text(encoding="utf-8")), encoding="utf-8")
+            own_files.write(repo, rel, drop_markers(path.read_text(encoding="utf-8")))
     agents = repo / "AGENTS.md"
     if agents.is_file():
-        agents.write_text(rules_link(agents.read_text(encoding="utf-8")), encoding="utf-8")
+        own_files.write(repo, "AGENTS.md", rules_link(agents.read_text(encoding="utf-8")))
         log.append("AGENTS.md links the organization rules")
     log += write_configs(repo, kit, commit, today)
     record = json.loads(record_path.read_text(encoding="utf-8"))
     profiles = record["kit"]["profiles"]
     hooks = repo / PRE_COMMIT
-    hooks.write_text(hook_list(hooks.read_text(encoding="utf-8"), kit, profiles), encoding="utf-8")
+    listed = hook_list(hooks.read_text(encoding="utf-8"), kit, profiles)
+    own_files.write(repo, PRE_COMMIT, listed)
     log.append(f"{PRE_COMMIT} takes the kit's hooks at v{kit.version()}")
     dependabot = repo / ".github" / "dependabot.yml"
     if dependabot.is_file() and "package-ecosystem: pre-commit" not in (
         old := dependabot.read_text(encoding="utf-8")
     ):
-        dependabot.write_text(old.rstrip("\n") + "\n" + DEPENDABOT_ENTRY, encoding="utf-8")
+        moved = old.rstrip("\n") + "\n" + DEPENDABOT_ENTRY
+        own_files.write(repo, ".github/dependabot.yml", moved)
         log.append("dependabot.yml moves the hook revisions")
     comment = kit.read("quality/templates/run/commit-check-comment.yml").decode("utf-8")
-    path = repo / WORKFLOWS / "commit-check-comment.yml"
-    path.write_text(spdx_headers.set_year(comment, str(today.year)), encoding="utf-8")
+    caller = spdx_headers.set_year(comment, str(today.year))
+    own_files.write(repo, f"{WORKFLOWS}/commit-check-comment.yml", caller)
     gate = gate_workflow(repo)
     if gate is None:
         log.append("left: no gate workflow found; write it from quality/templates/run/ci.yml")
     else:
         converted = convert_ci(gate.read_text(encoding="utf-8"), kit, profiles)
-        gate.write_text(converted, encoding="utf-8")
-        log.append(f"{gate.relative_to(repo).as_posix()} calls the entry workflows")
+        rel = gate.relative_to(repo).as_posix()
+        own_files.write(repo, rel, converted)
+        log.append(f"{rel} calls the entry workflows")
     log += [
         "left: read the gate workflow's comments and the needs of the repository's own jobs",
         "left: AGENTS.md, README.md and the docs that name the copies, the sync or the drift job",
@@ -463,8 +453,8 @@ def main(argv: list[str] | None = None) -> int:
     if not (repo / ".git").exists():
         print(f"kit_switch: {repo} is not the top of a git work tree", file=sys.stderr)
         return 2
-    dirty = ["git", "-C", str(repo), "status", "--porcelain"]
-    if args.write and subprocess.run(dirty, capture_output=True, check=True).stdout:
+    status = ["git", "status", "--porcelain"]
+    if args.write and subprocess.run(status, cwd=repo, capture_output=True, check=True).stdout:
         print(f"kit_switch: {repo} has uncommitted changes: commit them first", file=sys.stderr)
         return 2
     kit = cq.DirKit(KIT)
@@ -473,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     work = switch if args.write else write_configs
     try:
         log = work(repo.resolve(), kit, commit, today)
-    except RefusedError as exc:
+    except own_files.RefusedError as exc:
         print(f"kit_switch: {exc}", file=sys.stderr)
         return 2
     for line in log:

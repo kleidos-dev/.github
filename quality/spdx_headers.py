@@ -206,7 +206,7 @@ LICENSE_LINE = re.compile(
     re.IGNORECASE,
 )
 OWNER_DOMAIN = "@kleidos.dev"
-EMAIL = re.compile(r"<[^>@\s]+@[^>\s]+>|\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+EMAIL = re.compile(r"<[^<>@\s]+@[^<>\s]+>|(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 YEAR_LEAD = re.compile(r"^(\d{4})(?:\s*[-,]\s*\d{4})*\s+(.*)$")
 FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.S)
 

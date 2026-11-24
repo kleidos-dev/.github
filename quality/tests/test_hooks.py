@@ -209,8 +209,9 @@ class ChooseTest(unittest.TestCase):
 
     def test_a_probe_that_hangs_is_given_up(self) -> None:
         late = subprocess.TimeoutExpired("python3", 30)
-        with mock.patch.object(subprocess, "run", side_effect=late):
+        with mock.patch.object(subprocess, "run", side_effect=late) as run:
             self.assertIsNone(launch.probe(sys.executable, ""))
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
 
     def test_the_repository_cannot_plant_a_module_for_the_probe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

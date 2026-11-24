@@ -8,7 +8,6 @@ import contextlib
 import io
 import json
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -50,6 +49,9 @@ class FloorTest(unittest.TestCase):
                 " (lines 1, 2)"
             ],
         )
+        found = cf.below({"a.py": measured((10, 10), (3, 4))}, {})
+        said = "a.py: 100.0 % of lines and 75.0 % of branches, its floor is 100 and 100"
+        self.assertEqual(found, [said])
 
     def test_a_floor_is_what_a_file_has_reached(self) -> None:
         files = {"a.py": measured((8, 10), (1, 2))}
@@ -65,34 +67,32 @@ class FloorTest(unittest.TestCase):
             self.assertTrue((fx.CENTRAL / name).is_file(), name)
             self.assertNotEqual(floor, (100, 100), name)
 
-    def run_main(self, *argv: str) -> tuple[int, str]:
-        with contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(out):
-            return cf.main(list(argv)), out.getvalue()
+    def run_main(self, files: dict[str, Any] | None) -> tuple[int, str]:
+        """The command, with what coverage would say of its last run."""
 
-    def test_the_command(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(cf, "FLOORS", {}):
-            path = Path(tmp) / "c.json"
-            self.assertEqual(self.run_main(str(path)), (2, "coverage_floor: no coverage data\n"))
-            path.write_text(json.dumps({"files": {"a.py": measured((1, 1), (0, 0))}}))
-            self.assertEqual(self.run_main(str(path)), (0, "coverage: 1 files keep their floor\n"))
-            path.write_text(json.dumps({"files": {"a.py": measured((0, 1), (0, 0))}}))
-            status, said = self.run_main(str(path))
-            self.assertEqual(status, 1)
-            self.assertIn("coverage_floor: a.py: 0.0 % of lines", said)
-
-    def test_without_a_report_coverage_makes_one(self) -> None:
         def report(cmd: list[str], check: bool) -> None:
-            self.assertEqual(cmd[1:5], ["-m", "coverage", "json", "-q"])
+            self.assertEqual(cmd[1:6], ["-m", "coverage", "json", "-q", "-o"])
             self.assertFalse(check)
-            Path(cmd[-1]).write_text('{"files": {}}', encoding="utf-8")
+            if files is not None:
+                Path(cmd[-1]).write_text(json.dumps({"files": files}), encoding="utf-8")
 
         with (
-            mock.patch.object(subprocess, "run", side_effect=report),
+            mock.patch.object(subprocess, "run", side_effect=report) as run,
             mock.patch.object(cf, "FLOORS", {}),
+            contextlib.redirect_stdout(io.StringIO()) as out,
+            contextlib.redirect_stderr(out),
         ):
-            self.assertEqual(self.run_main()[0], 0)
-        with mock.patch.object(subprocess, "run"):
-            self.assertEqual(self.run_main()[0], 2)
+            status = cf.main()
+        run.assert_called_once()
+        return status, out.getvalue()
+
+    def test_the_command(self) -> None:
+        self.assertEqual(self.run_main(None), (2, "coverage_floor: no coverage data\n"))
+        kept = {"a.py": measured((1, 1), (0, 0))}
+        self.assertEqual(self.run_main(kept), (0, "coverage: 1 files keep their floor\n"))
+        status, said = self.run_main({"a.py": measured((0, 1), (0, 0))})
+        self.assertEqual(status, 1)
+        self.assertIn("coverage_floor: a.py: 0.0 % of lines", said)
 
 
 if __name__ == "__main__":

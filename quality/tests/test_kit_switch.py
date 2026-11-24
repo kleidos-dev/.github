@@ -14,7 +14,7 @@ from pathlib import Path
 
 import kit_fixtures as fx
 import yaml
-from kit_fixtures import agent_docs, sync
+from kit_fixtures import agent_docs, own_files, sync
 from kit_fixtures import check_quality as cq
 from kit_fixtures import kit_switch as ks
 from kit_fixtures import run_form as rf
@@ -211,9 +211,9 @@ class ConfigsTest(unittest.TestCase):
             ("/etc/x", "is not in the repository"),
             (".", "is not in the repository"),
         ):
-            with self.assertRaisesRegex(ks.RefusedError, why):
-                ks.own_file(self.root, rel)
-        self.assertEqual(ks.own_file(self.root, "new/x"), self.root / "new/x")
+            with self.assertRaisesRegex(own_files.RefusedError, why):
+                own_files.own_file(self.root, rel)
+        self.assertEqual(own_files.own_file(self.root, "new/x"), self.root / "new/x")
 
     def test_an_old_configuration_is_written_again(self) -> None:
         (self.root / ".github/zizmor.yml").write_text("old\n", encoding="utf-8")

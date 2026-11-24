@@ -366,10 +366,11 @@ class PlaceBlockTest(unittest.TestCase):
             entry = {
                 "id": "typos",
                 "source": "quality/typos/block.toml",
+                "target": ".typos.toml",
                 "table": "default",
                 "kind": "toml",
             }
-            sync.place_block(path, entry, 'locale = "en-us"\n')
+            sync.place_block(Path(tmp), entry, 'locale = "en-us"\n')
             text = path.read_text(encoding="utf-8")
             self.assertIn("[default]\n# >>> kleidos-quality typos", text)
             found = cq.find_block(text, "typos")
@@ -383,9 +384,10 @@ class PlaceBlockTest(unittest.TestCase):
             entry = {
                 "id": "pre-commit-base",
                 "source": ".pre-commit-config.yaml",
+                "target": ".pre-commit-config.yaml",
                 "kind": "pre-commit",
             }
-            sync.place_block(path, entry, "  - repo: local\n    hooks: []\n")
+            sync.place_block(Path(tmp), entry, "  - repo: local\n    hooks: []\n")
             lines = path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(lines[0], "repos:")
             self.assertTrue(lines[1].startswith("  # >>> kleidos-quality pre-commit-base"))
@@ -409,9 +411,10 @@ class PlaceBlockTest(unittest.TestCase):
             entry = {
                 "id": "pre-commit-base",
                 "source": ".pre-commit-config.yaml",
+                "target": ".pre-commit-config.yaml",
                 "kind": "pre-commit",
             }
-            sync.place_block(path, entry, "  - repo: local\n    hooks: []\n")
+            sync.place_block(Path(tmp), entry, "  - repo: local\n    hooks: []\n")
             text = path.read_text(encoding="utf-8")
             self.assertEqual(text.count("repos:"), 1, text)
 

@@ -225,7 +225,7 @@ REQ_INCLUDE = re.compile(
 # The tokens of an environment marker: quoted values, names, operators, parentheses.
 MARKER_TOKEN = re.compile(r"'[^']*'|\"[^\"]*\"|[A-Za-z_][\w.]*|[<>=!~]=?=?|[()]")
 # An option of a requirement line (--hash=sha256:...), which says nothing of the pin.
-REQ_OPTION = re.compile(r"\s+--[\w-]+(?:=\S+)?")
+REQ_OPTION = re.compile(r"(?<!\s)\s+--[\w-]+(?:=\S+)?")
 REQ_PIN = re.compile(
     r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*===?\s*(?P<version>[^\s;#\\,]+)"
     r"[^;#]*(?:;(?P<marker>[^#\\]*))?"
@@ -461,9 +461,9 @@ def block_markers(
 def toml_table_of_line(lines: list[str], index: int) -> str | None:
     """The [table] (or [[array]]) header in force at a line, by its text."""
     for i in range(index, -1, -1):
-        m = re.match(r"^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(?:#.*)?$", lines[i])
+        m = re.match(r"\[\[?([^\[\]]+)\]\]?\s*(?:#.*)?$", lines[i].strip())
         if m:
-            return m.group(1).replace('"', "").replace("'", "")
+            return m.group(1).strip().replace('"', "").replace("'", "")
     return None
 
 
@@ -531,8 +531,11 @@ class GitKit(Kit):
 
     def __init__(self, clone: Path, commit: str) -> None:
         self.clone, self.commit = clone, commit
+        if not re.fullmatch(r"\w[\w./-]*", commit) or not clone.is_dir():
+            raise KitCommitMissingError(f"commit {commit[:12]} is not in {clone} (fetch it)")
         probe = subprocess.run(
-            ["git", "-C", str(clone), "cat-file", "-e", f"{commit}^{{commit}}"],
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=clone,
             capture_output=True,
             check=False,
         )
@@ -541,7 +544,8 @@ class GitKit(Kit):
 
     def read(self, path: str) -> bytes:
         shown = subprocess.run(
-            ["git", "-C", str(self.clone), "show", f"{self.commit}:{path}"],
+            ["git", "show", f"{self.commit}:{path}"],
+            cwd=self.clone,
             capture_output=True,
             check=False,
         )
@@ -2484,8 +2488,8 @@ def resolve_submodule_url(repo: Repo, url: str) -> str:
         return url
     # Keep what names the host (https://host, ssh://host, or scp-like
     # user@host:) and resolve the relative URL against the path after it.
-    m = re.match(r"^(?P<host>[a-z][a-z0-9+.-]*://[^/]*|[^/:]+:(?!//))(?P<path>.*)$", origin)
-    host, path = (m["host"], m["path"]) if m else ("", origin)
+    m = re.match(r"[a-z][a-z0-9+.-]*://[^/]*|[^/:]+:(?!//)", origin)
+    host, path = (m[0], origin[m.end() :]) if m else ("", origin)
     base = [part for part in path.rstrip("/").split("/") if part]
     rooted = path.startswith("/")
     for part in url.split("/"):

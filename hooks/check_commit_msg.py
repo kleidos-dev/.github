@@ -267,8 +267,14 @@ def comment_char(cwd: str | None = None) -> str:
     return value if value and value != "auto" else "#"
 
 
+REVISIONS = re.compile(r"[\w./@^~{}][\w./@^~{}-]*")
+
+
 def read_range(rev: str, cwd: str | None = None) -> list[dict[str, Any]]:
-    out = git(["log", "--reverse", "--format=%H" + SEP + "%P" + SEP + "%B" + END, rev], cwd)
+    if not REVISIONS.fullmatch(rev):  # never an option of git's
+        raise RuntimeError(f"{rev!r} is not a revision range")
+    fmt = "--format=%H" + SEP + "%P" + SEP + "%B" + END
+    out = git(["log", "--reverse", fmt, rev, "--"], cwd)
     commits: list[dict[str, Any]] = []
     for raw in out.split(END):
         chunk = raw.lstrip("\n")

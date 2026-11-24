@@ -763,6 +763,17 @@ class UntrustedTest(unittest.TestCase):
                 ccm.sync_comment(FakeGitHub("a" * 40), "o/r", result, "a" * 40)
 
 
+class RevisionTest(unittest.TestCase):
+    def test_a_range_is_never_an_option_of_gits(self) -> None:
+        for rev in ("--output=x", "-n1", "", "a b", "a;b", "$(x)"):
+            with self.assertRaisesRegex(RuntimeError, "is not a revision range"):
+                ccm.read_range(rev)
+        with mock.patch.object(ccm, "git", return_value="") as git:
+            for rev in ("main..HEAD", "a" * 40 + ".." + "b" * 40, "HEAD~3..", "^main", "v1.0-rc.1"):
+                self.assertEqual(ccm.read_range(rev), [])
+                self.assertEqual(git.call_args.args[0][-2:], [rev, "--"])
+
+
 class GitHubTest(unittest.TestCase):
     """The real client, its one request."""
 

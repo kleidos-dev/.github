@@ -338,6 +338,17 @@ class ReferenceTest(CalledCase):
         self.assertIsNone(rf.reference_problem(f"actions/checkout@{SHA}", "v3", KIT))
         self.assertEqual(rf.branch_of("4.12.0"), "v4")
 
+    def test_a_record_is_one_by_its_schema_key(self) -> None:
+        rel = cq.SOURCE_JSON
+        data = json.loads(self.text(rel))
+        for schema in ("", None, 0, "other/1"):
+            fx.write(self.root, rel, json.dumps({**data, "schema": schema}))
+            self.assertIsNotNone(cq.record_of(cq.Repo(self.root)), schema)
+            self.assertNotEqual(self.found(), [])
+        del data["schema"]
+        fx.write(self.root, rel, json.dumps(data))
+        self.assertIsNone(cq.record_of(cq.Repo(self.root)))
+
     def test_only_a_whole_reference_is_a_call(self) -> None:
         quick = "kleidos-dev/.github/.github/workflows/quick.yml@v3"
         for reference, files in (

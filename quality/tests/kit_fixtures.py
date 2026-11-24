@@ -36,6 +36,7 @@ import latest_releases  # noqa: E402  found through the path set above
 import launch  # noqa: E402  found through the path set above
 import md_nowrap  # noqa: E402  found through the path set above
 import mypy_groups  # noqa: E402  found through the path set above
+import own_files  # noqa: E402  found through the path set above
 import policy  # noqa: E402  found through the path set above
 import run_form  # noqa: E402  found through the path set above
 import spdx_headers  # noqa: E402  found through the path set above
@@ -72,6 +73,7 @@ __all__ = [
     "mypy_groups",
     "policy",
     "run_form",
+    "own_files",
     "spdx_headers",
     "sync",
     "write",

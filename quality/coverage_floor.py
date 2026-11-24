@@ -9,7 +9,7 @@ it with what it has reached, so a share only rises. It reads the data of the
 last `coverage run` through `coverage json`; what coverage.py does not count
 is in .coveragerc, each exclusion with its reason.
 
-Usage: coverage_floor.py [REPORT.json]   (a `coverage json` report; made when not given)
+Usage: coverage_floor.py
 
 Exit status: 0 every file keeps its floor, 1 one does not, 2 no coverage data.
 
@@ -29,13 +29,11 @@ from typing import Any
 # percent, each has reached; a file that is not here is at 100 and 100.
 FLOORS: dict[str, tuple[int, int]] = {
     "quality/agent_docs.py": (97, 95),
-    "quality/check_quality.py": (83, 80),
-    "quality/fetch_tool.py": (41, 22),
+    "quality/check_quality.py": (90, 86),
     "quality/latest_releases.py": (76, 75),
-    "quality/md_nowrap.py": (71, 61),
     "quality/mypy_groups.py": (96, 92),
     "quality/spdx_headers.py": (88, 82),
-    "quality/sync.py": (81, 75),
+    "quality/sync.py": (92, 84),
     "scripts/check_metadata.py": (76, 75),
     "scripts/media_meta.py": (95, 88),
     "scripts/stamp_media_meta.py": (81, 50),
@@ -68,23 +66,22 @@ def below(files: dict[str, dict[str, Any]], floors: dict[str, tuple[int, int]]) 
     return out
 
 
-def measured(argv: list[str]) -> dict[str, dict[str, Any]] | None:
-    """The files of a coverage report, None when there is none."""
+def measured() -> dict[str, dict[str, Any]] | None:
+    """The files of the last coverage run, None when there is none."""
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(argv[0]) if argv else Path(tmp) / "coverage.json"
-        if not argv:
-            subprocess.run(
-                [sys.executable, "-m", "coverage", "json", "-q", "-o", str(path)], check=False
-            )
+        path = Path(tmp) / "coverage.json"
+        subprocess.run(
+            [sys.executable, "-m", "coverage", "json", "-q", "-o", str(path)], check=False
+        )
         if not path.is_file():
             return None
         files: dict[str, dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["files"]
         return files
 
 
-def main(argv: list[str]) -> int:
+def main() -> int:
     """Compare the last run with the floors."""
-    files = measured(argv)
+    files = measured()
     if files is None:
         print("coverage_floor: no coverage data", file=sys.stderr)
         return 2
@@ -97,4 +94,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())
