@@ -79,6 +79,7 @@ class CleanTest(CalledCase):
         report = self.report()
         self.assertEqual(report.problems, [])
         self.assertTrue(report.behind_is_note)
+        self.assertFalse(any("run on pull requests outside" in n for n in report.notes))
         self.assertIn("base configurations of 3.", report.notes[0])
 
     def test_it_holds_no_kit_code_and_no_marker(self) -> None:
@@ -187,6 +188,7 @@ class RecordTest(CalledCase):
             ({"kit": "x"}, "must be a list of profiles that includes base"),
             ({"kit": {"profiles": ["base", "cobol"]}}, "unknown profile 'cobol'"),
             ({"files": {}}, "files must name every copied file"),
+            ({"files": [".github/zizmor.yml"]}, "files must name every copied file"),
             ({"files": {".github/zizmor.yml": "x"}}, "must give each file's SHA-256"),
             ({"schema": "kleidos.vendored-copy/9"}, "is not kleidos.vendored-copy/1"),
         ):
@@ -420,7 +422,9 @@ class CallerTest(CalledCase):
     def test_the_comment_follows_the_gate(self) -> None:
         self.edit(COMMENT, "workflows: [CI]", "workflows: [Commit check]")
         self.assert_only("follows Commit check, not CI")
-        self.edit(COMMENT, "workflows: [Commit check]", "workflows: CI")
+        self.edit(COMMENT, "workflows: [Commit check]", "workflows: Not CI")
+        self.assert_only("follows Not CI, not CI")
+        self.edit(COMMENT, "workflows: Not CI", "workflows: CI")
         self.assertEqual(self.found(), [])
 
     def test_a_workflow_on_pull_requests_outside_the_gate_is_noted(self) -> None:
@@ -670,6 +674,14 @@ class HookTest(CalledCase):
                 self.edit(self.CONFIG, f"      - id: {hook}\n", "")
                 self.assert_only(f"no {hook} hook from {rf.KIT_HOOKS_URL}")
                 (self.root / self.CONFIG).write_text(original, encoding="utf-8")
+
+    def test_without_python_the_mypy_hook_is_not_asked(self) -> None:
+        self.edit(self.CONFIG, "      - id: kleidos-mypy\n", "")
+        report = cq.Report()
+        rf.check_hooks(cq.Repo(self.root), ["base", "actions"], KIT, report)
+        self.assertEqual(report.problems, [])
+        rf.check_hooks(cq.Repo(self.root), ["base", "python", "actions"], KIT, report)
+        self.assertEqual(len(report.problems), 1)
 
     def test_the_kits_hooks_are_taken_as_they_are(self) -> None:
         self.edit(
