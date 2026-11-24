@@ -394,7 +394,7 @@ class PublicTest(ReportCase):
         self.assertNotIn("Only the local run", text)
 
     def test_what_each_half_reads(self) -> None:
-        both = {"copy", "kit", "pin", "pull", "link", "leaving", "unread"}
+        both = {"copy", "kit", "pin", "pull", "link", "leaving", "sonar", "unread"}
         local = {"setting", "worker", "schedule"}
         head = "Kleidos ecosystem, 2026-11-24 12:00 UTC"
         for everything, kinds, said in (
@@ -720,6 +720,152 @@ class LinkTest(ReportCase):
         self.assertEqual(len(self.rows("note")), 3)
         self.assertEqual(self.rows("green"), ["3 of 8 links and banners answer"])
         self.assertNotIn("https://secret.example/", self.reader.asked)
+
+    def test_a_reader_of_a_repository_that_leaves_is_red(self) -> None:
+        """brand folds into boards here: no other README may link to it or show a banner of it."""
+        self.reader.put(
+            KIT,
+            "README.md",
+            f'<img src="https://raw.githubusercontent.com/{BRAND}/main/svg/b.svg">'
+            f" [p](https://github.com/{BRAND.upper()}) [q](https://github.com/{BRAND}.git)"
+            f" [r](https://github.com/{BRAND}?tab=readme) [s](https://github.com/{BRAND}#top)",
+        )
+        self.reader.put(
+            KIT,
+            "profile/README.md",
+            f"[a](https://github.com/{BRAND}-old) [b](https://github.com/{BOARDS})"
+            f" [c](https://example.org/{BRAND}) [d](https://github.com/{BRAND}/blob/main/x.md)",
+        )
+        # A repository that leaves is not read for it, whatever it links to.
+        self.reader.put(
+            BRAND,
+            "README.md",
+            f"[self](https://github.com/{BRAND}) [l](https://github.com/{BRAND}/x)",
+        )
+        self.reader.put(SECRET, "README.md", f"[x](https://github.com/{BRAND}/tree/main)")
+        eco.check_links(self.report)
+        leaving = self.rows("red", "leaving")
+        self.assertEqual(
+            leaving,
+            [
+                f"{KIT} README.md: https://raw.githubusercontent.com/{BRAND}/main/svg/b.svg"
+                f" reads {BRAND}, which moves into {BOARDS} and is deleted",
+                f"{KIT} README.md: https://github.com/{BRAND.upper()} reads {BRAND},"
+                f" which moves into {BOARDS} and is deleted",
+                f"{KIT} README.md: https://github.com/{BRAND}.git reads {BRAND},"
+                f" which moves into {BOARDS} and is deleted",
+                f"{KIT} README.md: https://github.com/{BRAND}?tab=readme reads {BRAND},"
+                f" which moves into {BOARDS} and is deleted",
+                f"{KIT} README.md: https://github.com/{BRAND} reads {BRAND},"
+                f" which moves into {BOARDS} and is deleted",
+                f"{KIT} profile/README.md: https://github.com/{BRAND}/blob/main/x.md reads"
+                f" {BRAND}, which moves into {BOARDS} and is deleted",
+            ],
+        )
+        self.assertNotIn(f"read {SECRET} README.md", self.reader.asked)
+        # The local run reads the private READMEs too, and checks no link of theirs.
+        self.fresh(everything=True)
+        eco.check_links(self.report)
+        self.assertIn(
+            f"{SECRET} README.md: https://github.com/{BRAND}/tree/main reads {BRAND},"
+            f" which moves into {BOARDS} and is deleted",
+            self.rows("red", "leaving"),
+        )
+        self.assertNotIn(f"https://github.com/{BRAND}/tree/main", self.reader.asked)
+        self.assertEqual(eco.leaving_slug("https://github.com/", {BRAND: BOARDS}), "")
+        self.assertEqual(eco.leaving_slug("not a url", {BRAND: BOARDS}), "")
+
+
+class SonarTest(ReportCase):
+    """The quality gate on main, read from SonarCloud whatever the analysis job said."""
+
+    URL = "https://sonarcloud.io/api/qualitygates/project_status?projectKey=k_github&branch=main"
+
+    def gate(self, answer: Any) -> eco.Report:
+        self.reader.pages = {} if answer is None else {self.URL: json.dumps(answer).encode()}
+        report = self.fresh()
+        eco.check_sonar(report)
+        return report
+
+    def test_a_passing_gate_is_green(self) -> None:
+        self.gate({"projectStatus": {"status": "OK", "conditions": []}})
+        self.assertEqual(self.rows(kind="sonar"), ["1 quality gates on main pass"])
+
+    def test_a_failing_gate_is_red_with_its_conditions(self) -> None:
+        conditions = [
+            {"status": "ERROR", "metricKey": "new_security_rating"},
+            {"status": "OK", "metricKey": "new_coverage"},
+            {"status": "ERROR", "metricKey": "new_reliability_issue_severity"},
+            "not a condition",
+        ]
+        self.gate({"projectStatus": {"status": "ERROR", "conditions": conditions}})
+        self.assertEqual(
+            self.rows("red", "sonar"),
+            [
+                f"{KIT}: SonarCloud's quality gate on main is ERROR"
+                " (new_reliability_issue_severity, new_security_rating)"
+            ],
+        )
+        self.assertEqual(self.rows("green", "sonar"), ["0 quality gates on main pass"])
+        odd: tuple[Any, ...] = (None, 5, "ERROR", {"status": "ERROR", "metricKey": "x"})
+        for listed in odd:
+            with self.subTest(conditions=listed):
+                self.gate({"projectStatus": {"status": "WARN", "conditions": listed}})
+                self.assertEqual(
+                    self.rows("red", "sonar"),
+                    [f"{KIT}: SonarCloud's quality gate on main is WARN"],
+                )
+        self.gate({"projectStatus": {"status": "WARN"}})
+        self.assertEqual(
+            self.rows("red", "sonar"), [f"{KIT}: SonarCloud's quality gate on main is WARN"]
+        )
+
+    def test_no_gate_is_a_note(self) -> None:
+        answers: tuple[Any, ...] = (
+            None,
+            {},
+            {"projectStatus": {}},
+            [],
+            "x",
+            {"projectStatus": None},
+        )
+        for answer in answers:
+            with self.subTest(answer=answer):
+                self.gate(answer)
+                self.assertEqual(
+                    self.rows("note", "sonar"), [f"{KIT}: SonarCloud gave no quality gate"]
+                )
+                self.assertEqual(self.rows("red"), [])
+
+    def test_only_public_projects_that_stay_are_read(self) -> None:
+        self.path.write_text(
+            RAW.replace(
+                'folds_into = "kleidos-dev/boards"', 'sonar = "k_brand"\nfolds_into = "x/y"'
+            ),
+            encoding="utf-8",
+        )
+        self.gate({"projectStatus": {"status": "OK"}})
+        self.assertEqual(self.rows(kind="sonar"), ["1 quality gates on main pass"])
+
+    def test_a_private_project_is_not_read(self) -> None:
+        """Even in a run that reads everything, a private repository's gate is not asked for."""
+        self.path.write_text(
+            RAW.replace(
+                'slug = "kleidos-dev/hidden"\n', 'slug = "kleidos-dev/hidden"\nsonar = "k_hidden"\n'
+            ),
+            encoding="utf-8",
+        )
+        hidden = self.URL.replace("k_github", "k_hidden")
+        ok = json.dumps({"projectStatus": {"status": "OK"}}).encode()
+        self.reader.pages = {self.URL: ok, hidden: ok}
+        report = self.fresh(everything=True)
+        self.assertIn(SECRET, [r.slug for r in report.repositories])
+        with mock.patch.object(self.reader, "page", wraps=self.reader.page) as page:
+            eco.check_sonar(report)
+        page.assert_called_once_with(self.URL)
+        self.assertEqual(
+            [r.text for r in report.rows if r.kind == "sonar"], ["1 quality gates on main pass"]
+        )
 
 
 class SettingTest(ReportCase):
