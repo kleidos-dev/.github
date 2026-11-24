@@ -66,7 +66,9 @@ class SwitchTest(unittest.TestCase):
         self.assertTrue(any("check.yml calls the entry workflows" in line for line in log), log)
         self.assertIn(agent_docs.RULES_URL, self.text("AGENTS.md"))
         self.assertNotIn("Never `--no-verify`", self.text("AGENTS.md"))
-        self.assertIn("## Other repositories", self.text("AGENTS.md"))
+        self.assertIn(f"{ks.RULES_SECTION}\n## Other repositories", self.text("AGENTS.md"))
+        self.assertIn("removed .github/commit-check/", log)
+        self.assertIn(f".pre-commit-config.yaml takes the kit's hooks at v{KIT.version()}", log)
 
     def test_a_second_switch_changes_nothing(self) -> None:
         self.switch()
@@ -97,6 +99,16 @@ class SwitchTest(unittest.TestCase):
         self.assertEqual(ids[-2:], ["mine", "other"])
         self.assertEqual(ids.count("kleidos-commit-msg"), 1)
         self.assertIn("      # Why mine.\n      - id: mine\n", text)
+
+    def test_the_first_entry_and_a_third_partys_hooks_stay_whole(self) -> None:
+        own = "  - repo: local\n    hooks:\n      - id: own\n        name: own\n"
+        theirs = "  - repo: https://x\n    rev: v1\n    hooks:\n      - id: mypy\n      - id: b\n"
+        text = ks.hook_list(f"repos:\n{own}{theirs}".join(("# x\n", "")), KIT, ["base"])
+        self.assertTrue(text.endswith(own + theirs), text)
+        self.assertEqual(
+            [rf.hook_key(h["hook"]) for h in rf.hook_lists(text)],
+            ["kleidos-kit", "kleidos-commit-msg", "own", "mypy", "b"],
+        )
 
     def test_without_python_there_is_no_mypy_hook(self) -> None:
         text = ks.hook_list("# x\nrepos:\n  - repo: local\n    hooks: []\n", KIT, ["base"])
@@ -284,6 +296,9 @@ class ConvertTest(unittest.TestCase):
         self.assertNotIn("About lint", text)
         self.assertIn("  # About own.\n  own:\n", text)
         self.assertEqual(text.count("\njobs:\n"), 1)
+        self.assertNotIn("\n\n\n", text)
+        bare = ks.convert_ci(self.HEAD + self.old("lint", "lint"), KIT, ["base"])
+        self.assertNotIn("\n\n\n", bare)
 
     def test_lines_that_are_no_needs_are_left(self) -> None:
         for line in ("    needs:\n", "      needs: [lint]\n", "    needs: ${{ x }}\n"):

@@ -64,6 +64,8 @@ class PolicyTest(unittest.TestCase):
         status, said = self.run_policy()
         self.assertEqual(status, 0, said)
         self.assertIn("clean: kit, agent-docs, md-nowrap, spdx-headers (kit v3.", said)
+        self.assertNotIn("the hooks here are at", said)
+        self.assertEqual(self.run_policy("a-file-pre-commit-names.py")[0], 0)
 
     def test_each_check_finds_its_own(self) -> None:
         for rel, text, check in (
@@ -133,6 +135,12 @@ class PolicyTest(unittest.TestCase):
                 fx.git(self.root, "reset", "-q", "GEMINI.md")
             self.assertIn("::error file=GEMINI.md", said)
             self.assertIn("## Quality kit", summary.read_text(encoding="utf-8"))
+        with self.planted("GEMINI.md", fx.md_header() + "x\n"):
+            fx.git(self.root, "add", "-N", "GEMINI.md")
+            _status, said = self.run_policy("--only", "agent-docs")
+            fx.git(self.root, "reset", "-q", "GEMINI.md")
+        self.assertIn("agent-docs: GEMINI.md", said)
+        self.assertNotIn("::error", said)
 
     def test_a_warning_fails_nothing(self) -> None:
         long = (self.root / "AGENTS.md").read_text(encoding="utf-8") + "\n" + "- Rule.\n" * 3000
