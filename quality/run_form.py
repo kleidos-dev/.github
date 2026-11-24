@@ -216,6 +216,8 @@ def load(repo: cq.Repo, data: dict[str, Any], report: cq.Report) -> dict[str, An
         )
     if data.get("mode") != "follow":
         report.add("record", cq.SOURCE_JSON, 'mode must be "follow"')
+    if not is_record(data):  # else nothing would compare its files with their digests
+        report.add("record", cq.SOURCE_JSON, f"schema must be {SCHEMA}")
     return {
         "version": str(kit.get("version", "?")),
         "commit": None,

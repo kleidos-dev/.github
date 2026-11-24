@@ -344,7 +344,8 @@ class ReferenceTest(CalledCase):
         for schema in ("", None, 0, "other/1"):
             fx.write(self.root, rel, json.dumps({**data, "schema": schema}))
             self.assertIsNotNone(cq.record_of(cq.Repo(self.root)), schema)
-            self.assertNotEqual(self.found(), [])
+            problems = [p.message for p in cq.run(self.root, kit=KIT).problems]
+            self.assertIn(f"schema must be {rf.SCHEMA}", problems)
         del data["schema"]
         fx.write(self.root, rel, json.dumps(data))
         self.assertIsNone(cq.record_of(cq.Repo(self.root)))
@@ -706,6 +707,13 @@ class GateTest(CalledCase):
         self.assertEqual(self.needs({"a": {}}, self.gated("a")), [])
         self.assertIn("does not need b", self.needs(jobs, self.gated(["a"]))[0])
         self.assertIn("does not need a, b", self.needs(jobs, {})[0])
+
+    def test_a_job_skipped_with_another_needs_that_one_to_be_named(self) -> None:
+        jobs: dict[str, Any] = {"b": {"needs": ["c"]}, "c": {"if": "x"}}
+        self.assertEqual(self.needs(jobs, self.gated(["b", "c"], "b c")), [])
+        found = self.needs(jobs, self.gated(["b", "c"], "b"))
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("MAY_SKIP names b, which has no condition", found[0])
 
     def test_a_skip_has_a_reason(self) -> None:
         some = {"if": "needs.a.outputs.x == 'true'"}
