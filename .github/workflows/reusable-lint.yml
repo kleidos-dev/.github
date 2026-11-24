@@ -11,9 +11,9 @@
 # (which installs the repository's dependencies), reuse lint and the header
 # lines (which need the whole history) have workflows of their own.
 #
-# `deny` is the private deny-list of the repository's own checks. Only the
-# hooks `deny-hooks` names see it, each in a run of its own: no third-party
-# hook runs with the secret in its environment.
+# `deny-hooks` are the repository's own hooks that read the private deny-list:
+# they are skipped here, where third parties' code runs, and run in the job
+# of their own that holds the secret (reusable-deny.yml).
 name: Quality kit lint
 
 on:
@@ -32,13 +32,9 @@ on:
       deny-hooks:
         description: >-
           Comma-separated ids of the repository's own local hooks that read the
-          deny-list (KLEIDOS_DENY_EXTRA)
+          deny-list, skipped here
         type: string
         default: ""
-    secrets:
-      deny:
-        description: The deny-list of private values, one pattern per line
-        required: false
 
 permissions: {}
 
@@ -111,20 +107,6 @@ jobs:
           # ids are the hooks of a repository that still holds kit 2.x copies.
           export SKIP="kleidos-quality,kleidos-md-nowrap,kleidos-agent-docs,kleidos-spdx-headers,mypy,kleidos-kit,kleidos-mypy,reuse,${OWN_HOOKS}"
           pre-commit run --all-files --show-diff-on-failure --color always
-      - name: The repository's hooks that read the deny-list
-        if: inputs.deny-hooks != ''
-        env:
-          KLEIDOS_DENY_EXTRA: ${{ secrets.deny }}
-          # A pull request from a fork or from Dependabot gets no secret: the
-          # checks then look for every other class and say so.
-          KLEIDOS_DENY_OPTIONAL: ${{ secrets.deny == '' && '1' || '0' }}
-          DENY_HOOKS: ${{ inputs.deny-hooks }}
-        run: |
-          set -euo pipefail
-          IFS=', ' read -r -a hooks <<< "${DENY_HOOKS}"
-          for hook in "${hooks[@]}"; do
-            pre-commit run --all-files --show-diff-on-failure --color always "${hook}"
-          done
       - name: zizmor, online audits included
         env:
           GH_TOKEN: ${{ github.token }}

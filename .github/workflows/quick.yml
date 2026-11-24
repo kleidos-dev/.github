@@ -3,8 +3,8 @@
 #
 # The quality kit's first entry workflow (docs/quality.md, "How a repository
 # runs the kit"): what needs no build and no dependency, in minutes. Lint
-# (every policy check and every hook), licensing, the secrets scan, and on a
-# pull request the commit-message gate. Everything else waits for it.
+# (every policy check and every hook), the hooks that read the deny-list, the
+# licensing, the secrets scan, and on a pull request the commit-message gate. Everything else waits for it.
 #
 #   quick:
 #     name: "⚡ Quick"
@@ -16,8 +16,9 @@
 #     permissions:
 #       contents: read
 #
-# It is the only kit workflow that receives a secret, by name and only where
-# a hook of the repository's own reads it: never `secrets: inherit`. Called
+# It is the only kit workflow that receives a secret, by name, and hands it to
+# one job that runs the repository's own local hooks and no third party's
+# code: never `secrets: inherit`. Called
 # at the branch: a workflow called at an annotated (or signed) tag cannot
 # call the workflows beside it, and the run fails before its first job.
 name: Quality kit, quick
@@ -47,6 +48,16 @@ jobs:
     with:
       skip: ${{ inputs.skip }}
       deny-hooks: ${{ inputs.deny-hooks }}
+    permissions:
+      contents: read
+
+  # Alone in its job: see reusable-deny.yml.
+  deny:
+    name: "🕵️ Deny-list"
+    if: inputs.deny-hooks != ''
+    uses: ./.github/workflows/reusable-deny.yml
+    with:
+      hooks: ${{ inputs.deny-hooks }}
     secrets:
       deny: ${{ secrets.deny }}
     permissions:

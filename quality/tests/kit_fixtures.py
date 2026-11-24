@@ -26,6 +26,7 @@ import agent_docs  # noqa: E402  found through the path set above
 import check_commit_msg  # noqa: E402  found through the path set above
 import check_quality  # noqa: E402  found through the path set above
 import coverage_floor  # noqa: E402  found through the path set above
+import deny_hooks  # noqa: E402  found through the path set above
 import ecosystem  # noqa: E402  found through the path set above
 import fetch_tool  # noqa: E402  found through the path set above
 import kit_preview  # noqa: E402  found through the path set above
@@ -55,6 +56,7 @@ __all__ = [
     "called",
     "consumer",
     "coverage_floor",
+    "deny_hooks",
     "ecosystem",
     "fetch_tool",
     "git",
