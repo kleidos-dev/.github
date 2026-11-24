@@ -194,6 +194,8 @@ class RecordTest(CalledCase):
             ({"files": {}}, "files must name every copied file"),
             ({"files": [".github/zizmor.yml"]}, "files must name every copied file"),
             ({"files": {".github/zizmor.yml": "x"}}, "must give each file's SHA-256"),
+            ({"files": {".github/zizmor.yml": "0" * 65}}, "must give each file's SHA-256"),
+            ({"files": {".github/zizmor.yml": "A" * 64}}, "must give each file's SHA-256"),
             ({"schema": "kleidos.vendored-copy/9"}, "is not kleidos.vendored-copy/1"),
         ):
             with self.subTest(change=change):
@@ -357,6 +359,7 @@ class ReferenceTest(CalledCase):
         for reference, files in (
             (quick, ["quick.yml"]),
             (f"x/{quick}", []),
+            (quick.replace("/.github/.github/", "/xgithub/.github/"), []),
             (f"{quick} x", []),
             (quick.replace("quick.yml", "quick.yml/x"), []),
             ("./.github/workflows/quick.yml", []),
