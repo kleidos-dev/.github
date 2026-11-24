@@ -550,6 +550,14 @@ class LanderTest(unittest.TestCase):
         self.assertEqual(self.said, [f"left: {SLUG}#7 Bump x: pending"])
         self.assertEqual(sum(self.slept), landing.WAIT_SECONDS)
 
+    def test_the_whole_of_its_bound_is_waited(self) -> None:
+        self.api.runs, self.api.behind = [], 0
+        for bound, polls in ((20, 1), (21, 2), (40, 2), (41, 3)):
+            self.slept.clear()
+            with mock.patch.object(landing, "WAIT_SECONDS", bound):
+                self.land()
+            self.assertEqual(len(self.slept), polls, bound)
+
     def test_a_branch_that_never_updates_is_left(self) -> None:
         with mock.patch.object(self, "sleep", self.slept.append):
             self.land()

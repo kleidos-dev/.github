@@ -225,7 +225,7 @@ REQ_INCLUDE = re.compile(
 # The tokens of an environment marker: quoted values, names, operators, parentheses.
 MARKER_TOKEN = re.compile(r"'[^']*'|\"[^\"]*\"|[A-Za-z_][\w.]*|[<>=!~]=?=?|[()]")
 # An option of a requirement line (--hash=sha256:...), which says nothing of the pin.
-REQ_OPTION = re.compile(r"(?<!\s)\s+--[\w-]+(?:=\S+)?")
+REQ_OPTION = re.compile(r"\s--[\w-]+(?:=\S+)?")
 REQ_PIN = re.compile(
     r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*===?\s*(?P<version>[^\s;#\\,]+)"
     r"[^;#]*(?:;(?P<marker>[^#\\]*))?"

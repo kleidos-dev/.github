@@ -13,7 +13,7 @@ the line it says otherwise makes (an externally managed Python, as
 Homebrew's and Debian's are, refuses pip outside one), and fails (the CI
 runs the same checks, so nobody needs the hooks).
 
-Usage: launch.py policy|mypy|commit-msg [ARGUMENT ...]
+Usage: launch.py policy|mypy|commit-msg MESSAGE-FILE
 
 Exit status: the hook's own, or 2 when no Python can run it.
 """
@@ -39,6 +39,8 @@ class Hook(NamedTuple):
     floor: tuple[int, int]
     module: str = ""
     requirement: str = ""
+    # How many arguments pre-commit gives it: the message file, or none.
+    arguments: int = 0
 
 
 HOOKS = {
@@ -46,7 +48,7 @@ HOOKS = {
     "policy": Hook("quality/policy.py", (3, 14), "yaml", "pyyaml==6.0.4"),
     # mypy itself is the one on the PATH: the repository's environment has it.
     "mypy": Hook("quality/mypy_groups.py", (3, 14)),
-    "commit-msg": Hook("hooks/check_commit_msg.py", (3, 9)),
+    "commit-msg": Hook("hooks/check_commit_msg.py", (3, 9), arguments=1),
 }
 
 
@@ -126,16 +128,18 @@ def choose(hook: Hook, paths: list[str]) -> tuple[Python | None, str]:
 
 def main(argv: list[str]) -> int:
     """Run the hook argv names, on a Python that can."""
-    if not argv or argv[0] not in HOOKS:
-        print(f"usage: launch.py {'|'.join(HOOKS)} [ARGUMENT ...]", file=sys.stderr)
+    hook = HOOKS.get(argv[0]) if argv else None
+    if hook is None or len(argv) - 1 != hook.arguments:
+        print(f"usage: launch.py {'|'.join(HOOKS)} MESSAGE-FILE", file=sys.stderr)
         return 2
-    hook = HOOKS[argv[0]]
     python, why = choose(hook, candidates(hook.floor))
     if python is None:
         print(f"kleidos quality kit, hook {argv[0]}: {why}", file=sys.stderr)
         print("(the CI runs the same check on every pull request)", file=sys.stderr)
         return 2
-    return subprocess.call([python.path, str(KIT / hook.script), *argv[1:]])
+    # After "--" the message file is a file, whatever its name.
+    given = ["--", *argv[1:]] if hook.arguments else []
+    return subprocess.call([python.path, str(KIT / hook.script), *given])
 
 
 if __name__ == "__main__":

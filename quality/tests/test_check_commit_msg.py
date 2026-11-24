@@ -10,6 +10,7 @@ ignore the user's git config. Run: python3 -m unittest discover -s <this dir>.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -19,9 +20,11 @@ import tempfile
 import unittest
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import kit_fixtures as fx
 from kit_fixtures import check_commit_msg as ccm
 
 ENV = dict(
@@ -761,6 +764,42 @@ class UntrustedTest(unittest.TestCase):
             result = {**result_with(), "pr": number}
             with self.assertRaisesRegex(ValueError, "names no pull request"):
                 ccm.sync_comment(FakeGitHub("a" * 40), "o/r", result, "a" * 40)
+
+
+class ReadFileTest(unittest.TestCase):
+    """What the hook reads is git's, the repository's or a temporary file."""
+
+    def test_where_a_file_may_be(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve()
+            repo = fx.init(home / "repo")
+            for rel in ("repo/in.txt", "repo/.git/MSG", "temp/t", "runner/r", "out/o", "repo2/x"):
+                (home / rel).parent.mkdir(exist_ok=True)
+                (home / rel).write_text(rel, encoding="utf-8")
+            (repo / "link").symlink_to(home / "out/o")
+            with (
+                mock.patch.object(tempfile, "gettempdir", return_value=str(home / "temp")),
+                mock.patch.dict(os.environ, {"RUNNER_TEMP": str(home / "runner")}),
+                contextlib.chdir(home),
+            ):
+                for rel in ("repo/in.txt", "repo/.git/MSG", "temp/t", "runner/r"):
+                    self.assertEqual(ccm.read_file(rel, "repo"), rel)
+                for rel in ("out/o", "repo2/x", "repo/link", "repo/../out/o", "repo", "none"):
+                    with self.assertRaises(OSError, msg=rel):
+                        ccm.read_file(rel, "repo")
+                os.environ["RUNNER_TEMP"] = ""
+                with self.assertRaisesRegex(OSError, "runner/r is neither in this repository"):
+                    ccm.read_file("runner/r", "repo")
+                self.assertEqual(ccm.read_file("out/o"), "out/o")  # the folder it runs in
+                fx.git(repo, "commit", "-q", "--allow-empty", "-m", "x")
+                fx.git(repo, "worktree", "add", "-q", str(home / "tree"))
+                message = home / "repo/.git/worktrees/tree/COMMIT_EDITMSG"
+                message.write_text("m", encoding="utf-8")
+                self.assertEqual(ccm.read_file(str(message), "tree"), "m")
+                bare = home / "bare"
+                bare.mkdir()
+                (bare / "x").write_text("b", encoding="utf-8")
+                self.assertEqual(ccm.read_file("bare/x", "bare"), "b")  # no repository at all
 
 
 class RevisionTest(unittest.TestCase):

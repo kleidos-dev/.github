@@ -54,11 +54,13 @@ Python 3.9 or newer, standard library only (the python3 macOS ships).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Protocol
@@ -536,9 +538,20 @@ def sync_comment(
 
 
 # --- command line ------------------------------------------------------------
+def read_file(path: str, cwd: str | None = None) -> str:
+    """A file of this repository, of its git folder or of the temporary folder, and no other."""
+    roots = [cwd or os.getcwd(), tempfile.gettempdir(), os.environ.get("RUNNER_TEMP", "")]
+    with contextlib.suppress(RuntimeError):  # no repository: the other folders are left
+        roots.append(git(["rev-parse", "--absolute-git-dir"], cwd).strip())
+    real = os.path.realpath(path)
+    if not any(real.startswith(os.path.realpath(root) + os.sep) for root in roots if root):
+        raise OSError(f"{path} is neither in this repository nor in the temporary folder")
+    with open(real, encoding="utf-8") as fh:
+        return fh.read()
+
+
 def load_result(path: str) -> Result:
-    with open(path, encoding="utf-8") as fh:
-        return valid_result(json.load(fh))
+    return valid_result(json.loads(read_file(path)))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -611,8 +624,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.msgfile:
         try:
-            with open(args.msgfile, encoding="utf-8") as fh:
-                text = clean_message(fh.read(), comment_char(args.cwd))
+            text = clean_message(read_file(args.msgfile, args.cwd), comment_char(args.cwd))
         except OSError as exc:
             print(f"check_commit_msg: {exc}", file=sys.stderr)
             return 2

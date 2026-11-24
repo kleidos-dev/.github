@@ -235,9 +235,13 @@ class LaunchTest(unittest.TestCase):
             mock.patch.object(subprocess, "call", return_value=7) as call,
             mock.patch.object(launch, "choose", return_value=chosen),
         ):
-            status, said = self.launch("commit-msg", "MSG", "more")
-        self.assertEqual((status, said), (7, ""))
-        call.assert_called_once_with(["/py", str(HOOKS / "check_commit_msg.py"), "MSG", "more"])
+            status, said = self.launch("commit-msg", "--MSG")
+            self.assertEqual((status, said), (7, ""))
+            call.assert_called_once_with(["/py", str(HOOKS / "check_commit_msg.py"), "--", "--MSG"])
+            for name in ("policy", "mypy"):
+                self.assertEqual(self.launch(name)[0], 7)
+                script = fx.CENTRAL / launch.HOOKS[name].script
+                self.assertEqual(call.call_args.args[0], ["/py", str(script)])
 
     def test_without_a_python_it_says_why_and_fails(self) -> None:
         with mock.patch.object(launch, "choose", return_value=(None, "needs X")):
@@ -249,6 +253,14 @@ class LaunchTest(unittest.TestCase):
     def test_an_unknown_hook_is_refused(self) -> None:
         self.assertEqual(self.launch("nothing")[0], 2)
         self.assertEqual(self.launch()[0], 2)
+
+    def test_each_gets_the_arguments_it_takes(self) -> None:
+        for argv in (("policy", "x"), ("mypy", "x"), ("commit-msg",), ("commit-msg", "a", "b")):
+            with mock.patch.object(launch, "choose") as choose:
+                status, said = self.launch(*argv)
+            self.assertEqual(status, 2)
+            self.assertIn("usage: launch.py", said)
+            choose.assert_not_called()
 
 
 class PreCommitTest(unittest.TestCase):
