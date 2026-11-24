@@ -22,7 +22,7 @@ import sys
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import kit_switch
@@ -162,6 +162,19 @@ def source_checkout(named: Path | None, record: Path, repo: str) -> Path:
     return found
 
 
+# What a refresh never writes, whatever a record names: the workflows GitHub
+# runs. A copy there would run, with the repository's token, whatever the
+# source holds, and a pull request with it proves nothing (docs/quality.md,
+# "Merging"); a workflow changes by a person's own edit.
+NEVER_WRITTEN = ((".github", "workflows"),)
+
+
+def workflow_target(rel: str) -> bool:
+    """Whether a path of the repository is under a folder a refresh never writes."""
+    parts = tuple(part.lower() for part in PurePosixPath(posixpath.normpath(rel)).parts)
+    return any(parts[: len(folder)] == folder for folder in NEVER_WRITTEN)
+
+
 def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> list[str]:
     """Copy again what a record names; return what changed."""
     today = today or dt.datetime.now(tz=dt.UTC).date()
@@ -186,6 +199,8 @@ def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> l
     root = Path(git_out(record.parent, "rev-parse", "--show-toplevel")).resolve()
     rel = (record.parent.resolve() / record.name).relative_to(root).as_posix()
     own_files.own_file(root, rel)
+    if workflow_target(rel):
+        raise RefreshError(f"{rel} is under .github/workflows/: a refresh writes no workflow")
     log = []
     fresh: dict[str, bytes] = {}
     targets = run_form.record_targets(rel, data)
@@ -194,6 +209,10 @@ def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> l
             posixpath.join(upstream["path"], data.get("sources", {}).get(name, name))
         )
         target = targets[name]
+        if target is not None and workflow_target(target):
+            raise RefreshError(
+                f"{target} is under .github/workflows/: a refresh writes no workflow"
+            )
         origin = (source / path).resolve()
         if target is None or not origin.is_relative_to(source.resolve()) or not origin.is_file():
             raise RefreshError(f"{upstream['repo']} has no {path}")

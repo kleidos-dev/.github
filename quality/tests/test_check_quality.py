@@ -208,6 +208,251 @@ class ConformanceTest(unittest.TestCase):
             fx.write(self.root, ".gitleaks.toml", fx.header() + body + more)
             self.assertEqual(len(self.found()), problems, more)
 
+    def test_a_gitleaks_allowlist_of_everything_turns_its_rules_off(self) -> None:
+        body = (
+            "[extend]\nuseDefault = true\n[[allowlists]]\ndescription = 'd'\ntargetRules = ['r']\n"
+        )
+        for more, refused in (
+            ("paths = ['.*']\n", "its paths cover every file"),
+            ("paths = ['']\n", "its paths cover every file"),
+            ("paths = ['^.*$']\n", "its paths cover every file"),
+            ("paths = ['(?s).+', 'y']\n", "its paths cover every file"),
+            ("regexes = ['.*']\n", "its regexes cover every secret"),
+            ("regexes = ['[\\w-]+']\n", "its regexes cover every secret"),
+            ("paths = ['^exports\\.json$']\n", ""),
+            ("paths = ['\\.']\n", ""),
+            ("paths = ['(']\n", ""),
+            ("regexes = ['^[0-9a-f]{64}$']\n", ""),
+        ):
+            with self.subTest(more=more):
+                fx.write(self.root, ".gitleaks.toml", fx.header() + body + more)
+                found = [f for f in self.found() if "[gitleaks]" in f]
+                wanted = f"{refused}: it turns its rules off, refused (no waiver)"
+                where = ".gitleaks.toml allowlists[0]: [gitleaks]"
+                self.assertEqual(found, [f"{where} {wanted}"] if refused else [])
+
+    def weakened(self, needle: str) -> None:
+        """A weakening the report names, with no waiver for it."""
+        self.assertFound(f"{needle} weakens a kit rule and has no waiver")
+
+    def waive(self, tool: str, what: str) -> None:
+        self.append(
+            cq.WAIVERS,
+            f'\n[[waiver]]\ntool = "{tool}"\nwhat = "{what}"\nreason = "r"\ndecided = "d"\n',
+        )
+
+    def typos_found(self) -> list[str]:
+        """What the typos rules find, with the waivers that answer them."""
+        return [f for f in self.found() if "typos" in f]
+
+    def test_a_second_typos_configuration_is_a_weakening(self) -> None:
+        for rel, text in (
+            ("typos.toml", "[files]\nextend-exclude = []\n"),
+            ("_typos.toml", "[default]\n"),
+            ("pkg/.typos.toml", "[default]\n"),
+            ("pkg/typos.toml", "[default]\n"),
+            ("pkg/pyproject.toml", "[tool.typos.default]\nlocale = 'en-gb'\n"),
+            ("Cargo.toml", "[package.metadata.typos]\n"),
+            ("crates/x/Cargo.toml", "[ workspace.metadata.typos.files ]\n"),
+        ):
+            with self.subTest(rel=rel):
+                fx.write(self.root, rel, fx.header() + text)
+                self.weakened(f"[typos] config:{rel}")
+                whole = (self.root / cq.WAIVERS).read_text(encoding="utf-8")
+                self.waive("typos", f"config:{rel}")
+                self.assertEqual(self.typos_found(), [])
+                fx.write(self.root, cq.WAIVERS, whole)
+                (self.root / rel).unlink()
+        fx.write(self.root, "pkg/notypos.toml", fx.header())
+        fx.write(self.root, "pkg/Cargo.toml", fx.header() + "[package]\nname = 'typos-free'\n")
+        self.assertEqual(self.typos_found(), [])
+
+    def typos_off(self, text: str) -> list[str]:
+        """What a .typos.toml alone says is switched off."""
+        root = fx.init(Path(self._tmp.name) / "typos-only")
+        fx.write(root, ".typos.toml", text)
+        report = cq.Report()
+        cq.check_typos_off(cq.Repo(root), report)
+        (root / ".typos.toml").unlink()
+        return [w.what for w in report.weakenings]
+
+    def test_typos_switched_off_from_its_configuration_is_a_weakening(self) -> None:
+        for text, what in (
+            ('[files]\nextend-exclude = ["*"]\n', ["extend-exclude:*"]),
+            ('[files]\nextend-exclude = ["**", "a/"]\n', ["extend-exclude:**"]),
+            ('[files]\nextend-exclude = ["**/*"]\n', ["extend-exclude:**/*"]),
+            ('[files]\nextend-exclude = ["/"]\n', ["extend-exclude:/"]),
+            ('[files]\nextend-exclude = ["_shared/kicad/", "*.md", "LICENSES/"]\n', []),
+            ("[default.extend-words]\nkleidos = 'kleidos'\n", []),
+            ("[default]\ncheck-file = false\n", ["default.check-file=false"]),
+            ("[default]\ncheck-filename = false\n", ["default.check-filename=false"]),
+            ("[default]\ncheck-file = true\n", []),
+            ("[type.py]\ncheck-file = false\n", ["type.py.check-file=false"]),
+            ("[type.py]\nbinary = true\n", ["type.py.binary=true"]),
+            ("[default]\nbinary = true\n", []),
+            ('[type.py]\nextend-glob = ["*.pyi"]\n', []),
+            ("[type]\npy = 'not a table'\n", []),
+            ("type = 3\nfiles = 3\ndefault = 3\n", []),
+            ("[default]\nextend-ignore-re = ['.*']\n", ["default.extend-ignore-re:.*"]),
+            ("[default]\nextend-ignore-re = ['(?s).+']\n", ["default.extend-ignore-re:(?s).+"]),
+            (
+                "[type.md]\nextend-ignore-identifiers-re = ['\\w+']\n",
+                ["type.md.extend-ignore-identifiers-re:\\w+"],
+            ),
+            (
+                "[default]\nextend-ignore-words-re = ['^.*$']\n",
+                ["default.extend-ignore-words-re:^.*$"],
+            ),
+            ("[default]\nextend-ignore-re = ['\\bPNGs\\b']\n", []),
+            ("[default]\nextend-ignore-re = ['\\b[0-9a-f]{7,64}\\b']\n", []),
+            ("[default]\nextend-ignore-re = ['e']\n", []),
+            ("[default]\nextend-ignore-re = ['(']\n", []),
+            ("= not toml\n", []),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.typos_off(text), what)
+
+    def test_an_actionlint_ignore_is_a_weakening(self) -> None:
+        whole = (self.root / cq.WAIVERS).read_text(encoding="utf-8")
+        for rel in cq.ACTIONLINT_CONFIGS:
+            with self.subTest(rel=rel):
+                text = "paths:\n  .github/workflows/**/*.yml:\n    ignore:\n      - '.*'\n"
+                fx.write(self.root, rel, fx.header() + text)
+                self.weakened("[actionlint] ignore:.github/workflows/**/*.yml:.*")
+                self.waive("actionlint", "ignore:.github/workflows/**/*.yml:.*")
+                self.assertEqual(self.found(), [])
+                fx.write(self.root, rel, fx.header() + "self-hosted-runner:\n  labels: [big]\n")
+                self.assertFound("matches nothing any more")
+                fx.write(self.root, rel, fx.header() + "paths: [\n")
+                self.assertFound(f"{rel}: [actionlint] not valid YAML")
+                (self.root / rel).unlink()
+                fx.write(self.root, cq.WAIVERS, whole)
+        fx.write(self.root, ".github/actionlint.yaml", fx.header() + "paths:\n  x:\n")
+        self.assertEqual(self.found(), [])
+        for text in (
+            "- a list\n",
+            "paths: [a]\n",
+            "paths:\n  x: [a]\n",
+            "paths:\n  x:\n    ignore:\n",
+        ):
+            fx.write(self.root, ".github/actionlint.yaml", fx.header() + text)
+            self.assertEqual(self.found(), [], text)
+        fx.write(
+            self.root, ".github/actionlint.yaml", fx.header() + "paths:\n  x:\n    ignore: '.*'\n"
+        )
+        self.weakened("[actionlint] ignore:x:.*")
+
+    def test_a_second_zizmor_configuration_is_refused(self) -> None:
+        text = fx.header() + "rules:\n  unpinned-uses:\n    disable: true\n"
+        for rel in cq.ZIZMOR_SHADOWS:
+            with self.subTest(rel=rel):
+                fx.write(self.root, rel, text)
+                said = "a second zizmor configuration: the kit's .github/zizmor.yml is the one"
+                self.assertEqual(
+                    [f for f in self.found() if "[zizmor]" in f], [f"{rel}: [zizmor] {said}"]
+                )
+                (self.root / rel).unlink()
+        fx.write(self.root, "docs/zizmor.yml", fx.header())
+        self.assertEqual(self.found(), [])
+
+    def test_a_markdownlint_configuration_in_a_folder_is_a_weakening(self) -> None:
+        for rel in (
+            "docs/.markdownlint.yaml",
+            "docs/.markdownlint.json",
+            "a/b/.markdownlint-cli2.jsonc",
+            "docs/.markdownlint-cli2.mjs",
+            ".markdownlint-cli2.yaml",
+            ".markdownlint-cli2.cjs",
+        ):
+            with self.subTest(rel=rel):
+                fx.write(self.root, rel, "// x\n" if rel.endswith("js") else "{}\n")
+                self.weakened(f"[markdownlint] config:{rel}")
+                (self.root / rel).unlink()
+        fx.write(self.root, "node_modules/x/.markdownlint.json", "{}\n")
+        fx.write(self.root, "docs/markdownlint.json", "{}\n")
+        self.assertEqual(self.found(), [])
+
+    def test_sonar_suppressions_and_exclusions_of_everything_are_refused(self) -> None:
+        rel = "sonar-project.properties"
+        for line, refused in (
+            (
+                "sonar.issue.ignore.multicriteria=e1",
+                "sonar.issue.ignore.multicriteria suppresses issues",
+            ),
+            ("sonar.issue.ignore.allfile=a", "sonar.issue.ignore.allfile suppresses issues"),
+            (
+                "sonar.issue.enforce.multicriteria=e1",
+                "sonar.issue.enforce.multicriteria suppresses issues",
+            ),
+            ("sonar.exclusions=**/*", "sonar.exclusions=**/* excludes every file"),
+            ("sonar.exclusions=docs/**, **", "sonar.exclusions=** excludes every file"),
+            ("sonar.coverage.exclusions=**", "sonar.coverage.exclusions=** excludes every file"),
+            ("sonar.cpd.exclusions=**/*.*,**/*", "sonar.cpd.exclusions=**/* excludes every file"),
+            ("sonar.test.exclusions = **", "sonar.test.exclusions=** excludes every file"),
+            ("sonar.exclusions=*", ""),
+            ("sonar.exclusions=_shared/kicad/**,_shared/fixtures/**", ""),
+            ("sonar.exclusions=quality/tests/**", ""),
+            ("sonar.exclusions=", ""),
+            ("sonar.inclusions=**", ""),
+        ):
+            with self.subTest(line=line):
+                fx.write(self.root, rel, fx.header() + f"sonar.projectKey=x\n{line}\n")
+                found = [f for f in self.found() if "[sonar]" in f]
+                wanted = f"{rel}: [sonar] {refused}: refused (no waiver)"
+                self.assertEqual(found, [wanted] if refused else [])
+
+    def test_a_step_that_forgives_itself_is_a_weakening(self) -> None:
+        rel = ".github/workflows/extra.yml"
+
+        def workflow(step: str) -> str:
+            return (
+                fx.header()
+                + 'name: Extra\non: push\njobs:\n  build:\n    name: "🏗️ Build"\n'
+                + "    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n"
+                + '      - run: "true"\n'
+                + step
+            )
+
+        for step, what in (
+            ("      - run: make\n        continue-on-error: true\n", "build:1"),
+            (
+                "      - id: make\n        run: make\n        continue-on-error: true\n",
+                "build:make",
+            ),
+            (
+                "      - name: Make it\n        run: make\n        continue-on-error: true\n",
+                "build:Make it",
+            ),
+            ("      - run: make\n        continue-on-error: 1\n", "build:1"),
+        ):
+            with self.subTest(step=step):
+                fx.write(self.root, rel, workflow(step))
+                self.weakened(f"[ci] continue-on-error:{rel}:{what}")
+        fx.write(
+            self.root, rel, workflow("      - run: make\n        continue-on-error: ${{ true }}\n")
+        )
+        self.assertFound(f"{rel} jobs.build step 1: [ci] continue-on-error is an expression")
+        fx.write(self.root, rel, workflow("      - run: make\n        continue-on-error: false\n"))
+        self.assertEqual(self.found(), [])
+        fx.write(self.root, rel, workflow("      - make\n"))
+        self.assertEqual([f for f in self.found() if "continue-on-error" in f], [])
+
+    def test_a_glob_or_a_pattern_of_everything(self) -> None:
+        for pattern, gitignore, everything in (
+            ("*", True, True),
+            ("*", False, False),
+            ("**", False, True),
+            ("**/*", False, True),
+            ("/", True, True),
+            ("", True, True),
+            ("a/", True, False),
+            ("*.md", True, False),
+            ("?", True, False),
+            ("**/?*", False, True),
+        ):
+            with self.subTest(pattern=pattern, gitignore=gitignore):
+                self.assertIs(cq.glob_covers_all(pattern, gitignore), everything)
+
     def test_a_gitleaksignore_fingerprint_says_why(self) -> None:
         fx.write(self.root, ".gitleaksignore", "abc:file:rule:1\n")
         self.assertFound("every fingerprint has a comment line above it")

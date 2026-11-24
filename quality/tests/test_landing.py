@@ -299,6 +299,82 @@ class RefusalTest(unittest.TestCase):
                 self.assertIs(self.lines("package.json", old, new), accepted)
                 self.assertIs(self.lines("package-lock.json", old, new), accepted)
 
+    def test_a_floor_or_an_index_is_never_landed(self) -> None:
+        """What a check holds the code to, and where packages come from, are a person's to move."""
+        for name, old, new in (
+            ("pyproject.toml", "fail_under = 90", "fail_under = 50"),
+            ("pyproject.toml", "fail-under = 90", "fail-under = 0"),
+            ("pyproject.toml", 'addopts = "--cov-fail-under=90"', 'addopts = "--cov-fail-under=9"'),
+            ("pyproject.toml", 'requires-python = ">=3.12"', 'requires-python = ">=3.9"'),
+            ("pyproject.toml", 'requires-python = ">=3.12,<4"', 'requires-python = ">=3.9,<4"'),
+            ("pyproject.toml", 'python_requires = ">=3.12"', 'python_requires = ">=3.8"'),
+            ("pyproject.toml", "[[tool.uv.index]]", "[[tool.uv.index]]  # moved"),
+            (
+                "requirements.txt",
+                "--index-url https://pypi.org/simple",
+                "--index-url https://10.0.0.1/simple",
+            ),
+            ("requirements.txt", "--index-url=10.0.0.1", "--index-url=10.0.0.2"),
+            ("requirements.txt", "-i https://a.example:1/simple", "-i https://a.example:2/simple"),
+            (
+                "requirements.in",
+                "--extra-index-url https://a.example/1",
+                "--extra-index-url https://a.example/2",
+            ),
+            (
+                "requirements.txt",
+                "--find-links https://a.example/1",
+                "--find-links https://a.example/2",
+            ),
+            ("requirements.txt", "--trusted-host 10.0.0.1", "--trusted-host 10.0.0.2"),
+            ("requirements.txt", "-c constraints-1.txt", "-c constraints-2.txt"),
+            ("package.json", '    "node": ">=20",', '    "node": ">=16",'),
+            ("package.json", '    "npm": ">=10"', '    "npm": ">=6"'),
+            ("package.json", '    "pnpm": ">=9"', '    "pnpm": ">=8"'),
+        ):
+            version = '  "x==1",' if name == "pyproject.toml" else "x==1"
+            if name == "package.json":
+                version = '    "a": "^1.0.0",'
+            bumped = (
+                version.replace("1", "2", 1) if name != "package.json" else '    "a": "^1.1.0",'
+            )
+            first = f"@@ -1 +1 @@\n-{version}\n+{bumped}"
+            floor = f"@@ -40 +40 @@\n-{old}\n+{new}"
+            for patch in (
+                floor,
+                f"{first}\n{floor}",
+                f"{first}\n context\n{floor[floor.index(chr(10)) + 1 :]}",
+            ):
+                with self.subTest(name=name, old=old, patch=patch.count("@@")):
+                    why = landing.file_refusal(changed(name, patch))
+                    self.assertEqual(
+                        why, f"{name} changes a floor or a package index: {new.strip()[:80]}"
+                    )
+            with self.subTest(name=name, only="the version"):
+                self.assertIsNone(landing.file_refusal(changed(name, first)))
+
+    def test_a_floor_a_lock_records_for_a_dependency_moves_with_it(self) -> None:
+        patch = (
+            '@@\n-      "version": "1.0.0",\n+      "version": "1.1.0",'
+            '\n-        "node": ">=14"\n+        "node": ">=18"'
+        )
+        self.assertIsNone(landing.file_refusal(changed("package-lock.json", patch)))
+        self.assertIsNotNone(landing.file_refusal(changed("package.json", patch)))
+
+    def test_only_a_packages_own_version_is_masked(self) -> None:
+        for line, masked in (
+            ("x==1.0", "x==…"),
+            ("x[a,b] >= 1.0", "x[a,b] >= …"),
+            ('  "x>=1,<2",', '  "x>=…,<…",'),
+            ("fail_under = 90", "fail_under = 90"),
+            ("--cov-fail-under=90", "--cov-fail-under=90"),
+            ('requires-python = ">=3.12"', 'requires-python = ">=3.12"'),
+            ("x = 1", "x = 1"),
+            ("--index-url=10.0.0.1", "--index-url=10.0.0.1"),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(landing.masked(line, landing.PYTHON), masked)
+
     def test_lines_apart_are_compared_apart(self) -> None:
         for patch, accepted in (
             ("@@\n-x==1\n+x==2\n y==1\n-z==1\n+z==2", True),
@@ -313,7 +389,9 @@ class RefusalTest(unittest.TestCase):
         patch = "@@\n-x==1\n+x==2\n+--index-url evil " + "y" * 99
         why = str(landing.file_refusal(changed(patch=patch)))
         self.assertTrue(
-            why.startswith("requirements.txt changes more than a version: --index-url evil yyy"),
+            why.startswith(
+                "requirements.txt changes a floor or a package index: --index-url evil y"
+            ),
             why,
         )
         self.assertLess(len(why), 140)

@@ -14,8 +14,10 @@ the bot's pull requests"):
   - only requirements, pyproject.toml, package.json and package-lock.json
     changed, and each of their lines equal to its old one but for versions
     and checksums: a new package, a new host, an option or a script is
-    left to a person, and so is everything under .github/, where a green
-    check proves nothing, since the pull request brings its own workflows;
+    left to a person, and so is a floor (a coverage threshold, the oldest
+    Python or Node.js, a package index), and everything under .github/,
+    where a green check proves nothing, since the pull request brings its
+    own workflows;
   - no major version, as Dependabot's own commit says;
   - never the kit's repository, nor one on the hold list;
   - a fresh run against today's main, all of it green, the kit's gate
@@ -44,7 +46,14 @@ BOT = "dependabot[bot]"
 GATE, ACTIONS_APP = "✅ Check", 15368  # the job every repository requires; GitHub Actions
 # What may differ between a line and its old one: the group "version" is masked.
 VERSION = r"\d[0-9A-Za-z.+!_-]*"
-PINNED = re.compile(rf"(?P<keep>(?:[=!~<>]=?|===)\s*)(?P<version>{VERSION})")
+# A version of a package: pip's operators only, right after the package's name
+# (and its extras), or after a comma that adds a bound to it. A bare `=` and an
+# operator after a quote are no requirement: `fail_under = 90`,
+# `--cov-fail-under=90` and `requires-python = ">=3.12"` are floors, never masked.
+PINNED = re.compile(
+    r"(?P<keep>(?:(?<![\w.-])[A-Za-z0-9][\w.-]*(?:\[[\w.,\s-]*\])?\s*|,\s*)"
+    rf"(?:===|==|~=|!=|<=|>=|<|>)\s*)(?P<version>{VERSION})"
+)
 RANGE = re.compile(
     rf'^(?P<keep>\s*"[^"]+": ")'
     rf'(?P<version>(?:(?:[\^~<>=]*\s?{VERSION}|\|\||-|\*)(?:\s|(?=")))+)(?=",?$)'
@@ -59,10 +68,22 @@ INTEGRITY = re.compile(
 HASH = re.compile(r"^(?P<keep>\s+--hash=sha256:)(?P<version>[0-9a-f]{64}(?: \\)?)(?=$)")
 COMMENT = re.compile(r"^\s*#")
 PYTHON, NODE = (HASH, PINNED), (RESOLVED, INTEGRITY, RANGE)
+# Lines no mask may let through, whatever they hold: a floor a check holds the
+# code to (coverage, the oldest Python or Node.js it runs on) and where
+# packages come from. Dependabot moves versions; these are a person's to move.
+PYTHON_FLOORS = re.compile(
+    r"fail[_-]under|requires[_-]python|python[_-]requires|index[_-]url|find[_-]links"
+    r"|trusted[_-]host|^\s*-[ifc]\b|\[\[?tool\.(?:uv|poetry|pdm|hatch)\b.*\b(?:index|source)",
+    re.IGNORECASE,
+)
+ENGINES = re.compile(r'^\s*"(?:node|npm|pnpm|yarn|bun|engines|registry|packageManager)"\s*:')
+NONE = re.compile(r"(?!)")
 MANIFESTS = (
-    (re.compile(r"^requirements(?:-[\w-]+)?\.(?:txt|in)$"), PYTHON),
-    (re.compile(r"^pyproject\.toml$"), PYTHON),
-    (re.compile(r"^package(?:-lock)?\.json$"), NODE),
+    (re.compile(r"^requirements(?:-[\w-]+)?\.(?:txt|in)$"), PYTHON, PYTHON_FLOORS),
+    (re.compile(r"^pyproject\.toml$"), PYTHON, PYTHON_FLOORS),
+    # The engines of the dependencies a lock records move with their versions.
+    (re.compile(r"^package\.json$"), NODE, ENGINES),
+    (re.compile(r"^package-lock\.json$"), NODE, NONE),
 )
 NAME_LINE = re.compile(r"^- dependency-name: ", re.MULTILINE)
 UPDATE_LINE = re.compile(
@@ -119,9 +140,15 @@ def blocks(patch: str) -> list[tuple[list[str], list[str]]]:
     return found
 
 
-def line_refusal(patch: str, rules: tuple[re.Pattern[str], ...]) -> str | None:
-    """Why the lines of a manifest change more than versions, or None."""
+def line_refusal(
+    patch: str, rules: tuple[re.Pattern[str], ...], floors: re.Pattern[str] = NONE
+) -> str | None:
+    """Why the lines of a manifest change more than versions, or None: every block of it."""
     for old, new in blocks(patch):
+        moved = [line for line in [*new, *old] if line not in old or line not in new]
+        floor = next((line for line in moved if floors.search(line)), None)
+        if floor is not None:
+            return f"changes a floor or a package index: {floor.strip()[:80]}"
         sides = []
         for lines in (old, new):
             kept: list[str] = []
@@ -146,13 +173,15 @@ def file_refusal(changed: dict[str, Any]) -> str | None:
     if changed.get("status") != "modified":
         return f"{name} is {changed.get('status')}"
     base = PurePosixPath(name).name
-    rules = next((rules for pattern, rules in MANIFESTS if pattern.match(base)), None)
-    if rules is None:
+    kind = next(
+        ((rules, floors) for pattern, rules, floors in MANIFESTS if pattern.match(base)), None
+    )
+    if kind is None:
         return f"{name} is no manifest this reads"
     patch = str(changed.get("patch") or "")
     if not blocks(patch):
         return f"{name} shows no diff to read"
-    why = line_refusal(patch, rules)
+    why = line_refusal(patch, *kind)
     return f"{name} {why}" if why else None
 
 

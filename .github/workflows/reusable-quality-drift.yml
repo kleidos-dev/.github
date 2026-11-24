@@ -44,8 +44,8 @@ jobs:
           set -euo pipefail
           kit="${RUNNER_TEMP}/kit"
           git clone -q --filter=blob:none https://github.com/kleidos-dev/.github "${kit}"
-          recorded="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
-          python -m pip install -q --require-hashes -r "${kit}/quality/requirements-tools.txt"
+          recorded="$(python3 -I -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
+          python -I -m pip install -q --require-hashes -r "${kit}/quality/requirements-tools.txt"
           # The kit's own sync.py names the newest quality-v* tag and compares
           # what a repository receives at the two commits (key=value lines).
           python "${kit}/quality/sync.py" --drift "${recorded}" > "${RUNNER_TEMP}/drift.txt"
@@ -67,7 +67,7 @@ jobs:
           KIT: ${{ steps.compare.outputs.kit }}
         run: |
           set -euo pipefail
-          python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+          python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
           tree="${RUNNER_TEMP}/tree"
           cp -a "${GITHUB_WORKSPACE}" "${tree}"
           python "${KIT}/quality/sync.py" --write "${tree}" > "${RUNNER_TEMP}/sync.log" || true

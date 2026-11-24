@@ -219,6 +219,35 @@ class RefreshTest(unittest.TestCase):
         self.record.symlink_to(moved)
         self.refuse("vendor/boards/SOURCE.json is a symbolic link")
 
+    def test_nothing_is_written_under_the_workflows(self) -> None:
+        """A record that names a workflow would have a refresh write code GitHub runs."""
+        fx.write(self.source, "evil.yml", "on: push\n")
+        fx.commit(self.source, "Plant")
+        for more, name in (
+            ({"root": "."}, ".github/workflows/ci.yml"),
+            ({"root": "."}, ".GitHub/Workflows/ci.yml"),
+            ({"root": "."}, "./.github/workflows/x/y.yaml"),
+            ({"root": "."}, "a/../.github/workflows/ci.yml"),
+            ({}, "../../.github/workflows/ci.yml"),
+        ):
+            with self.subTest(name=name):
+                self.write(files={name: "0" * 64}, sources={name: "evil.yml"}, **more)
+                self.refuse("under .github/workflows/: a refresh writes no workflow")
+                self.assertFalse((self.root / ".github").exists())
+        moved = self.root / ".github/workflows/SOURCE.json"
+        moved.parent.mkdir(parents=True)
+        self.record.rename(moved)
+        self.record = moved
+        self.write(files={"a/front.svg": cq.sha256(b"old\n")})
+        self.refuse("SOURCE.json is under .github/workflows/")
+        for rel, under in (
+            (".github/workflows", True),
+            (".github/workflows-not/x", False),
+            (".github/quality/ruff.toml", False),
+            ("docs/.github/workflows/x.yml", False),
+        ):
+            self.assertIs(kp.workflow_target(rel), under, rel)
+
     def test_a_record_that_lacks_only_its_date_is_refreshed(self) -> None:
         self.write(taken="")
         self.assertEqual(len(kp.refresh(self.record, None, TODAY)), 1)

@@ -153,6 +153,8 @@ WAIVABLE_TOOLS = (
     "pre-commit",
     "reuse",
     "pins",
+    "typos",
+    "actionlint",
 )
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -1613,6 +1615,7 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
                 rel,
                 "a global [allowlist] reaches every rule: use [[allowlists]] with targetRules",
             )
+        gitleaks_allowlists_off(cfg, rel, report)
         for i, allow in enumerate(cfg.get("allowlists") or []):
             if not str(allow.get("description", "")).strip():
                 report.add("gitleaks", f"{rel} allowlists[{i}]", "needs a description saying why")
@@ -1635,6 +1638,208 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
             prev = stripped
             if stripped and not stripped.startswith("#"):
                 report.suppressions["gitleaks fingerprint"] += 1
+
+
+# --------------------------------------------------------------------------
+# A tool switched off from the tree: a pattern that covers every file, a
+# second configuration the tool reads before the kit's, a setting that turns
+# its check off. Each is a weakening like any other (a waiver says why), or,
+# where the kit's rules allow no waiver, a problem.
+
+# Paths and words of every kind: a pattern that matches all of them excludes,
+# or ignores, everything (or near enough to read as such).
+PROBE_PATHS = (
+    "README.md",
+    "src/main.py",
+    "a/b/c/d.ts",
+    ".github/workflows/ci.yml",
+    "x",
+    "docs/guide.txt",
+)
+PROBE_WORDS = ("word", "Name", "snake_case", "x1y", "CamelCase")
+
+
+def glob_regex(pattern: str, gitignore: bool) -> re.Pattern[str]:
+    """A glob as a regex over a path: `**` any folders, `*` and `?` within one name.
+
+    gitignore (typos): a pattern with no slash but at its end names a file or
+    a folder at any depth, and a folder takes what is in it. Otherwise (Ant,
+    as SonarQube reads it) the pattern is the whole path.
+    """
+    body = pattern.strip().lstrip("/") if gitignore else pattern.strip()
+    out, i = "", 0
+    while i < len(body):
+        if body.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif body.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif body[i] in "*?":
+            out, i = out + ("[^/]*" if body[i] == "*" else "[^/]"), i + 1
+        else:
+            out, i = out + re.escape(body[i]), i + 1
+    if not gitignore:
+        return re.compile(out)
+    lead = "" if "/" in body.rstrip("/") else "(?:.*/)?"
+    return re.compile(f"{lead}{out.removesuffix('/')}(?:/.*)?" if out else ".*")
+
+
+def glob_covers_all(pattern: str, gitignore: bool = True) -> bool:
+    """Whether a glob matches every probe path: an exclusion of everything."""
+    rx = glob_regex(pattern, gitignore)
+    return all(rx.fullmatch(path) for path in PROBE_PATHS)
+
+
+def regex_covers_all(pattern: str, probes: tuple[str, ...], whole: bool) -> bool:
+    """Whether a regular expression finds every probe: somewhere in it, or the whole of it.
+
+    gitleaks allows what a pattern finds anywhere in a path or a secret;
+    typos ignores the text a pattern spans, so only one that spans a whole
+    word ignores every word. A pattern that is no regular expression is the
+    tool's to refuse.
+    """
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        return False
+    found = [rx.search(probe) for probe in probes]
+    return all(
+        f is not None and (not whole or f[0] == probe)
+        for f, probe in zip(found, probes, strict=True)
+    )
+
+
+# typos reads the first of these in a folder, and a folder's own before its
+# parent's: any but the kit's .typos.toml at the top is read instead of it.
+TYPOS_SHADOWS = ("typos.toml", "_typos.toml", ".typos.toml")
+TYPOS_HOSTS = ("pyproject.toml", "Cargo.toml")
+TYPOS_TABLE = re.compile(
+    r"^\s*\[\s*(?:tool|(?:package|workspace)\.metadata)\.typos\b", re.MULTILINE
+)
+TYPOS_IGNORE_RE = ("extend-ignore-re", "extend-ignore-identifiers-re", "extend-ignore-words-re")
+
+
+def typos_sections(cfg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The sections of a typos configuration that say what is checked: default and each type."""
+    default, types = cfg.get("default"), cfg.get("type")
+    out = [("default", default)] if isinstance(default, dict) else []
+    for name, section in (types if isinstance(types, dict) else {}).items():
+        if isinstance(section, dict):
+            out.append((f"type.{name}", section))
+    return out
+
+
+def check_typos_off(repo: Repo, report: Report) -> None:
+    """typos switched off: a second configuration, an exclusion of everything, a check off."""
+    for rel in repo.files:
+        name = PurePosixPath(rel).name
+        shadow = name in TYPOS_SHADOWS and rel != ".typos.toml"
+        if shadow or (name in TYPOS_HOSTS and TYPOS_TABLE.search(repo.text(rel))):
+            report.weaken("typos", f"config:{rel}", rel)
+    if not repo.exists(".typos.toml"):
+        return
+    try:
+        cfg = tomllib.loads(repo.text(".typos.toml"))
+    except tomllib.TOMLDecodeError:
+        return  # check_typos says so
+    files = cfg.get("files")
+    for pattern in (files.get("extend-exclude") or []) if isinstance(files, dict) else []:
+        if glob_covers_all(str(pattern)):
+            report.weaken("typos", f"extend-exclude:{pattern}", ".typos.toml")
+    for where, section in typos_sections(cfg):
+        for key in ("check-file", "check-filename"):
+            if section.get(key) is False:
+                report.weaken("typos", f"{where}.{key}=false", ".typos.toml")
+        if section.get("binary") is True and where.startswith("type."):
+            report.weaken("typos", f"{where}.binary=true", ".typos.toml")
+        for key in TYPOS_IGNORE_RE:
+            for pattern in section.get(key) or []:
+                if regex_covers_all(str(pattern), PROBE_WORDS, whole=True):
+                    report.weaken("typos", f"{where}.{key}:{pattern}", ".typos.toml")
+
+
+ACTIONLINT_CONFIGS = (".github/actionlint.yaml", ".github/actionlint.yml")
+
+
+def check_actionlint(repo: Repo, report: Report) -> None:
+    """Every error actionlint is told to ignore is a weakening."""
+    for rel in ACTIONLINT_CONFIGS:
+        if not repo.exists(rel):
+            continue
+        try:
+            cfg = yaml.safe_load(repo.text(rel)) or {}
+        except yaml.YAMLError as exc:
+            report.add("actionlint", rel, f"not valid YAML: {exc}")
+            continue
+        paths = cfg.get("paths") if isinstance(cfg, dict) else None
+        for glob, entry in (paths if isinstance(paths, dict) else {}).items():
+            ignored = entry.get("ignore") if isinstance(entry, dict) else None
+            if isinstance(ignored, str):
+                ignored = [ignored]
+            for pattern in ignored if isinstance(ignored, list) else []:
+                report.weaken("actionlint", f"ignore:{glob}:{pattern}", rel)
+
+
+# zizmor reads its configuration from the first of these it finds; the kit's
+# is .github/zizmor.yml, and a second one would be read instead of it.
+ZIZMOR_SHADOWS = ("zizmor.yml", "zizmor.yaml", ".zizmor.yml", ".zizmor.yaml", ".github/zizmor.yaml")
+
+
+def check_zizmor_configs(repo: Repo, report: Report) -> None:
+    for rel in ZIZMOR_SHADOWS:
+        if repo.exists(rel):
+            report.add(
+                "zizmor",
+                rel,
+                "a second zizmor configuration: the kit's .github/zizmor.yml is the one",
+            )
+
+
+# markdownlint-cli2 reads a configuration in every folder, for that folder.
+MARKDOWNLINT_CONFIG = re.compile(r"^\.markdownlint(?:-cli2)?\.(?:jsonc|json|ya?ml|cjs|mjs)$")
+MARKDOWNLINT_ROOT = (
+    ".markdownlint-cli2.jsonc",
+    ".markdownlint.jsonc",
+    ".markdownlint.json",
+    ".markdownlint.yaml",
+    ".markdownlint.yml",
+)
+
+
+def check_markdownlint_configs(repo: Repo, report: Report) -> None:
+    """A markdownlint configuration the kit does not read: in a folder, or a second at the top."""
+    for rel in repo.files:
+        if "node_modules/" in rel or not MARKDOWNLINT_CONFIG.match(PurePosixPath(rel).name):
+            continue
+        if rel not in MARKDOWNLINT_ROOT:
+            report.weaken("markdownlint", f"config:{rel}", rel)
+
+
+def gitleaks_allowlists_off(cfg: dict[str, Any], rel: str, report: Report) -> None:
+    """An allowlist that covers every path, or every secret, turns its rules off."""
+    for i, allow in enumerate(cfg.get("allowlists") or []):
+        where = f"{rel} allowlists[{i}]"
+        paths = [str(p) for p in allow.get("paths") or []]
+        secrets = [str(r) for r in allow.get("regexes") or []]
+        if any(regex_covers_all(p, PROBE_PATHS, whole=False) for p in paths):
+            report.add(
+                "gitleaks",
+                where,
+                "its paths cover every file: it turns its rules off, refused (no waiver)",
+            )
+        if any(regex_covers_all(r, GITLEAKS_PROBES, whole=False) for r in secrets):
+            report.add(
+                "gitleaks",
+                where,
+                "its regexes cover every secret: it turns its rules off, refused (no waiver)",
+            )
+
+
+GITLEAKS_PROBES = (
+    "ghp_" + "a1" * 18,
+    "AKIA" + "B2" * 8,
+    "xoxb-12345-abcdef",
+    "sk_live_" + "c3" * 12,
+)
 
 
 def check_osv(repo: Repo, report: Report, today: dt.date) -> None:
@@ -1714,14 +1919,33 @@ SONAR_REFUSED = re.compile(
 SONAR_ALLOWED = {"sonar.scanner.autoconfig.enabled": "false"}
 
 
+# What would keep an issue from being raised: no SonarCloud suppression is
+# waived (docs/quality.md, "Overrides"), and an exclusion of every file is one.
+SONAR_SUPPRESSION = re.compile(r"^sonar\.issue\.(?:ignore|enforce)\.")
+SONAR_EXCLUSIONS = (
+    "sonar.exclusions",
+    "sonar.test.exclusions",
+    "sonar.coverage.exclusions",
+    "sonar.cpd.exclusions",
+)
+
+
 def check_sonar(repo: Repo, report: Report) -> None:
-    """The scanner's own settings are the kit's, not the repository's."""
+    """The scanner's own settings are the kit's, not the repository's; nothing is suppressed."""
     rel = "sonar-project.properties"
     if not repo.exists(rel):
         return
     for key, value in properties_keys(repo.text(rel)):
         if SONAR_REFUSED.match(key) and SONAR_ALLOWED.get(key) != value:
             report.add("sonar", rel, f"{key} is refused: the kit's job runs the scan")
+        elif SONAR_SUPPRESSION.match(key):
+            report.add("sonar", rel, f"{key} suppresses issues: refused (no waiver)")
+        elif key in SONAR_EXCLUSIONS:
+            for pattern in filter(None, (p.strip() for p in value.split(","))):
+                if glob_covers_all(pattern, gitignore=False):
+                    report.add(
+                        "sonar", rel, f"{key}={pattern} excludes every file: refused (no waiver)"
+                    )
 
 
 def check_dependabot(repo: Repo, report: Report, central: bool, run: bool = False) -> None:
@@ -1815,6 +2039,19 @@ def check_ci(repo: Repo, report: Report, kit_ref: str | None = None) -> None:
                 )
             elif forgiven is not False:
                 report.weaken("ci", f"continue-on-error:{rel}:{job_id}", rel)
+            steps = job.get("steps")
+            for index, step in enumerate(steps if isinstance(steps, list) else []):
+                if not isinstance(step, dict) or step.get("continue-on-error", False) is False:
+                    continue
+                label = str(step.get("id") or step.get("name") or index)
+                if "${{" in str(step["continue-on-error"]):
+                    report.add(
+                        "ci",
+                        f"{where} step {label}",
+                        "continue-on-error is an expression: write true, with its waiver",
+                    )
+                else:
+                    report.weaken("ci", f"continue-on-error:{rel}:{job_id}:{label}", rel)
         for num, line in enumerate(text.splitlines(), 1):
             m = USES_LINE.match(line)
             if not m:
@@ -3073,8 +3310,12 @@ def check_shared(
     check_osv(repo, report, today)
     check_sonar(repo, report)
     check_markdownlint(repo, kit, report)
+    check_markdownlint_configs(repo, report)
     check_reuse(repo, report)
     check_typos(repo, report)
+    check_typos_off(repo, report)
+    check_actionlint(repo, report)
+    check_zizmor_configs(repo, report)
     if not repo.exists(WAIVERS):
         report.add("waivers", WAIVERS, "missing (the kit's templates/waivers.toml is the model)")
     if "python" in profiles:
