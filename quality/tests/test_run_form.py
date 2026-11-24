@@ -656,9 +656,7 @@ class HookTest(CalledCase):
             with self.subTest(bad=bad):
                 original = self.text(self.CONFIG)
                 self.edit(self.CONFIG, rev, bad)
-                found = self.found()
-                self.assertEqual(len(found), 3, found)
-                self.assertTrue(all("name a release tag, v3.x.y" in f for f in found), found)
+                self.assert_only("name a release tag, v3.x.y")
                 (self.root / self.CONFIG).write_text(original, encoding="utf-8")
         self.edit(self.CONFIG, rev, "rev: v3.12.4")
         self.assertEqual(self.found(), [])

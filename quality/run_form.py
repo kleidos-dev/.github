@@ -692,18 +692,18 @@ def check_hooks(repo: cq.Repo, profiles: list[str], kit: cq.Kit, report: cq.Repo
         if entry is None:
             report.add("hooks", rel, f"no {hook_id} hook from {KIT_HOOKS_URL}")
             continue
-        if not tag.fullmatch(entry["rev"]):
-            report.add(
-                "hooks",
-                rel,
-                f"the kit's hooks are at {entry['rev'] or 'no rev'}: name a release tag,"
-                f" {branch_of(kit.version())}.x.y (Dependabot moves it)",
-            )
         changed = sorted(entry["hook"].keys() - {"id", "name", "alias", "verbose"})
         if changed:
             report.add(
                 "hooks", rel, f"{hook_id} sets {', '.join(changed)}: take it as it is (no waiver)"
             )
+    for rev in sorted({h["rev"] for h in mine.values() if not tag.fullmatch(h["rev"])}):
+        report.add(
+            "hooks",
+            rel,
+            f"the kit's hooks are at {rev or 'no rev'}: name a release tag,"
+            f" {branch_of(kit.version())}.x.y (Dependabot moves it)",
+        )
     for want in canonical_hooks(kit, profiles):
         key = hook_key(want["hook"])
         found = [h["hook"] for h in have if h["url"] == want["url"] and hook_key(h["hook"]) == key]

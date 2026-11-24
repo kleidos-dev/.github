@@ -57,6 +57,14 @@ class PreviewTest(unittest.TestCase):
         found = kp.examine(root, KIT)
         self.assertEqual((found.held, found.run), ("0", Counter({"spdx-headers": 1})))
 
+    def test_a_document_that_names_what_the_switch_removes_is_counted(self) -> None:
+        root = self.held()
+        text = (root / "AGENTS.md").read_text(encoding="utf-8")
+        named = "Run `.github/quality/md_nowrap.py`.\n\n## Other repositories"
+        fx.write(root, "AGENTS.md", text.replace("## Other repositories", named))
+        fx.commit(root)
+        self.assertEqual(kp.examine(root, KIT).run, Counter({"paths": 1}))
+
     def test_what_only_one_form_sees_is_counted_there(self) -> None:
         root = self.held()
         fx.write(root, "GEMINI.md", fx.md_header())

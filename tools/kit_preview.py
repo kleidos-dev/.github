@@ -90,6 +90,8 @@ def examine(repo: Path, kit: cq.Kit) -> Found:
     subprocess.run(["git", "-C", str(repo), "reset", "-q", "--hard"], check=True)
     subprocess.run(["git", "-C", str(repo), "clean", "-qfd"], check=True)
     kit_switch.switch(repo, kit, commit, dt.datetime.now(tz=dt.UTC).date())
+    # What the switch removed is gone from the index too, as in a commit of it.
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     return Found(
         "2.x",
         str(count),
