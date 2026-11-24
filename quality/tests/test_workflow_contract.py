@@ -23,12 +23,14 @@ import kit_fixtures as fx
 import yaml
 
 WORKFLOWS = fx.CENTRAL / ".github" / "workflows"
+MODELS = fx.QUALITY / "templates" / "run"
 CONTRACT = Path(__file__).resolve().parent / "workflow_contract.yaml"
 
 
 def workflow(name: str) -> dict[Any, Any]:
     """A workflow, its `on` key as text."""
-    data = yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
+    folder = fx.CENTRAL if "/" in name else WORKFLOWS
+    data = yaml.safe_load((folder / name).read_text(encoding="utf-8"))
     return {("on" if key is True else key): value for key, value in data.items()}
 
 
@@ -51,8 +53,9 @@ class ContractTest(unittest.TestCase):
     maxDiff = None
 
     def test_every_workflow_is_in_it(self) -> None:
-        names = sorted(path.name for path in WORKFLOWS.iterdir())
-        self.assertEqual(sorted(contract()), names)
+        names = [path.name for path in WORKFLOWS.iterdir()]
+        names += [path.relative_to(fx.CENTRAL).as_posix() for path in MODELS.iterdir()]
+        self.assertEqual(sorted(contract()), sorted(names))
 
     def test_every_workflow_is_what_it_says(self) -> None:
         for name, entry in contract().items():

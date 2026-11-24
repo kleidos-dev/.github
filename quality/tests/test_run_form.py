@@ -186,6 +186,8 @@ class RecordTest(CalledCase):
             ({"upstream": {**upstream, "repo": "nothing"}}, "must name the source repository"),
             ({"upstream": {**upstream, "repo": "a/b/c"}}, "must name the source repository"),
             ({"upstream": {**upstream, "repo": "/a/b"}}, "must name the source repository"),
+            ({"upstream": {**upstream, "repo": "a/"}}, "must name the source repository"),
+            ({"upstream": {**upstream, "repo": "/b"}}, "must name the source repository"),
             ({"upstream": {**upstream, "commit": "main"}}, "must be a 40-hex commit"),
             ({"upstream": []}, "must name the source repository"),
             ({"kit": {"profiles": ["python"]}}, "must be a list of profiles that includes base"),
