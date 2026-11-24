@@ -7,6 +7,14 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 3.1.2 (2026-11-25)
+
+kleidos-dev/social and kleidos-dev/posts are deleted (owner, 2026-11-24): their content lives in brand's `social/` and videos' `posts/`. PATCH, by [`docs/quality.md`, "Versions"](../docs/quality.md#versions): nothing here changes what a repository runs or can add a finding in one; only the organization's own list and the kit's tests change.
+
+- `tools/ecosystem.toml` no longer lists social and posts, so the report and `land` stop expecting anything of them; the `folds_into` key stays for the next repository that moves out.
+- The tests that named the two repositories read the list as it now stands: the public half is `.github`, boards, brand and cla, and `land`'s refusal to walk a leaving repository is tested on a repository the test declares.
+- [`docs/sonarcloud.md`](../docs/sonarcloud.md) names the CI of boards, brand and this repository as the model to copy.
+
 ## 3.1.1 (2026-11-24)
 
 SonarCloud's four open issues on this repository's `main`, which kept its quality gate red through 3.0.0 and 3.1.0 while the kit's `📊 SonarCloud` job was green, and a report that sees such a gate from now on. PATCH, by [`docs/quality.md`, "Versions"](../docs/quality.md#versions): nothing here can add a finding in a repository; `md_nowrap.py` reads every line as before (the tests compare it with the old patterns on every short line), and the one input it now refuses, a path out of the repository, no caller passes. It is a security fix (S8707), the exception to moving `v3` at most once a week, so it may follow 3.1.0 within the week.

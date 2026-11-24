@@ -1,7 +1,7 @@
 {
   "$comment": "Written by kleidos-dev/.github quality/sync.py --write; never edit it or the files and blocks it lists: change the kit there and sync again (docs/quality.md).",
   "source": "https://github.com/kleidos-dev/.github",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "commit": "self",
   "profiles": [
     "base",

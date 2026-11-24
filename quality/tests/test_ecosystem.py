@@ -449,7 +449,7 @@ class PublicTest(ReportCase):
         declared = eco.load()
         public = {r.slug for r in declared.repositories if r.public}
         self.assertEqual(
-            public, {f"kleidos-dev/{n}" for n in (".github", "boards", "brand", "cla", "social")}
+            public, {f"kleidos-dev/{n}" for n in (".github", "boards", "brand", "cla")}
         )
         for repo in declared.repositories:
             if not repo.public:
