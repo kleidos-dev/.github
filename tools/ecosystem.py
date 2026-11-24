@@ -5,9 +5,10 @@
 
     ecosystem.py report [--all] [--out DIR] [--notify] [--summary FILE]
         the one report (docs/ecosystem.md): copies, the kit, pull requests,
-        links and, with --all, settings. Without --all it reads the public
-        repositories only and cannot print a line about any other; --all uses
-        the caller's own gh session, is refused in CI and is never posted
+        links, SonarCloud's quality gates and, with --all, settings. Without
+        --all it reads the public repositories only and cannot print a line
+        about any other; --all uses the caller's own gh session, is refused
+        in CI and is never posted
     ecosystem.py preview [--all] [REPO ...] [--summary FILE]
         apply this checkout of the kit to throwaway clones and count what it
         finds: the kit 2.x copies as they are, and the run form after the
@@ -86,7 +87,14 @@ LINK = re.compile(
 BAD_CHECKS = ("failure", "timed_out", "startup_failure")
 LOCAL_ONLY = (
     "Only the local run (report --all) reads: the settings and rulesets in full, the Apps, the"
-    " deploy keys, the Workers, SonarQube Cloud, and every repository that is not public."
+    " deploy keys, the Workers, whether each SonarQube Cloud project exists, and every"
+    " repository that is not public."
+)
+SONAR_GATE = "https://sonarcloud.io/api/qualitygates/project_status?projectKey={key}&branch=main"
+# A link that reads from a repository: its page on GitHub, or a file of it served raw.
+REPOSITORY_LINK = re.compile(
+    r"^https://(?:github\.com|raw\.githubusercontent\.com)/(?P<slug>[\w.-]+/[\w.-]+)(?:[/?#]|$)",
+    re.IGNORECASE,
 )
 
 
@@ -579,16 +587,36 @@ def links_in(text: str) -> list[str]:
     return list(dict.fromkeys(url.partition("#")[0].split(" ")[0] for url in found))
 
 
+def leaving_slug(url: str, leaving: dict[str, str]) -> str:
+    """The repository a link reads from, when it is one that moves out ("" otherwise)."""
+    found = REPOSITORY_LINK.match(url)
+    slug = found["slug"].lower().removesuffix(".git") if found else ""
+    return slug if slug in leaving else ""
+
+
 def check_links(report: Report) -> None:
-    """Every link and banner of the public READMEs answers."""
+    """Every link and banner of the public READMEs answers, and none reads a repository that leaves.
+
+    A repository with `folds_into` is deleted once its content has moved, so
+    a README of any other repository this run reads that still links to it,
+    or shows a banner served from it, is red until it is pointed elsewhere.
+    """
+    leaving = {r.slug.lower(): r.folds_into for r in report.declared.repositories if r.folds_into}
     urls: dict[str, str] = {}
     for repo in report.repositories:
-        if not repo.public:
-            continue
         for rel in ("README.md", "profile/README.md"):
             text = (report.reader.read(repo.slug, rel) or b"").decode("utf-8", "replace")
             for url in links_in(text):
-                urls.setdefault(url, f"{repo.slug} {rel}")
+                slug = leaving_slug(url, leaving)
+                if slug and repo.slug.lower() != slug:
+                    report.add(
+                        "red",
+                        "leaving",
+                        f"{repo.slug} {rel}: {url} reads {slug},"
+                        f" which moves into {leaving[slug]} and is deleted",
+                    )
+                if repo.public:
+                    urls.setdefault(url, f"{repo.slug} {rel}")
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
         answers = dict(zip(urls, pool.map(report.reader.status, urls), strict=True))
     for url, status in answers.items():
@@ -598,6 +626,42 @@ def check_links(report: Report) -> None:
             report.add("note", "link", f"{urls[url]}: {url} did not answer ({status})")
     fine = sum(1 for s in answers.values() if 0 < s < 500 and s not in (404, 410))
     report.add("green", "link", f"{fine} of {len(answers)} links and banners answer")
+
+
+def check_sonar(report: Report) -> None:
+    """SonarCloud's quality gate on main of every public repository with a project.
+
+    The kit's analysis job proves only that SonarCloud accepted the analysis;
+    the gate is judged by SonarCloud's GitHub App, which no ruleset requires.
+    Read here, a red gate on main is red in the report, whatever the job said.
+    """
+    passed = 0
+    for repo in report.repositories:
+        if not repo.public or not repo.sonar or repo.folds_into:
+            continue
+        page = report.reader.page(SONAR_GATE.format(key=repo.sonar))
+        try:
+            status = json.loads(page or b"")["projectStatus"]
+            verdict = str(status["status"])
+            conditions = status.get("conditions") or []
+        except ValueError, KeyError, TypeError:
+            report.add("note", "sonar", f"{repo.slug}: SonarCloud gave no quality gate")
+            continue
+        if verdict == "OK":
+            passed += 1
+            continue
+        failed = sorted(
+            str(c.get("metricKey"))
+            for c in conditions
+            if isinstance(c, dict) and c.get("status") == "ERROR"
+        )
+        report.add(
+            "red",
+            "sonar",
+            f"{repo.slug}: SonarCloud's quality gate on main is {verdict}"
+            + (f" ({', '.join(failed)})" if failed else ""),
+        )
+    report.add("green", "sonar", f"{passed} quality gates on main pass")
 
 
 # --- Settings (the local run) ---------------------------------------------
@@ -772,6 +836,7 @@ def build(report: Report, outdated: Callable[[], list[str]]) -> str:
     check_pins(report, outdated)
     check_pulls(report)
     check_links(report)
+    check_sonar(report)
     if report.everything:
         check_settings(report)
         check_apps(report)

@@ -136,8 +136,8 @@ reviews:
     - path: "README.md"
       instructions: >-
         The block between the BEGIN GENERATED and END GENERATED banner
-        comments is written by kleidos-dev/social
-        (tools/sync_readme_banners.py): flag hand edits inside it. A new
+        comments is written by kleidos-dev/brand
+        (social/tools/sync_readme_banners.py): flag hand edits inside it. A new
         top-level file or folder a contributor needs to know gets its row in
         the table, and the Media metadata section must match what the
         scripts actually do.

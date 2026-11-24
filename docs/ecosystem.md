@@ -46,12 +46,13 @@ The public half cannot leak what it cannot read, and does not name it either: it
 - **Copies.** The edges between repositories are not declared: the report finds them by reading every record of copies in the trees ([`quality.md`, "The base configurations"](quality.md#the-base-configurations), and the older dialects still in use). Digests decide; a copy's age is its `taken` date, else the day its record last changed.
 - **The kit.** Which name each repository calls it by, the `rev` of its hooks against the newest release, whether the names are sound, and the kit's own pins against upstream.
 - **Pull requests.** The open ones of bots.
-- **Links.** Every link and banner of the public READMEs.
-- **Settings** (local): rulesets and who may bypass them, required checks, the App each comes from and whether they can be bypassed, whom the CLA serves, deploy keys, Apps, immutable releases, Dependabot's entries, the SonarQube Cloud projects, the deployed Workers' `/version`.
+- **Links.** Every link and banner of the public READMEs; and in every README it reads (the private ones too in the local run), a link to a repository that moves out (`folds_into`) or a banner served from it, which is red.
+- **SonarCloud's quality gate** on `main` of each public repository with a project: red unless it passes. The kit's `📊 SonarCloud` job proves only that SonarCloud accepted the analysis; the gate is what SonarCloud's GitHub App reports on the commit, and no ruleset requires it, so a red gate on `main` is seen here.
+- **Settings** (local): rulesets and who may bypass them, required checks, the App each comes from and whether they can be bypassed, whom the CLA serves, deploy keys, Apps, immutable releases, Dependabot's entries, whether each SonarQube Cloud project exists, the deployed Workers' `/version`.
 
 ## The declared list
 
-A change of a setting is a change of [`ecosystem.toml`](../tools/ecosystem.toml) first. It holds what cannot be found by reading: the repositories and which are public, the limits in days, the required checks with their App, the rules of a protected branch, whom the CLA should serve, the SonarQube Cloud projects, the Workers, and `hold`, the repositories `land` leaves alone. A repository with `folds_into` is moving into another and will be deleted, so nothing is expected of its settings.
+A change of a setting is a change of [`ecosystem.toml`](../tools/ecosystem.toml) first. It holds what cannot be found by reading: the repositories and which are public, the limits in days, the required checks with their App, the rules of a protected branch, whom the CLA should serve, the SonarQube Cloud projects, the Workers, and `hold`, the repositories `land` leaves alone. A repository with `folds_into` is moving into another and will be deleted, so nothing is expected of its settings, and the report is red (`leaving`) while the README of any other repository it reads still links to it or shows a banner served from it; its entry goes with the deletion.
 
 Which Apps may write, and what, is declared too but not published: `~/.config/kleidos/ecosystem.local.toml` on the machine of the local report, a table `[apps]` with the list of write permissions of each App (`--local` names another file). Without it the report says so in a note and compares no App.
 

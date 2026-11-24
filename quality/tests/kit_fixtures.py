@@ -95,7 +95,10 @@ GIT_ENV = {
 
 
 def git(root: Path, *args: str, date: str | None = None) -> str:
-    env = {**os.environ, **GIT_ENV}
+    # Nothing of the git that runs the tests (a hook sets GIT_INDEX_FILE and
+    # GIT_DIR for the commit in progress) reaches the git of a test's repository.
+    outer = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = {**outer, **GIT_ENV}
     if date:
         env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
     return subprocess.run(

@@ -13,7 +13,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 **[Not released yet](https://kleidos.dev/roadmap/).** The firmware's source is private while the first release is prepared.
 
-**Public now:** [boards](https://github.com/kleidos-dev/boards) (drawings, schematics and 3D models of the boards) · [brand](https://github.com/kleidos-dev/brand) (logo, type, colors and press kit) · [social](https://github.com/kleidos-dev/social) (profile images and preview cards).
+**Public now:** [boards](https://github.com/kleidos-dev/boards) (drawings, schematics and 3D models of the boards) · [brand](https://github.com/kleidos-dev/brand) (logo, type, colors, press kit, profile images and preview cards).
 
 <sub>**ESP32-S3:** [M5StickS3](https://kleidos.dev/overview/sticks3/) · [M5Cardputer&nbsp;ADV](https://kleidos.dev/overview/cardputer/) · [LILYGO&nbsp;T&#8209;Deck&nbsp;Plus](https://kleidos.dev/overview/tdeck-plus/) · [M5Stack&nbsp;CoreS3&nbsp;SE](https://kleidos.dev/overview/cores3-se/)<br>**ESP32:** [M5StickC&nbsp;Plus2](https://kleidos.dev/overview/m5stickc-plus2/) · [M5StickC&nbsp;Plus&nbsp;1.1](https://kleidos.dev/overview/m5stickc-plus1/) · [M5StickC&nbsp;Plus&nbsp;SE](https://kleidos.dev/overview/m5stickc-plus-se/) · [M5Stack&nbsp;CoreInk](https://kleidos.dev/overview/coreink/) · [M5Stack&nbsp;Core2&nbsp;v1.3](https://kleidos.dev/overview/m5stack-core2-v13/)<br>Want another board? Ask in [New board requests](https://github.com/orgs/kleidos-dev/discussions/categories/new-board-requests).</sub>
 

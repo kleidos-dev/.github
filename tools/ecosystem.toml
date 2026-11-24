@@ -47,8 +47,10 @@ repository = "kleidos-dev/cla"
 path = "worker"
 
 # The repositories. `folds_into`: its content moves there and it is deleted,
-# so nothing is expected of its settings. `hold`: `land` leaves its pull
-# requests alone.
+# so nothing is expected of its settings, and the report is red while the
+# README of any other repository still links to it or shows a banner served
+# from it. The entry stays until the repository is gone. `hold`: `land`
+# leaves its pull requests alone.
 [[repository]]
 slug = "kleidos-dev/.github"
 public = true
@@ -73,6 +75,7 @@ public = true
 cla = true
 sonar = "kleidos-dev_cla"
 
+# Moved into brand's social/ (kleidos-dev/brand#23); to be deleted.
 [[repository]]
 slug = "kleidos-dev/social"
 public = true
@@ -87,6 +90,7 @@ public = false
 slug = "kleidos-dev/meter"
 public = false
 
+# Moved into videos' posts/ (kleidos-dev/videos#4); to be deleted.
 [[repository]]
 slug = "kleidos-dev/posts"
 public = false

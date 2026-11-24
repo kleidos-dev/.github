@@ -14,7 +14,7 @@ repos:
     hooks:
       - id: kleidos-commit-msg
         name: commit message (72 columns, imperative, no attribution)
-        entry: python3 .github/commit-check/check_commit_msg.py
+        entry: python3 hooks/launch.py commit-msg
         language: system
         stages: [commit-msg]
       - id: kleidos-media-stamp
