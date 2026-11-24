@@ -736,7 +736,12 @@ class LinkTest(ReportCase):
             f"[a](https://github.com/{BRAND}-old) [b](https://github.com/{BOARDS})"
             f" [c](https://example.org/{BRAND}) [d](https://github.com/{BRAND}/blob/main/x.md)",
         )
-        self.reader.put(BRAND, "README.md", f"[self](https://github.com/{BRAND})")
+        # A repository that leaves is not read for it, whatever it links to.
+        self.reader.put(
+            BRAND,
+            "README.md",
+            f"[self](https://github.com/{BRAND}) [l](https://github.com/{BRAND}/x)",
+        )
         self.reader.put(SECRET, "README.md", f"[x](https://github.com/{BRAND}/tree/main)")
         eco.check_links(self.report)
         leaving = self.rows("red", "leaving")

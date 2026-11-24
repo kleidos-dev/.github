@@ -598,8 +598,9 @@ def check_links(report: Report) -> None:
     """Every link and banner of the public READMEs answers, and none reads a repository that leaves.
 
     A repository with `folds_into` is deleted once its content has moved, so
-    a README of any other repository this run reads that still links to it,
-    or shows a banner served from it, is red until it is pointed elsewhere.
+    a README of any repository this run reads that still links to it, or
+    shows a banner served from it, is red until it is pointed elsewhere; a
+    repository that leaves itself is not read for it.
     """
     leaving = {r.slug.lower(): r.folds_into for r in report.declared.repositories if r.folds_into}
     urls: dict[str, str] = {}
@@ -608,7 +609,7 @@ def check_links(report: Report) -> None:
             text = (report.reader.read(repo.slug, rel) or b"").decode("utf-8", "replace")
             for url in links_in(text):
                 slug = leaving_slug(url, leaving)
-                if slug and repo.slug.lower() != slug:
+                if slug and not repo.folds_into:
                     report.add(
                         "red",
                         "leaving",
