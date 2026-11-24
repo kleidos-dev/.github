@@ -7,6 +7,22 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 3.0.0 (2026-11-24)
+
+The kit is run, not held (owner, 2026-11-24): a repository calls it by its name, `@v3`, and holds none of its code. MAJOR, and additive: a repository that holds 2.x copies keeps running the commit it recorded, its drift notice answers "not behind", and nothing of it changes until its own switch. The impact preview found no problem in the 2.x copies of boards, brand, social, cla, qa, videos, agents and posts brought to this release; after the mechanical switch, only the license lines (boards, brand, social, cla, agents) and three `pins` waivers that have nothing left to waive (agents).
+
+- The entry workflows `quick.yml`, `check.yml` and `sonar.yml`, called at the branch `v3`. Each job fetches the kit at the commit of the workflow it is in and says which in its summary. Only `quick.yml` takes a secret, by name, and only the repository's own hooks that `deny-hooks` names see it.
+- The gate: a repository's own last job, `✅ Check`, needs every other job, always runs, and fails unless each succeeded or was skipped with leave (`MAY_SKIP`). The check holds it to the model word for word, refuses a second one, and refuses any workflow whose token can write checks or commit statuses.
+- The hooks `kleidos-kit`, `kleidos-commit-msg` and `kleidos-mypy` (`.pre-commit-hooks.yaml`), scripts that start on Python 3.9 and run on one that can, or say in one line what to install.
+- The run form of the check (`run_form.py`): the record of the base configurations (schema `kleidos.vendored-copy/1`), their bytes against the ones released, no kit code or block marker left, the reference at `v3` and nothing else (zizmor's policy takes any name, `@main` included), grants and secrets, the canonical third-party hooks unweakened, Dependabot's `pre-commit` entry. A pin that is behind is a note there, never a problem.
+- The kit owns the commit-message checker (`hooks/check_commit_msg.py`, as `kleidos-dev/agents` last had it); CI runs the kit's, and no repository copies it.
+- The owner's copyright statement is year and name only, in the license texts too (`spdx_headers.py`): no e-mail after the name in any file. A problem in the run form; a note where 2.x copies are still held.
+- `tools/ecosystem.py` with its declared list: the report of what is behind, broken or undeclared (its public half weekly, in `ecosystem.yml`), the preview, the refresh of a copy, and the landing of Dependabot's pull requests under guards. The weekly `📦 Pinned versions current` job is gone: a kit pin with a newer release is an amber line there.
+- `tools/kit_switch.py`: the mechanical part of a repository's switch.
+- The organization norm on tests ([`docs/quality.md`, "Tests"](../docs/quality.md#tests)), in the organization rules too, which a repository links from now on instead of carrying them as a block. The kit's code is measured whole and held by `coverage_floor.py`.
+- Releases are tagged `v<VERSION>`; `sync.py`'s release check and drift know both prefixes, and `--drift` answers "not behind" for a 2.x commit, or one it cannot read.
+- `SonarSource/sonarqube-scan-action` 8.5.0 to 8.5.1.
+
 ## 2.3.0 (2026-11-23)
 
 The agent instruction files join the kit ([`docs/agent-docs.md`](../docs/agent-docs.md), owner's decision of 2026-11-23 that the shared rules are a kit-managed block). Nothing turns a green repository red: the impact preview synced this release into boards, brand, social, cla, qa, videos, agents and posts and found no new problem from the kit check or the guard (meter has not adopted the kit yet, so its adoption sync meets the guard with everything else).

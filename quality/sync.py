@@ -1,39 +1,40 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
-"""Copy the Kleidos quality kit into a repository, check it, or preview a change.
+"""The held form of the Kleidos quality kit: copies, blocks and their releases.
 
-The kit lives in kleidos-dev/.github (quality/, docs/quality.md). A
-repository adopts it with one command, and takes every later kit release
-with the same command in a sync pull request:
+From kit 3.0.0 a repository runs the kit and holds none of its code
+(docs/quality.md, "How a repository runs the kit"); tools/kit_switch.py
+moves it there. This script serves what has not moved yet: the kit's home,
+which still records its own copies and blocks, the kit 2.x repositories'
+weekly drift notice, and the kit's own release check. It goes with kit 3.1.
 
     sync.py --write REPO [--profiles base,python,...] [--test-dir tests]
-        writes the copies, the managed blocks (the organization rules in
-        AGENTS.md among them), the files seeded once
-        (.gitleaks.toml, waivers.toml, .markdownlint-cli2.jsonc, the drift
-        caller), points every call to a kit workflow at this checkout's
-        commit, and records it all in REPO/.github/quality/SOURCE.json
+        (kleidos-dev/.github itself; any other repository only with
+        --allow-untagged, for a throwaway tree) writes the copies, the
+        managed blocks (the organization rules in AGENTS.md among them),
+        the files seeded once (.gitleaks.toml, waivers.toml,
+        .markdownlint-cli2.jsonc, the drift caller), points every call to
+        a kit workflow at this checkout's commit, and records it all in
+        REPO/.github/quality/SOURCE.json
     sync.py --check REPO [REPO ...]
         check_quality.py against this working tree of the kit (exit 1 on
         any problem), the way kleidos-dev/agents' sync_commit_check.py
         --check compares copies
     sync.py --preview [--tools] REPO_OR_SLUG [...]
         applies --write to a throwaway clone and reports what the kit would
-        find there (with --tools, ruff and zizmor too); never fails
-
-Run it from a clean checkout of kleidos-dev/.github at the release to
-record: the commit is HEAD, which --write requires to be the tag
-quality-v<quality/VERSION> on origin/main (--allow-untagged lifts that for a
-throwaway tree), and a dirty tree is refused (--allow-dirty while
-developing the kit). REPO may be kleidos-dev/.github itself, which records
-commit "self".
+        find there (with --tools, ruff and zizmor too); never fails. The
+        run form is previewed by tools/ecosystem.py preview.
 
     sync.py --release-check [--on-main]
         kleidos-dev/.github's CI: a change to what repositories receive
         bumps quality/VERSION, and a version on main is tagged
     sync.py --drift RECORDED_COMMIT
-        the drift notice: key=value lines naming the newest release and
-        whether RECORDED_COMMIT's kit is behind it
+        the drift notice of a kit 2.x repository (its weekly job runs the
+        default branch's copy of this script): key=value lines naming the
+        newest release and whether RECORDED_COMMIT's kit is behind it. Being
+        behind is never red (owner, 2026-11-24), and kit 3 is not taken by
+        a sync, so a recorded 2.x commit is never behind.
 
 Python 3.15 or newer; PyYAML.
 """
@@ -70,10 +71,20 @@ SKELETONS = {
 
 # Copies earlier kit versions made and this one does not: a sync removes them.
 RETIRED_COPIES = (".github/quality/requirements-tools.txt",)
-TAG_PREFIX = "quality-v"
+# A release is the tag v<VERSION>; before 3.0.0 it was quality-v<VERSION>.
+TAG_PREFIX = "v"
+OLD_TAG_PREFIX = "quality-v"
+RUN_FORM_MAJOR = 3
 MAIN_REF = "refs/remotes/origin/main"
-# What a repository receives from the kit: a change here is a kit release.
-KIT_TREE = ("quality", ".github/workflows", ".github/commit-check")
+# What a repository runs or receives from the kit: a change here is a kit release.
+KIT_TREE = (
+    "quality",
+    "hooks",
+    ".pre-commit-hooks.yaml",
+    ".github/workflows",
+    ".github/commit-check",
+)
+ENTRY_WORKFLOWS = ("quick.yml", "check.yml", "sonar.yml")
 
 
 def git(*args: str, cwd: Path = CENTRAL) -> str:
@@ -106,8 +117,8 @@ def tag_commit(tag: str, cwd: Path = CENTRAL) -> str | None:
 def release_commit(version: str, cwd: Path = CENTRAL) -> str:
     """HEAD, if it is exactly the release tag of this VERSION and on origin/main.
 
-    A repository records only a released kit commit: every call to a kit
-    workflow carries `# quality-v<VERSION>`, and zizmor's online
+    A repository of the held form records only a released kit commit: every
+    call to a kit workflow carries the tag in a comment, and zizmor's online
     ref-version-mismatch audit fails unless that tag names the same commit.
     """
     tag = f"{TAG_PREFIX}{version}"
@@ -134,9 +145,9 @@ def release_commit(version: str, cwd: Path = CENTRAL) -> str:
 def kit_fingerprint(ref: str, cwd: Path = CENTRAL) -> str:
     """A digest of everything a repository receives from the kit at one commit.
 
-    quality/ (but its tests), the reusable workflows, the commit-message
-    checker, and the bytes of the kit's managed blocks; nothing else of this
-    repository (its own CI, its media hooks, its docs) moves the kit.
+    quality/ (but its tests), the hooks, the entry and reusable workflows,
+    and the bytes of the kit's managed blocks; nothing else of this
+    repository (its own CI, its media hooks, its tools, its docs) moves the kit.
     """
     listing = git("ls-tree", "-r", ref, "--", *KIT_TREE, cwd=cwd)
     digest = hashlib.sha256()
@@ -144,8 +155,9 @@ def kit_fingerprint(ref: str, cwd: Path = CENTRAL) -> str:
         meta, _, path = line.partition("\t")
         if path.startswith("quality/tests/"):
             continue
-        if path.startswith(".github/workflows/") and not PurePosixPath(path).name.startswith(
-            "reusable-"
+        name = PurePosixPath(path).name
+        if path.startswith(".github/workflows/") and not (
+            name.startswith("reusable-") or name in ENTRY_WORKFLOWS
         ):
             continue
         if path.startswith(".github/commit-check/") and not path.endswith("check_commit_msg.py"):
@@ -158,10 +170,16 @@ def kit_fingerprint(ref: str, cwd: Path = CENTRAL) -> str:
     return digest.hexdigest()
 
 
+def version_of(tag: str) -> tuple[int, ...]:
+    """The version a release tag names, as integers."""
+    return tuple(int(n) for n in tag.rpartition("v")[2].split("."))
+
+
 def release_tags(cwd: Path = CENTRAL) -> list[str]:
-    """The kit's release tags, newest first."""
-    out = git("tag", "-l", f"{TAG_PREFIX}*", "--sort=-v:refname", cwd=cwd)
-    return [t for t in out.splitlines() if re.fullmatch(rf"{TAG_PREFIX}\d+\.\d+\.\d+", t)]
+    """The kit's release tags (v3.0.0, quality-v2.3.0), newest version first."""
+    out = git("tag", "-l", cwd=cwd).splitlines()
+    tags = [t for t in out if re.fullmatch(rf"(?:{OLD_TAG_PREFIX}|{TAG_PREFIX})\d+\.\d+\.\d+", t)]
+    return sorted(tags, key=version_of, reverse=True)
 
 
 def release_check(on_main: bool, cwd: Path = CENTRAL) -> tuple[int, list[str]]:
@@ -191,40 +209,54 @@ def release_check(on_main: bool, cwd: Path = CENTRAL) -> tuple[int, list[str]]:
     if not re.search(rf"^## {re.escape(version)}\b", changelog, re.MULTILINE):
         lines.append(f"::error title=No changelog entry::quality/CHANGELOG.md has no ## {version}")
         return 1, lines
-    if tags:
-        newest = tags[0].removeprefix(TAG_PREFIX)
-        if tuple(map(int, version.split("."))) <= tuple(map(int, newest.split("."))):
-            lines.append(
-                f"::error title=Version not newer::quality/VERSION {version} is not newer than"
-                f" the newest release {tags[0]}"
-            )
-            return 1, lines
+    if tags and tuple(map(int, version.split("."))) <= version_of(tags[0]):
+        lines.append(
+            f"::error title=Version not newer::quality/VERSION {version} is not newer than"
+            f" the newest release {tags[0]}"
+        )
+        return 1, lines
     if on_main:
         lines.append(
             f"::error title=Release not tagged::quality/VERSION is {version} and no tag"
             f" {tag} exists: tag this commit, signed (git tag -s {tag} -m 'Quality kit"
-            f" {version}' {head} && git push origin {tag}), then re-run this job"
+            f" {version}' {head} && git push origin {tag} main:v{version.split('.')[0]}),"
+            " then re-run this job"
         )
         return 1, lines
     lines.append(f"::notice title=Kit release {version}::tag {tag} at the merge commit once merged")
     return 0, lines
 
 
+def recorded_major(recorded: str, cwd: Path = CENTRAL) -> int | None:
+    """The major version of the kit at a recorded commit, None when it cannot be read."""
+    text = git_ok("show", f"{recorded}:quality/VERSION", cwd=cwd) if recorded else None
+    found = re.match(r"(\d+)\.", text or "")
+    return int(found.group(1)) if found else None
+
+
 def drift_status(recorded: str, cwd: Path = CENTRAL) -> dict[str, str]:
-    """For a repository's drift notice: the newest release and whether it is behind it."""
+    """For a kit 2.x repository's drift notice: the newest release, and "not behind".
+
+    Only a repository that held copies of a kit 3 release could be behind it,
+    and there is none to hold: the kit is run from 3.0.0 on. A commit this
+    clone cannot read (its history was squashed away) is not behind either.
+    """
     tags = release_tags(cwd)
     if not tags:
         return {"behind": "false", "tag": "", "commit": "", "version": ""}
     newest = tags[0]
     commit = tag_commit(newest, cwd) or ""
-    behind = recorded != commit
-    if behind and git_ok("cat-file", "-e", f"{recorded}^{{commit}}", cwd=cwd) is not None:
-        behind = kit_fingerprint(recorded, cwd) != kit_fingerprint(commit, cwd)
+    major = recorded_major(recorded, cwd)
+    behind = (
+        major is not None
+        and major >= RUN_FORM_MAJOR
+        and kit_fingerprint(recorded, cwd) != kit_fingerprint(commit, cwd)
+    )
     return {
         "behind": "true" if behind else "false",
         "tag": newest,
         "commit": commit,
-        "version": newest.removeprefix(TAG_PREFIX),
+        "version": ".".join(map(str, version_of(newest))),
     }
 
 
@@ -406,7 +438,8 @@ def rewrite_uses(repo: Path, commit: str, version: str) -> list[str]:
         text = path.read_text(encoding="utf-8")
         new = "".join(
             pattern.sub(
-                lambda m: f"{m.group(1)}{commit}{m.group(2)} # quality-v{version}", ln.rstrip("\n")
+                lambda m: f"{m.group(1)}{commit}{m.group(2)} # {TAG_PREFIX}{version}",
+                ln.rstrip("\n"),
             )
             + ("\n" if ln.endswith("\n") else "")
             for ln in text.splitlines(keepends=True)
@@ -728,6 +761,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.write:
         if not args.write.is_dir():
             print(f"sync: {args.write} is not a directory", file=sys.stderr)
+            return 2
+        if args.write.resolve() != CENTRAL.resolve() and not args.allow_untagged:
+            print(
+                "sync: kit 3 is run, not copied: move the repository with tools/kit_switch.py"
+                ' (docs/quality.md, "Switching from kit 2.x")',
+                file=sys.stderr,
+            )
             return 2
         profiles = [p.strip() for p in args.profiles.split(",")] if args.profiles else None
         for line in write(

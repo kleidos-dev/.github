@@ -9,10 +9,7 @@
 #
 # This file is the whole configuration. It does not set inheritance, so no
 # value comes from a central repository or the web interface: what is not
-# written here is the schema default (reference/configuration, V2). The
-# canonical copy lives beside the commit-message gate in kleidos-dev/agents
-# and is synced into each repository; a repository adds only its own
-# path_filters, path_instructions and guideline files below the baseline.
+# written here is the schema default (reference/configuration, V2).
 #
 # kleidos-dev/.github: the organization's profile, its community defaults
 # (used by every repository without its own) and the media metadata tools.
@@ -92,7 +89,7 @@ reviews:
       enabled: false
 
   # These never edit the title or description, but each posts a verdict on
-  # them. Commit messages are already gated by commit-check.yml.
+  # them. Commit messages are already gated by the kit's quick.yml.
   pre_merge_checks:
     title:
       mode: "off"
@@ -104,11 +101,6 @@ reviews:
   # Files reviewed through their source, not here, and files with nothing to
   # review line by line.
   path_filters:
-    # The commit-message gate and its two workflows are synced copies of
-    # kleidos-dev/agents: a change is made and reviewed there.
-    - "!.github/commit-check/**"
-    - "!.github/workflows/commit-check.yml"
-    - "!.github/workflows/commit-check-comment.yml"
     # Verbatim license texts.
     - "!LICENSE"
     - "!LICENSES/**"
@@ -193,8 +185,9 @@ reviews:
         donation amount in public.
     - path: ".github/workflows/**"
       instructions: >-
-        Every action is pinned to a full commit SHA with its version as a
-        comment; checkout sets persist-credentials: false; the workflow has
+        Every third-party action is pinned to a full commit SHA with its
+        version as a comment (our own kit is called by ./ path here and at
+        @v3 elsewhere); checkout sets persist-credentials: false; the workflow has
         top-level permissions: contents: read and widens them only per job;
         every job has an emoji name and a timeout-minutes, and cheap gates run
         first, with needs: ordering the stages. No job turns a missing

@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The quality kit's second entry workflow (docs/quality.md, "How a repository
+# runs the kit"): the repository's tests, its types and its dependencies,
+# with a token that reads the code and nothing else.
+#
+#   check:
+#     name: "🧪 Check"
+#     needs: quick
+#     uses: kleidos-dev/.github/.github/workflows/check.yml@v3
+#     with:
+#       python: --require-hashes -r requirements.txt
+#       tests: python -m pytest -q
+#     permissions:
+#       contents: read
+#
+# Called on the weekly schedule too, so OSV-Scanner sees new advisories
+# against unchanged code.
+name: Quality kit, check
+
+on:
+  workflow_call:
+    inputs:
+      python:
+        description: What pip installs before the tests and mypy (its arguments; empty for nothing)
+        type: string
+        default: ""
+      install:
+        description: A command instead of python, for what pip's arguments cannot say
+        type: string
+        default: ""
+      tests:
+        description: The test command, which writes the coverage report (empty for no tests job)
+        type: string
+        default: ""
+      coverage-report:
+        description: The coverage report the tests write (empty for none)
+        type: string
+        default: coverage.xml
+      coverage-artifact:
+        description: The artifact the report is uploaded as, for sonar.yml
+        type: string
+        default: coverage
+      timeout-minutes:
+        description: The bound of the tests job
+        type: number
+        default: 15
+      types:
+        description: Run mypy (false only where the tree holds no Python)
+        type: boolean
+        default: true
+      types-install:
+        description: What mypy needs installed, where it differs from the tests (a command)
+        type: string
+        default: ""
+      python-version-file:
+        description: The file that names the Python of the tests and mypy
+        type: string
+        default: .python-version
+      node-directory:
+        description: The folder of package.json, for ESLint and tsc (empty for no TypeScript job)
+        type: string
+        default: ""
+      node-projects:
+        description: Space-separated tsconfig files tsc checks, relative to node-directory
+        type: string
+        default: tsconfig.json
+      node-version:
+        description: The Node.js to run with
+        type: string
+        default: lts/*
+
+permissions: {}
+
+jobs:
+  tests:
+    name: "🧪 Tests"
+    if: inputs.tests != ''
+    uses: ./.github/workflows/reusable-python-tests.yml
+    with:
+      install: ${{ inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+      run: ${{ inputs.tests }}
+      python-version-file: ${{ inputs.python-version-file }}
+      coverage-report: ${{ inputs.coverage-report }}
+      coverage-artifact: ${{ inputs.coverage-artifact }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+
+  types:
+    name: "🔎 Types"
+    if: inputs.types
+    uses: ./.github/workflows/reusable-mypy.yml
+    with:
+      install: ${{ inputs.types-install || inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+      python-version-file: ${{ inputs.python-version-file }}
+    permissions:
+      contents: read
+
+  typescript:
+    name: "🔎 TypeScript"
+    if: inputs.node-directory != ''
+    uses: ./.github/workflows/reusable-eslint.yml
+    with:
+      working-directory: ${{ inputs.node-directory }}
+      projects: ${{ inputs.node-projects }}
+      node-version: ${{ inputs.node-version }}
+    permissions:
+      contents: read
+
+  osv:
+    name: "🛡️ Dependencies"
+    uses: ./.github/workflows/reusable-osv.yml
+    permissions:
+      contents: read

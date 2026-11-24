@@ -10,6 +10,7 @@ once quality/ is on the path, and the tests take them from this module.
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 import subprocess
 import sys
@@ -17,15 +18,25 @@ from pathlib import Path
 
 QUALITY = Path(__file__).resolve().parents[1]
 CENTRAL = QUALITY.parent
-if str(QUALITY) not in sys.path:
-    sys.path.insert(0, str(QUALITY))
+for folder in (CENTRAL / "tools", CENTRAL / "hooks", QUALITY):
+    if str(folder) not in sys.path:
+        sys.path.insert(0, str(folder))
 
 import agent_docs  # noqa: E402  found through the path set above
+import check_commit_msg  # noqa: E402  found through the path set above
 import check_quality  # noqa: E402  found through the path set above
+import coverage_floor  # noqa: E402  found through the path set above
+import ecosystem  # noqa: E402  found through the path set above
 import fetch_tool  # noqa: E402  found through the path set above
+import kit_preview  # noqa: E402  found through the path set above
+import kit_switch  # noqa: E402  found through the path set above
+import landing  # noqa: E402  found through the path set above
 import latest_releases  # noqa: E402  found through the path set above
+import launch  # noqa: E402  found through the path set above
 import md_nowrap  # noqa: E402  found through the path set above
 import mypy_groups  # noqa: E402  found through the path set above
+import policy  # noqa: E402  found through the path set above
+import run_form  # noqa: E402  found through the path set above
 import spdx_headers  # noqa: E402  found through the path set above
 import sync  # noqa: E402  found through the path set above
 
@@ -38,17 +49,27 @@ __all__ = [
     "QUALITY",
     "agent_docs",
     "agent_files",
+    "check_commit_msg",
     "check_quality",
     "commit",
+    "called",
     "consumer",
+    "coverage_floor",
+    "ecosystem",
     "fetch_tool",
     "git",
     "header",
     "init",
+    "kit_preview",
+    "kit_switch",
+    "landing",
     "latest_releases",
+    "launch",
     "md_header",
     "md_nowrap",
     "mypy_groups",
+    "policy",
+    "run_form",
     "spdx_headers",
     "sync",
     "write",
@@ -163,3 +184,15 @@ def agent_files(root: Path, rules: str = "- Run the tests in `pkg/`.\n") -> None
     )
     write(root, "CLAUDE.md", md_header() + "@AGENTS.md\n")
     write(root, ".gitignore", header() + "\nCLAUDE.local.md\n")
+
+
+def called(root: Path) -> Path:
+    """The same repository in the run form, as the switch leaves it, committed."""
+    consumer(root)
+    sync.write(root, commit=FAKE_COMMIT)
+    commit(root, "Hold the kit")
+    kit_switch.switch(
+        root, check_quality.DirKit(CENTRAL), FAKE_COMMIT, dt.datetime.now(tz=dt.UTC).date()
+    )
+    commit(root, "Run the kit")
+    return root

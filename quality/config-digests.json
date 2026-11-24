@@ -1,0 +1,26 @@
+{
+  "quality/clang-tidy/base.yaml": [
+    "3bd66a3c0121ed2d53af37f64cdc115e8dde21cce7d96c9da222cb7979dc20be"
+  ],
+  "quality/eslint/base.mjs": [
+    "2faeb205c935e107163cc53efd38eeb85eea59f6b36681ec1f236b4a20bdfb1f"
+  ],
+  "quality/gitleaks/mac.toml": [
+    "321806bc2e68db0d82347aef349e3eaa7bce1bd80993e582eddc51bda4cc32e9"
+  ],
+  "quality/markdownlint/base.jsonc": [
+    "f09947dc371fe195ac69837e7c231878b6fbdfb99cc3bcd52aa951311e04a6c8"
+  ],
+  "quality/ruff/ruff.toml": [
+    "20d436dedf3d71b4674197a8e823741b2f06eb7166cebcae16d544ed93707613"
+  ],
+  "quality/shellcheck/shellcheckrc": [
+    "b73693c1e1bf701cc1588cdc866ac6d2856150e52ea04b1c33093b4b8dbd8ec6"
+  ],
+  "quality/tsconfig/base.json": [
+    "cf3a75354e47725df05d87685a0a590890ef8354e9b1a35b20104b2ea001300e"
+  ],
+  "quality/zizmor/zizmor.yml": [
+    "f29db3ecd618636580e0f5cb643d36b955d27042580c4c7ee6f9057b80969fac"
+  ]
+}

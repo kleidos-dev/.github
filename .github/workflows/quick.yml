@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The quality kit's first entry workflow (docs/quality.md, "How a repository
+# runs the kit"): what needs no build and no dependency, in minutes. Lint
+# (every policy check and every hook), licensing, the secrets scan, and on a
+# pull request the commit-message gate. Everything else waits for it.
+#
+#   quick:
+#     name: "⚡ Quick"
+#     uses: kleidos-dev/.github/.github/workflows/quick.yml@v3
+#     with:
+#       deny-hooks: my-metadata-hook
+#     secrets:
+#       deny: ${{ secrets.KLEIDOS_DENY_EXTRA }}
+#     permissions:
+#       contents: read
+#
+# It is the only kit workflow that receives a secret, by name and only where
+# a hook of the repository's own reads it: never `secrets: inherit`. Called
+# at the branch: a workflow called at an annotated (or signed) tag cannot
+# call the workflows beside it, and the run fails before its first job.
+name: Quality kit, quick
+
+on:
+  workflow_call:
+    inputs:
+      skip:
+        description: Comma-separated ids of the repository's own hooks that cannot run in CI
+        type: string
+        default: ""
+      deny-hooks:
+        description: Comma-separated ids of its own local hooks that read the deny-list
+        type: string
+        default: ""
+    secrets:
+      deny:
+        description: The deny-list of private values (KLEIDOS_DENY_EXTRA), one pattern per line
+        required: false
+
+permissions: {}
+
+jobs:
+  lint:
+    name: "🧹 Lint"
+    uses: ./.github/workflows/reusable-lint.yml
+    with:
+      skip: ${{ inputs.skip }}
+      deny-hooks: ${{ inputs.deny-hooks }}
+    secrets:
+      deny: ${{ secrets.deny }}
+    permissions:
+      contents: read
+
+  reuse:
+    name: "⚖️ Licensing"
+    uses: ./.github/workflows/reusable-reuse.yml
+    permissions:
+      contents: read
+
+  secrets:
+    name: "🔐 Secrets"
+    uses: ./.github/workflows/reusable-secrets.yml
+    permissions:
+      contents: read
+
+  commits:
+    name: "✍️ Commits"
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/reusable-commit-check.yml
+    permissions:
+      contents: read

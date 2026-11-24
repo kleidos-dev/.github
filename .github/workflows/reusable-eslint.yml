@@ -11,7 +11,7 @@
 #   eslint:
 #     name: "🔎 ESLint and tsc"
 #     needs: [lint, reuse]
-#     uses: kleidos-dev/.github/.github/workflows/reusable-eslint.yml@<kit commit> # quality-vX.Y.Z
+#     uses: kleidos-dev/.github/.github/workflows/reusable-eslint.yml@v3
 #     with:
 #       working-directory: worker
 #       projects: tsconfig.json ../scripts/tsconfig.json

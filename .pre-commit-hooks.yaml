@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The quality kit's hooks (docs/quality.md, "The hooks"). A repository names
+# them in its own .pre-commit-config.yaml and holds none of their code:
+#
+#   - repo: https://github.com/kleidos-dev/.github
+#     rev: v3.0.0
+#     hooks:
+#       - id: kleidos-kit
+#       - id: kleidos-commit-msg
+#       - id: kleidos-mypy        # where there is Python
+#
+# They are scripts run on the machine's own Python (nothing is installed), so
+# hooks/launch.py starts on the oldest python3 in use and says what is
+# missing. Every hook names its stages: pre-commit runs a hook that names
+# none at every installed hook type, commit-msg included.
+- id: kleidos-kit
+  name: quality kit (conformance, agent docs, Markdown, licensing lines)
+  description: Every policy check of the quality kit, on the whole repository.
+  entry: hooks/launch.py policy
+  language: script
+  pass_filenames: false
+  always_run: true
+  require_serial: true
+  stages: [pre-commit]
+- id: kleidos-commit-msg
+  name: commit message (72 columns, imperative, no attribution)
+  description: The organization's commit-message rules.
+  entry: hooks/launch.py commit-msg
+  language: script
+  stages: [commit-msg]
+- id: kleidos-mypy
+  name: mypy (strict)
+  description: mypy from the repository's own environment, once per declared group.
+  entry: hooks/launch.py mypy
+  language: script
+  types_or: [python, pyi]
+  pass_filenames: false
+  require_serial: true
+  stages: [pre-commit]

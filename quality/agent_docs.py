@@ -29,9 +29,12 @@ Claude alone can use. This script checks one repository, from its root:
   links    every relative Markdown link resolves to a tracked file
   kit      every skill and subagent under .claude/ is named in AGENTS.md or
            CLAUDE.md
-  block    the root AGENTS.md holds the quality kit's organization-rules
-           block once, unedited (the SHA-256 .github/quality/SOURCE.json
-           records), and no hand-written "Organization rules" section
+  rules    the root AGENTS.md of a repository that runs the kit (from 3.0.0)
+           links the organization rules and copies none of them
+  block    a repository that still holds kit 2.x copies: the root AGENTS.md
+           holds the kit's organization-rules block once, unedited (the
+           SHA-256 .github/quality/SOURCE.json records), and no hand-written
+           "Organization rules" section
 
 Usage:
     agent_docs.py [--repo DIR] [--github]
@@ -89,6 +92,7 @@ CONTENT_PREFIXES = (".claude/", "plugins/")
 CONTENT_PARTS = ("fixtures", "testdata")
 BLOCK_ID = "organization-rules"
 BLOCK_SOURCE = "quality/agents/block.md"
+RULES_URL = "https://github.com/kleidos-dev/.github/blob/main/quality/agents/block.md"
 SOURCE_JSON = ".github/quality/SOURCE.json"
 BLOCK_START = re.compile(r"^<!-- >>> kleidos-quality (?P<id>[a-z0-9-]+)(?:[ \t].*)?-->\s*$")
 BLOCK_END = re.compile(r"^<!-- <<< kleidos-quality (?P<id>[a-z0-9-]+)\s*-->\s*$")
@@ -378,9 +382,37 @@ def recorded_block(repo: Repo) -> str | None:
     return None
 
 
+def runs_the_kit(repo: Repo) -> bool:
+    """Whether the repository calls the kit by name (its record has a schema)."""
+    try:
+        record = json.loads(repo.read(SOURCE_JSON) or "")
+    except ValueError:
+        return False
+    return isinstance(record, dict) and "schema" in record
+
+
+def check_rules_link(text: str, out: list[Finding]) -> None:
+    """AGENTS.md links the organization rules; the rules themselves are not copied."""
+    prose, _code = split_code(text)
+    if not any(RULES_URL in m.group(1) for _num, line in prose for m in LINK.finditer(line)):
+        out.append(
+            Finding("rules", "AGENTS.md", 0, f"links the organization rules nowhere: {RULES_URL}")
+        )
+    for num, line in enumerate(text.splitlines(), 1):
+        if (m := BLOCK_START.match(line)) and m["id"] == BLOCK_ID:
+            out.append(
+                Finding(
+                    "rules", "AGENTS.md", num, "the organization rules are a link now, not a block"
+                )
+            )
+
+
 def check_block(repo: Repo, out: list[Finding]) -> None:
     text = repo.read("AGENTS.md")
     if text is None:
+        return
+    if runs_the_kit(repo):
+        check_rules_link(text, out)
         return
     lines = text.splitlines(keepends=True)
     starts = [

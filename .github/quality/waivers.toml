@@ -14,3 +14,10 @@
 # reason = "Why the rule is wrong for this code, with the sites read"
 # decided = "owner 2026-11-22"        # or "agent, reviewed in PR #<n>"
 # expires = 2027-05-22                # optional
+
+[[waiver]]
+tool = "pins"
+what = "python:py39"
+where = "hooks/ruff.toml"
+reason = "pre-commit starts the kit's hooks on whichever python3 comes first on a machine, and the oldest in use is the one macOS ships (3.9.6 on macOS 26): ruff refuses syntax newer than that in hooks/, and hooks/launch.py finds a newer Python for everything else"
+decided = "agent, kit 3.0.0 (the step 0 trial of 2026-11-24 saw 3.13 and 3.14; 3.9 is the machines' oldest)"

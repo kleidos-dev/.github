@@ -1,23 +1,19 @@
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
 #
-# The quality kit's lint gate, called by every repository that adopts the kit
-# (docs/quality.md):
+# The quality kit's lint gate (docs/quality.md), a job of quick.yml, the
+# entry workflow every repository calls.
 #
-#   lint:
-#     name: "🧹 Lint (quality kit)"
-#     uses: kleidos-dev/.github/.github/workflows/reusable-lint.yml@<kit commit> # quality-vX.Y.Z
-#     permissions:
-#       contents: read
+# One job, cheapest first: the kit's policy checks (quality/policy.py, from
+# the kit this workflow is part of, so nothing in the repository judges
+# itself), then every pre-commit hook on every file, then zizmor's online
+# audits. Hooks that need a local environment are named in `skip`; mypy
+# (which installs the repository's dependencies), reuse lint and the header
+# lines (which need the whole history) have workflows of their own.
 #
-# One job, cheapest first: the kit check and the agent-docs guard
-# (check_quality.py and agent_docs.py fetched from kleidos-dev/.github at the
-# commit SOURCE.json records, so a local copy cannot judge itself), then
-# every pre-commit hook on every file (the kit's blocks and the repository's
-# own), then zizmor's online audits. Hooks that need a secret or a local
-# environment are named in `skip`; mypy (which installs the repository's
-# dependencies), reuse lint and the header lines (which need the whole
-# history) have workflows of their own.
+# `deny` is the private deny-list of the repository's own checks. Only the
+# hooks `deny-hooks` names see it, each in a run of its own: no third-party
+# hook runs with the secret in its environment.
 name: Quality kit lint
 
 on:
@@ -33,6 +29,16 @@ on:
           a kit hook named here fails the kit check
         type: string
         default: ""
+      deny-hooks:
+        description: >-
+          Comma-separated ids of the repository's own local hooks that read the
+          deny-list (KLEIDOS_DENY_EXTRA)
+        type: string
+        default: ""
+    secrets:
+      deny:
+        description: The deny-list of private values, one pattern per line
+        required: false
 
 permissions: {}
 
@@ -47,26 +53,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The kit at the commit .github/quality/SOURCE.json records (kleidos-dev/.github
-      # is public: no token), so the copies are judged by the kit's own bytes.
-      - name: Fetch the quality kit at the recorded commit
+      # The kit that is running: this workflow's own repository and commit (a
+      # ./ call inside the kit keeps both), so the checks and the workflow
+      # are one release. actionlint 1.7.12 does not know these two keys of
+      # the job context, hence the round trip through JSON. The kit is
+      # public: it is fetched with no token.
+      - name: The kit this workflow is part of
         id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
         run: |
           set -euo pipefail
-          commit="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
-          if [ "${commit}" = self ]; then
-            if [ "${GITHUB_REPOSITORY}" != kleidos-dev/.github ]; then
-              echo "::error::SOURCE.json records commit self, which only kleidos-dev/.github may do"
-              exit 1
-            fi
-            echo "dir=${GITHUB_WORKSPACE}" >> "${GITHUB_OUTPUT}"
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
           else
             kit="${RUNNER_TEMP}/kit"
             git init -q "${kit}"
-            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${commit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
             git -C "${kit}" checkout -q FETCH_HEAD
-            echo "dir=${kit}" >> "${GITHUB_OUTPUT}"
           fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ inputs.python-version }}
@@ -74,20 +86,17 @@ jobs:
         env:
           KIT: ${{ steps.kit.outputs.dir }}
         run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
-      # --lint-skip refuses a skip input that names a hook of the kit's
-      # blocks, read from the kit itself, so a stale local checker cannot let
-      # a repository switch a kit hook off from its caller.
-      - name: The kit check
+      # Every policy check but the header lines, from the kit itself. A skip
+      # or deny-hooks input that names a kit hook is refused here, so a
+      # repository cannot switch a shared rule off from its caller.
+      - name: The kit's policy checks
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-          EXTRA_SKIP: ${{ inputs.skip }}
-        run: python "${KIT}/quality/check_quality.py" --kit "${KIT}" --lint-skip "${EXTRA_SKIP}" --summary "${GITHUB_STEP_SUMMARY}"
-      # The agent-docs guard from the kit too, so a local copy cannot judge
-      # itself (docs/agent-docs.md); the hook of the same id is skipped below.
-      - name: Agent instruction files (AGENTS.md, CLAUDE.md)
-        env:
-          KIT: ${{ steps.kit.outputs.dir }}
-        run: python "${KIT}/quality/agent_docs.py" --repo . --github
+          KIT_SHA: ${{ steps.kit.outputs.sha }}
+          OWN_HOOKS: ${{ inputs.skip }},${{ inputs.deny-hooks }}
+        run: >-
+          python "${KIT}/quality/policy.py" --without spdx-headers --lint-skip "${OWN_HOOKS}"
+          --github --summary "${GITHUB_STEP_SUMMARY}" --kit-sha "${KIT_SHA}"
       - name: Cache the hook environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -95,14 +104,27 @@ jobs:
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
       - name: Every pre-commit hook on every file
         env:
-          EXTRA_SKIP: ${{ inputs.skip }}
+          OWN_HOOKS: ${{ inputs.skip }},${{ inputs.deny-hooks }}
         run: |
-          # The kit check and the agent-docs guard ran above from the kit itself;
-          # mypy, reuse lint and the header lines have workflows of their own
-          # (reusable-mypy.yml, reusable-reuse.yml, which fetches the history
-          # the years need).
-          export SKIP="kleidos-quality,kleidos-agent-docs,mypy,reuse,kleidos-spdx-headers${EXTRA_SKIP:+,${EXTRA_SKIP}}"
+          # The policy checks ran above from the kit itself; mypy, reuse lint
+          # and the header lines have workflows of their own. The first five
+          # ids are the hooks of a repository that still holds kit 2.x copies.
+          export SKIP="kleidos-quality,kleidos-md-nowrap,kleidos-agent-docs,kleidos-spdx-headers,mypy,kleidos-kit,kleidos-mypy,reuse,${OWN_HOOKS}"
           pre-commit run --all-files --show-diff-on-failure --color always
+      - name: The repository's hooks that read the deny-list
+        if: inputs.deny-hooks != ''
+        env:
+          KLEIDOS_DENY_EXTRA: ${{ secrets.deny }}
+          # A pull request from a fork or from Dependabot gets no secret: the
+          # checks then look for every other class and say so.
+          KLEIDOS_DENY_OPTIONAL: ${{ secrets.deny == '' && '1' || '0' }}
+          DENY_HOOKS: ${{ inputs.deny-hooks }}
+        run: |
+          set -euo pipefail
+          IFS=', ' read -r -a hooks <<< "${DENY_HOOKS}"
+          for hook in "${hooks[@]}"; do
+            pre-commit run --all-files --show-diff-on-failure --color always "${hook}"
+          done
       - name: zizmor, online audits included
         env:
           GH_TOKEN: ${{ github.token }}

@@ -16,7 +16,8 @@ strict = true
 enable_error_code = ["ignore-without-code"]
 # <<< kleidos-quality mypy
 python_version = "3.15"
-# The media metadata tools, their tests, and the quality kit itself.
-files = ["scripts", "tests", "quality"]
-# The kit's tests and sync.py import check_quality.py from beside them.
-mypy_path = ["quality"]
+# The media metadata tools, their tests, the quality kit itself with its
+# hooks, and the tools that look across the repositories.
+files = ["scripts", "tests", "quality", "hooks", "tools"]
+# The kit's tests and tools import its modules from beside them.
+mypy_path = ["quality", "hooks", "tools"]

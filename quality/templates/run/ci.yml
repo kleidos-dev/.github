@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# The repository's gate, named CI (the project's CI convention). The kit's
+# checks are the three calls below, by its name: no kit code is held here
+# (kleidos-dev/.github, docs/quality.md, "How a repository runs the kit").
+# What only this repository does (a model build, a firmware build, a picture
+# check) is a job of its own beside them, staged on quick.
+#
+# The last job is the one required check. It needs every other job of this
+# file, always runs (GitHub counts a skipped required check as passed) and
+# fails unless each of them succeeded; a job whose own condition may skip it
+# is named in MAY_SKIP.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Monday 06:00 Europe/Madrid in winter: OSV catches new advisories
+    # against unchanged code.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quick:
+    name: "⚡ Quick"
+    uses: kleidos-dev/.github/.github/workflows/quick.yml@v3
+    secrets:
+      deny: ${{ secrets.KLEIDOS_DENY_EXTRA }}
+    permissions:
+      contents: read
+
+  check:
+    name: "🧪 Check"
+    needs: quick
+    uses: kleidos-dev/.github/.github/workflows/check.yml@v3
+    with:
+      python: -r requirements.txt
+      tests: python -m pytest -rs --cov --cov-report=xml:coverage.xml tests
+    permissions:
+      contents: read
+
+  sonar:
+    name: "📊 Sonar"
+    needs: check
+    if: github.event_name != 'schedule'
+    uses: kleidos-dev/.github/.github/workflows/sonar.yml@v3
+    permissions:
+      contents: read
+      id-token: write
+
+  done:
+    name: "✅ Check"
+    needs: [quick, check, sonar]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job of this file succeeded
+        shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          MAY_SKIP: sonar
+        run: |
+          set -euo pipefail
+          echo "${NEEDS}" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "${NEEDS}" | jq -e --arg may " ${MAY_SKIP:-} " '
+            length > 0 and all(to_entries[];
+              .value.result == "success"
+              or (.value.result == "skipped" and (.key as $job | $may | contains(" \($job) "))))' > /dev/null || {
+            echo "::error title=Not every job succeeded::a job that failed, was cancelled or was skipped without leave is listed above"
+            exit 1
+          }

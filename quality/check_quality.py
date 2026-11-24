@@ -4,10 +4,14 @@
 """Check a repository against the Kleidos quality kit (kleidos-dev/.github).
 
 The kit is the one place the estate's analysis rules live (docs/quality.md
-there). A repository that adopts it carries byte copies of some kit files,
-managed blocks of kit text inside files of its own, and calls to the kit's
-reusable workflows, all recorded in .github/quality/SOURCE.json at one kit
-commit. This script checks, from the repository's root:
+there). From 3.0.0 a repository runs it: it calls the entry workflows at the
+branch v<major>, takes the hooks at a release tag and holds only the base
+configurations (the run form, checked by run_form.py beside this file). A
+repository that has not switched yet (the held form, kit 2.x) carries byte
+copies of some kit files, managed blocks of kit text inside files of its
+own, and calls to the kit's reusable workflows, all recorded in
+.github/quality/SOURCE.json at one kit commit. This script tells the form
+from that file, and checks, from the repository's root:
 
   copies       every copy is the bytes SOURCE.json records (and, given the
                kit, the bytes the kit holds at that commit)
@@ -18,7 +22,10 @@ commit. This script checks, from the repository's root:
                (ruff, mypy, gitleaks, OSV, Dependabot, CI conventions,
                markdownlint, tsconfig, ESLint, clang-tidy, inline
                suppressions) unless .github/quality/waivers.toml records why
-  pins         every Python target, kit-known action, kit-known hook rev and
+  run form     what run_form.py lists: the record, no kit code, the entry
+               workflows at the branch, the "✅ Check" gate, the hooks
+  pins         (held form; in the run form a pin that is behind is a note)
+               every Python target, kit-known action, kit-known hook rev and
                kit-known container image is at the latest stable release
                this kit knows (an image by that release's digest), and
                every requirements file a submodule supplies (-r, -c) pins
@@ -32,8 +39,9 @@ Usage:
     check_quality.py --plant-mac [--repo DIR]     the MAC rules fire on real shapes (needs gitleaks)
 
 Without --kit the copies are checked against SOURCE.json only (offline, the
-pre-commit hook); the CI fetches the kit at the recorded commit and passes
---kit, so an edited local checker cannot pass itself. Exit status: 0 clean,
+pre-commit hook); the CI passes the kit's own checkout as --kit, so an edited
+local checker cannot pass itself. In the run form the kit is the checkout
+this file is in. Exit status: 0 clean,
 1 problems found, 2 a usage or setup error, 3 the recorded kit commit is not
 in the --kit-git clone (fetch it).
 
@@ -166,7 +174,7 @@ LATEST_ACTIONS = {
     "actions/setup-python": "v7.1.0",
     "actions/upload-artifact": "v7.0.2",
     "sonarsource/sonarqube-auth-action": "v1.2",
-    "sonarsource/sonarqube-scan-action": "v8.5.0",
+    "sonarsource/sonarqube-scan-action": "v8.5.1",
 }
 LATEST_HOOKS = {
     "https://github.com/crate-ci/typos": "v1.52.2",
@@ -355,6 +363,9 @@ class Report:
     # Waiver "what" prefixes this run could not judge (offline): their
     # waivers are not reported unused.
     unjudged: set[str] = field(default_factory=set)
+    # In the run form being behind is never red: an old pin is a note
+    # (Dependabot moves it, tools/ecosystem.py ages it).
+    behind_is_note: bool = False
 
     def add(self, rule: str, where: str, message: str) -> None:
         self.problems.append(Finding(rule, where, message))
@@ -627,7 +638,10 @@ class Repo:
         """The copy paths .github/quality/SOURCE.json records (empty when unreadable)."""
         try:
             recorded = json.loads((self.root / SOURCE_JSON).read_text(encoding="utf-8"))
-            return [str(e["path"]) for e in recorded.get("files", [])]
+            files = recorded.get("files", [])
+            if isinstance(files, dict):  # the run form: path -> digest
+                return [str(path) for path in files]
+            return [str(e["path"]) for e in files]
         except OSError, ValueError, KeyError, TypeError, AttributeError:
             return []
 
@@ -1302,6 +1316,8 @@ def check_mypy(repo: Repo, report: Report) -> None:
     where = "pyproject.toml [tool.mypy]"
     if "strict" not in mypy:
         report.add("mypy", where, "strict must be true (the kit block)")
+    if "ignore-without-code" not in (mypy.get("enable_error_code") or []):
+        report.add("mypy", where, 'enable_error_code must hold "ignore-without-code"')
     for key, value in mypy.items():
         refusal = mypy_refusal(key, value)
         if refusal:
@@ -1643,7 +1659,7 @@ def manifest_dirs(repo: Repo) -> dict[str, set[str]]:
     return out
 
 
-def check_dependabot(repo: Repo, report: Report, central: bool) -> None:
+def check_dependabot(repo: Repo, report: Report, central: bool, run: bool = False) -> None:
     rel = ".github/dependabot.yml"
     if not repo.exists(rel):
         report.add("dependabot", rel, "missing")
@@ -1678,7 +1694,7 @@ def check_dependabot(repo: Repo, report: Report, central: bool) -> None:
                     rel,
                     f"{d}: the kit's copies are bumped by the sync, never by Dependabot",
                 )
-        if eco == "pre-commit" and not central:
+        if eco == "pre-commit" and not (central or run):
             report.add(
                 "dependabot",
                 rel,
@@ -1691,8 +1707,8 @@ def check_dependabot(repo: Repo, report: Report, central: bool) -> None:
                 report.add(
                     "dependabot",
                     rel,
-                    'github-actions must ignore "kleidos-dev/.github*":'
-                    " the sync moves the kit's workflow references",
+                    'github-actions must ignore "kleidos-dev/.github*": the kit is called by'
+                    " its branch, and a move to the next one is made by hand",
                 )
     if "github-actions" not in covered and workflow_files(repo):
         report.add("dependabot", rel, "no github-actions ecosystem")
@@ -1706,7 +1722,8 @@ def check_dependabot(repo: Repo, report: Report, central: bool) -> None:
                 report.weaken("dependabot", f"{eco}:{d}", rel)
 
 
-def check_ci(repo: Repo, report: Report) -> None:
+def check_ci(repo: Repo, report: Report, kit_ref: str | None = None) -> None:
+    """The CI conventions; in the run form kit_ref is the one reference that is a name."""
     for rel in workflow_files(repo):
         if rel in repo.foreign:
             continue
@@ -1735,6 +1752,8 @@ def check_ci(repo: Repo, report: Report) -> None:
             ref = m.group("ref")
             if ref.startswith(("./", "docker://")):
                 continue
+            if kit_ref and re.fullmatch(rf"{KIT_REPO}/[\w./-]+@{kit_ref}", ref):
+                continue  # run_form.py holds the rest of it
             if not PINNED_REF.match(ref):
                 report.add("ci", f"{rel}:{num}", f"{ref} is not pinned by a full commit SHA")
             elif not (m.group("comment") or "").strip("# "):
@@ -1868,15 +1887,21 @@ def check_reuse(repo: Repo, report: Report) -> None:
 
 
 def check_typos(repo: Repo, report: Report) -> None:
-    if repo.exists(".typos.toml"):
-        try:
-            tomllib.loads(repo.text(".typos.toml"))
-        except tomllib.TOMLDecodeError as exc:
-            report.add(
-                "typos",
-                ".typos.toml",
-                f"not valid TOML (a key repeated from the kit block?): {exc}",
-            )
+    if not repo.exists(".typos.toml"):
+        report.add("typos", ".typos.toml", 'missing: [default] locale = "en-us"')
+        return
+    try:
+        cfg = tomllib.loads(repo.text(".typos.toml"))
+    except tomllib.TOMLDecodeError as exc:
+        report.add(
+            "typos",
+            ".typos.toml",
+            f"not valid TOML (a key repeated from the kit block?): {exc}",
+        )
+        return
+    default = cfg.get("default")
+    if not isinstance(default, dict) or default.get("locale") != "en-us":
+        report.add("typos", ".typos.toml", '[default] locale must be "en-us"')
 
 
 # --------------------------------------------------------------------------
@@ -2091,6 +2116,10 @@ def python_versions(value: str) -> list[tuple[str, tuple[int, int]]]:
 
 
 def pin_below(report: Report, rel: str, num: int, what: str, latest: str, reasoned: bool) -> None:
+    if report.behind_is_note:
+        if not reasoned:
+            report.notes.append(f"{rel}:{num}: {what} is behind {latest} (a note, never red)")
+        return
     if reasoned:
         report.weaken("pins", what, rel)
         return
@@ -2720,7 +2749,8 @@ def check_pins(repo: Repo, report: Report, online: bool = False) -> None:
     check_action_pins(repo, report)
     check_hook_pins(repo, report)
     check_image_pins(repo, report)
-    check_submodule_pins(repo, report, online)
+    if not report.behind_is_note:
+        check_submodule_pins(repo, report, online)
 
 
 # --------------------------------------------------------------------------
@@ -2866,6 +2896,9 @@ def run(
     today = today or dt.datetime.now(tz=dt.UTC).date()
     repo = Repo(repo_root)
     report = Report()
+    record = record_of(repo)
+    if record is not None:
+        return run_called(repo, record, kit or own_kit(), today, report)
     source = load_source(repo, report)
     if source is None:
         return report
@@ -2895,18 +2928,85 @@ def run(
         check_manifest_coverage(source, kit, report)
     check_kit_dir(repo, source, report)
     if "actions" in profiles:
-        check_kit_uses(repo, source, report)
+        if kit is not None and central and source.get("commit") == "self":
+            # The kit's home runs its own entry workflows, by ./ path.
+            run_form_module(repo).check_workflows(
+                repo, sorted(profiles), kit, report, self_ref=True
+            )
+        else:
+            check_kit_uses(repo, source, report)
         check_ci(repo, report)
+    check_dependabot(repo, report, central)
+    check_pins(repo, report, online=kit is not None)
+    check_shared(repo, profiles, kit, report, today)
+    report.notes.insert(
+        0,
+        f"kit {source.get('version')} at {str(source.get('commit'))[:12]},"
+        f" profiles {', '.join(sorted(profiles))}",
+    )
+    return report
+
+
+def record_of(repo: Repo) -> dict[str, Any] | None:
+    """The run form's record (.github/quality/SOURCE.json by its schema), or None."""
+    try:
+        data = json.loads(repo.text(SOURCE_JSON))
+    except OSError, ValueError:
+        return None
+    return data if isinstance(data, dict) and "schema" in data else None
+
+
+def own_kit() -> Kit:
+    """The kit this file is part of (the run form is judged by the kit that is run)."""
+    return DirKit(Path(__file__).resolve().parents[1])
+
+
+def run_form_module(repo: Repo) -> Any:
+    """run_form.py, beside this file (in the kit's home also from its quality/ folder)."""
+    sys.modules.setdefault("check_quality", sys.modules[__name__])
+    if repo.is_central():
+        sys.path.append(str(repo.root / "quality"))
+    import run_form
+
+    return run_form
+
+
+def run_called(
+    repo: Repo, record: dict[str, Any], kit: Kit, today: dt.date, report: Report
+) -> Report:
+    """Check a repository of the run form: it calls the kit by name and holds no kit code."""
+    run_form = run_form_module(repo)
+    report.behind_is_note = True
+    source = run_form.load(repo, record, report)
+    profiles = set(source["profiles"])
+    check_profiles(repo, source, report)
+    run_form.check_records(repo, today, report)
+    run_form.check(repo, record, source, kit, report)
+    if "actions" in profiles:
+        check_ci(repo, report, kit_ref=run_form.branch_of(kit.version()))
+    check_dependabot(repo, report, central=False, run=True)
+    check_pins(repo, report)
+    check_shared(repo, profiles, kit, report, today)
+    report.notes.insert(
+        0,
+        f"kit {kit.version()} run, base configurations of {source['version']},"
+        f" profiles {', '.join(sorted(profiles))}",
+    )
+    return report
+
+
+def check_shared(
+    repo: Repo, profiles: set[str], kit: Kit | None, report: Report, today: dt.date
+) -> None:
+    """The conformance checks every form has, and the waivers of all of them."""
     check_pre_commit_globals(repo, report)
     check_gitleaks(repo, report)
     check_osv(repo, report, today)
-    check_dependabot(repo, report, central)
     check_markdownlint(repo, kit, report)
     check_reuse(repo, report)
     check_typos(repo, report)
-    check_pins(repo, report, online=kit is not None)
     if not repo.exists(WAIVERS):
-        report.add("waivers", WAIVERS, "missing (sync.py --write seeds an empty one)")
+        report.add("waivers", WAIVERS, "missing (the kit's templates/waivers.toml is the model)")
     if "python" in profiles:
         check_python_version(repo, report)
         check_ruff(repo, report)
@@ -2921,12 +3021,6 @@ def run(
             check_cpp_analysis(repo, report)
     check_suppressions_c_js(repo, report)
     apply_waivers(repo, report, today)
-    report.notes.insert(
-        0,
-        f"kit {source.get('version')} at {str(source.get('commit'))[:12]},"
-        f" profiles {', '.join(sorted(profiles))}",
-    )
-    return report
 
 
 def render_markdown(report: Report) -> str:

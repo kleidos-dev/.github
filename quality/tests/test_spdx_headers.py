@@ -246,6 +246,142 @@ class RepositoryTest(unittest.TestCase):
         self.assertTrue(any("shallow" in n for n in notes), notes)
 
 
+class OwnerStatementTest(unittest.TestCase):
+    """The owner's copyright is year and name, in the license texts too."""
+
+    MAIL = "mail" + "@" + "kleidos.dev"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = fx.init(Path(self._tmp.name) / "repo")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_the_header_holds_year_and_name_only(self) -> None:
+        for value, fine in (
+            (f"2026 {H}", True),
+            (f"2024-2026 {H}", True),
+            (f"2024, 2026 {H}", True),
+            (f"2026 {H} (Spanish translation)", True),
+            (f"2026 {H} and contributors", False),
+            (f"2026 {H}, all rights reserved", False),
+            (f"2026 {H} (write to me)(now)", False),
+            (f"2026 {H}.", False),
+            (f"2026 The {H}", False),
+        ):
+            with self.subTest(value=value):
+                found = sh.check_text("a.py", f"# {C} {value}\n# {L} MIT\n", None)
+                only = [p for p in found if "year and name only" in p]
+                self.assertEqual(not only, fine, found)
+
+    def test_an_e_mail_is_named_once_and_as_one(self) -> None:
+        found = sh.check_text("a.py", f"# {C} 2026 {H} <{self.MAIL}>\n# {L} MIT\n", None)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("e-mail", found[0])
+
+    def test_the_lines_of_a_license_text(self) -> None:
+        for line, fine in (
+            (f"Copyright (c) 2026 {H}", True),
+            (f"Copyright (C) 2026 {H}", True),
+            (f"Copyright © 2025-2026 {H}", True),
+            (f"   Copyright (c) 2026 {H}  ", True),
+            (f"Copyright (c) 2026 {H}. All rights reserved.", True),
+            ("Copyright (c) <year> <copyright holders>", True),
+            ("Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>", True),
+            ("Copyright (c) 2014 Someone Else <someone@example.org>", True),
+            (f"The work of {H} is under this copyright notice", False),
+            (f"Copyright (c) 2026 {H} <{self.MAIL}>", False),
+            (f"Copyright (c) 2026 {H} <me@example.org>", False),
+            (f"Copyright (c) 2026 Kleidos <{self.MAIL}>", False),
+            (f"Copyright (c) 2026 Kleidos <{self.MAIL.upper()}>", False),
+            ("Copyright (c) 2026 Jose M. Requena Plens", False),
+            (f"Copyright (c) {H}", False),
+            (f"Copyright 2026 {H}", False),
+            (f"© 2026 {H}", False),
+        ):
+            with self.subTest(line=line):
+                found = sh.license_text_problems("LICENSE", f"MIT License\n\n{line}\n")
+                self.assertEqual(found == [], fine, found)
+                if not fine:
+                    self.assertTrue(found[0].startswith("LICENSE:3: "), found)
+
+    def test_what_is_a_license_text(self) -> None:
+        for rel, is_one in (
+            ("LICENSE", True),
+            ("LICEN" + "CE.md", True),
+            ("COPYING", True),
+            ("docs/LICENSE-MIT", True),
+            ("LICENSES/MIT.txt", True),
+            ("LICENSES/x/y", True),
+            ("LICENSED.md", False),
+            ("docs/LICENSES/MIT.txt", False),
+            ("NOTICE.md", False),
+        ):
+            self.assertIs(sh.is_license_text(rel), is_one, rel)
+
+    def found(self) -> tuple[list[str], list[str]]:
+        return sh.owner_problems(self.root)
+
+    def test_an_e_mail_after_the_name_is_found_in_any_file(self) -> None:
+        fx.write(self.root, "a.md", f"x\n\nCopyright (c) 2026 {H} <{self.MAIL}>.\n")
+        fx.write(self.root, "b.py", f"NOTICE = '© 2026 {H} {self.MAIL}'\n")
+        fx.write(self.root, "c.md", f"Write to {H}, {self.MAIL}.\n")  # no copyright statement
+        fx.write(self.root, "d.md", f"Copyright 2026 {H}. Write to {self.MAIL}.\n")
+        fx.write(self.root, "e.bin", "\0")
+        problems, notes = self.found()
+        self.assertEqual(
+            [p.split(": ")[0] for p in sorted(problems)], ["a.md:3", "b.py:1"], problems
+        )
+        self.assertEqual(notes, [])
+
+    def test_a_license_text_is_a_problem_unless_copies_are_held(self) -> None:
+        fx.write(self.root, "LICENSES/MIT.txt", f"Copyright (c) 2026 {H} <{self.MAIL}>\n")
+        fx.write(self.root, "LICENSES/blob.txt", "\0copyright " + H)
+        problems, notes = self.found()
+        self.assertEqual(len(problems), 1, problems)
+        self.assertEqual(notes, [])
+        record = ".github/quality/SOURCE.json"
+        for body, held in (
+            ('{"commit": "0123", "version": "2.3.0"}', True),
+            ('{"schema": "kleidos.vendored-copy/1"}', False),
+            ('{"commit": "self"}', False),
+            ("[]", False),
+            ("{", False),
+        ):
+            with self.subTest(body=body):
+                fx.write(self.root, record, body)
+                self.assertIs(sh.holds_kit_copies(self.root), held)
+                problems, notes = self.found()
+                self.assertEqual((len(problems), len(notes)), (0, 1) if held else (1, 0))
+
+    def test_the_whole_check_reports_both(self) -> None:
+        fx.write(self.root, "LICENSE", f"Copyright (c) 2026 {H} <{self.MAIL}>\n")
+        fx.commit(self.root)
+        problems, _notes = sh.check_repo(self.root)
+        self.assertTrue(any(p.startswith("LICENSE:1:") for p in problems), problems)
+        fx.write(self.root, ".github/quality/SOURCE.json", '{"commit": "0123"}')
+        problems, notes = sh.check_repo(self.root)
+        self.assertFalse(any(p.startswith("LICENSE:1:") for p in problems), problems)
+        self.assertTrue(any("from the switch to the run form" in n for n in notes), notes)
+
+    def test_the_copies_of_both_forms_are_read(self) -> None:
+        rel = ".github/quality/SOURCE.json"
+        self.assertEqual(sh.kit_copies(self.root), set())
+        for body, copies in (
+            ('{"files": {"a.toml": "0"}}', {"a.toml"}),
+            ('{"files": [{"path": "b.py"}]}', {"b.py"}),
+            ('{"files": [3]}', set()),
+            ("{}", set()),
+            ("{", set()),
+        ):
+            fx.write(self.root, rel, body)
+            self.assertEqual(sh.kit_copies(self.root), copies, body)
+
+    def test_the_kits_own_tree_holds_no_e_mail(self) -> None:
+        self.assertEqual(sh.owner_problems(fx.CENTRAL), ([], []))
+
+
 def sh_year() -> str:
     return str(dt.datetime.now(tz=dt.UTC).year)
 

@@ -13,7 +13,7 @@
     "dependabot[bot]",
     "github-actions[bot]"
   ],
-  "ignorePatterns": ".github/commit-check/**\n.github/workflows/commit-check.yml\n.github/workflows/commit-check-comment.yml\nLICENSE\nLICENSES/**\nprofile/assets/*.svg",
+  "ignorePatterns": "LICENSE\nLICENSES/**\nprofile/assets/*.svg",
   "shouldUpdateDescription": false,
   "updateSummaryOnly": false,
   "statusCheck": true,
@@ -32,5 +32,5 @@
   },
   "fixWithAI": true,
   "hideFooter": true,
-  "instructions": "Review the diff and post inline comments with concrete suggestions. Its rules are in AGENTS.md, README.md and CONTRIBUTING.md (listed in files.json); cite the rule a finding breaks. It holds the kleidos-dev organization's profile and the community defaults every repository without its own inherits, so a change to SECURITY.md, CONTRIBUTING.md, SUPPORT.md or the forms applies to all of them. Markdown prose is never hard-wrapped (one line per paragraph and per list item). Everything is public: flag any postal address, donation amount, personal e-mail address, local path or host name. The scripts use the Python standard library only and write metadata from fixed constants and profile/assets/assets.json alone (no date, machine name or tool version). Workflows pin every action to a commit SHA and set persist-credentials: false. Never comment on the pull request's title or description."
+  "instructions": "Review the diff and post inline comments with concrete suggestions. Its rules are in AGENTS.md, README.md and CONTRIBUTING.md (listed in files.json); cite the rule a finding breaks. It holds the kleidos-dev organization's profile and the community defaults every repository without its own inherits, so a change to SECURITY.md, CONTRIBUTING.md, SUPPORT.md or the forms applies to all of them. Markdown prose is never hard-wrapped (one line per paragraph and per list item). Everything is public: flag any postal address, donation amount, personal e-mail address, local path or host name. The scripts use the Python standard library only and write metadata from fixed constants and profile/assets/assets.json alone (no date, machine name or tool version). Workflows pin every third-party action to a commit SHA and set persist-credentials: false. Never comment on the pull request's title or description."
 }

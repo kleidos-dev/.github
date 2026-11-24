@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 What is set in the SonarQube Cloud web UI for the organization `kleidos-dev` (<https://sonarcloud.io/organizations/kleidos-dev>) and its projects, as audited and configured on 2026-11-22, so it can be redone by hand. Only what a `sonar-project.properties` file cannot carry lives here; everything else belongs in each repository's file (listed at the end), so a project can be rebuilt from its repository alone.
 
-The projects are `kleidos-dev_boards`, `kleidos-dev_brand`, `kleidos-dev_social` and `kleidos-dev_.github`, all public, each bound to its repository `kleidos-dev/<repo>` and analyzed only from that repository's CI (GitHub Actions, secretless), on every push to `main` and every pull request against `main`.
+The projects are the ones [`tools/ecosystem.toml`](../tools/ecosystem.toml) declares (`sonar`), which the [ecosystem report](ecosystem.md) compares with what SonarQube Cloud answers, all public, each bound to its repository `kleidos-dev/<repo>` and analyzed only from that repository's CI (GitHub Actions, secretless), on every push to `main` and every pull request against `main`.
 
 The plan is **OSS (SonarQube for OSS)** since 2026-11-22: free, public projects only (no private lines of code), unlimited members, unlimited branch and pull request analysis, custom quality gates and quality profiles per project, webhooks, the Projects Management page and GitHub member synchronization. It does not include AI Code Assurance or AI CodeFix (see "AI Code Assurance").
 
@@ -65,7 +65,7 @@ Until 2026-11-22 the organization was on the **Free** plan, which cannot attach 
 3. Project > Administration > New code: confirm **Number of days, 30**.
 4. Project > Administration > General settings > General: if "Enable automatic configuration" shows a Reset button, reset it.
 5. Project > Policies > Quality gate: leave **Use the organization's default quality gate** selected, and Project > Policies > Quality profiles on the organization defaults. Every project uses the organization's gate and profiles; none sets its own.
-6. Add `sonar-project.properties` (below) and the CI job: `permissions: contents: read, id-token: write`; `actions/checkout` with `fetch-depth: 0` and `persist-credentials: false`; `SonarSource/sonarqube-auth-action@b372e2c2930aadfcc4f4399446da1e12772709ad # v1.2` right before `SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0`; no `SONAR_TOKEN` secret; run only on a push to `main` or a pull request against `main`; on a pull request from a fork (GitHub gives it no OIDC token) skip every step with a `::notice` so the job ends green. The CI of `boards`, `brand`, `social` and this repository is the model to copy.
+6. Add `sonar-project.properties` (below) and the CI job: `permissions: contents: read, id-token: write`; `actions/checkout` with `fetch-depth: 0` and `persist-credentials: false`; `SonarSource/sonarqube-auth-action@b372e2c2930aadfcc4f4399446da1e12772709ad # v1.2` right before `SonarSource/sonarqube-scan-action@70bad232163b09d998ea0707ee80c0ec80798c16 # v8.5.1`; no `SONAR_TOKEN` secret; run only on a push to `main` or a pull request against `main`; on a pull request from a fork (GitHub gives it no OIDC token) skip every step with a `::notice` so the job ends green. The CI of `boards`, `brand`, `social` and this repository is the model to copy.
 
 ## Quality gate
 

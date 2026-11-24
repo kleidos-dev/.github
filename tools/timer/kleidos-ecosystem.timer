@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 José M. Requena Plens
+# SPDX-License-Identifier: MIT
+#
+# Mondays at 09:00, at the next start when the machine was off
+# (docs/ecosystem.md, "The local report").
+[Unit]
+Description=Kleidos ecosystem report, weekly
+
+[Timer]
+OnCalendar=Mon 09:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

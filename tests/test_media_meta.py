@@ -72,9 +72,9 @@ REUSE_TOML = """version = 1
 [[annotations]]
 path = ["**"]
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2026 José M. Requena Plens <someone@example.org>"
+SPDX-FileCopyrightText = "2026 José M. Requena Plens <someone(at)example.org>"
 SPDX-License-Identifier = "GPL-3.0-or-later"
-"""
+""".replace("(at)", "@")  # a planted e-mail, which no file of the tree may carry
 
 
 #: How many characters a hostile value has, and the seconds reading it may

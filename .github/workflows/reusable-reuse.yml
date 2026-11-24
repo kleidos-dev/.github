@@ -5,11 +5,11 @@
 # `reuse lint` (every file states its copyright and license, in the file or
 # in REUSE.toml), then spdx_headers.py (every file that can carry a comment
 # carries both lines itself, copyright first, with the year git first added
-# it and no e-mail). The whole history is fetched for those years. Called as:
+# it; the owner's statement is year and name only, license texts included). The whole history is fetched for those years. Called as:
 #
 #   reuse:
 #     name: "⚖️ Licensing (REUSE)"
-#     uses: kleidos-dev/.github/.github/workflows/reusable-reuse.yml@<kit commit> # quality-vX.Y.Z
+#     uses: kleidos-dev/.github/.github/workflows/reusable-reuse.yml@v3
 #     permissions:
 #       contents: read
 name: Quality kit licensing
@@ -31,26 +31,32 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # The kit at the commit .github/quality/SOURCE.json records (kleidos-dev/.github
-      # is public: no token), so the copies are judged by the kit's own bytes.
-      - name: Fetch the quality kit at the recorded commit
+      # The kit that is running: this workflow's own repository and commit (a
+      # ./ call inside the kit keeps both), so the checks and the workflow
+      # are one release. actionlint 1.7.12 does not know these two keys of
+      # the job context, hence the round trip through JSON. The kit is
+      # public: it is fetched with no token.
+      - name: The kit this workflow is part of
         id: kit
+        env:
+          KIT_REPO: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          KIT_SHA: ${{ fromJSON(toJSON(job)).workflow_sha }}
         run: |
           set -euo pipefail
-          commit="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
-          if [ "${commit}" = self ]; then
-            if [ "${GITHUB_REPOSITORY}" != kleidos-dev/.github ]; then
-              echo "::error::SOURCE.json records commit self, which only kleidos-dev/.github may do"
-              exit 1
-            fi
-            echo "dir=${GITHUB_WORKSPACE}" >> "${GITHUB_OUTPUT}"
+          if [ "${KIT_REPO}" != kleidos-dev/.github ]; then
+            echo "::error::the job context names '${KIT_REPO}' as this workflow's home, not kleidos-dev/.github"
+            exit 1
+          fi
+          if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then
+            kit="${GITHUB_WORKSPACE}"
           else
             kit="${RUNNER_TEMP}/kit"
             git init -q "${kit}"
-            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${commit}"
+            git -C "${kit}" fetch -q --depth 1 https://github.com/kleidos-dev/.github "${KIT_SHA}"
             git -C "${kit}" checkout -q FETCH_HEAD
-            echo "dir=${kit}" >> "${GITHUB_OUTPUT}"
           fi
+          { echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"
+          echo "kit v$(cat "${kit}/quality/VERSION") (${KIT_SHA})" | tee -a "${GITHUB_STEP_SUMMARY}"
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.15"
@@ -63,4 +69,5 @@ jobs:
       - name: Every file that can carry a comment carries both lines
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-        run: python "${KIT}/quality/spdx_headers.py"
+          KIT_SHA: ${{ steps.kit.outputs.sha }}
+        run: python "${KIT}/quality/policy.py" --only spdx-headers --kit-sha "${KIT_SHA}"

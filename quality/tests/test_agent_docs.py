@@ -271,6 +271,35 @@ class AgentDocsTest(unittest.TestCase):
         self.agents("Load `board-specs` for boards; `reviewer` reviews.\n")
         self.assertEqual(self.findings(), [])
 
+    # -- rules: a repository that runs the kit links the organization rules ------
+
+    def run_form(self, body: str) -> None:
+        fx.write(self.root, "AGENTS.md", fx.md_header() + "# AGENTS.md\n\n" + body)
+        fx.write(self.root, ".github/quality/SOURCE.json", '{"schema": "kleidos.vendored-copy/1"}')
+
+    def test_the_link_is_enough(self) -> None:
+        self.run_form(f"## Organization rules\n\nSee [them]({ad.RULES_URL}).\n")
+        self.assertEqual(self.findings(), [])
+        self.assertTrue(ad.runs_the_kit(ad.Repo(self.root)))
+
+    def test_without_the_link_it_is_found(self) -> None:
+        for body in ("Nothing.\n", f"`{ad.RULES_URL}`\n", f"<!-- [x]({ad.RULES_URL}) -->\n"):
+            self.run_form(body)
+            self.assert_finding("rules", "links the organization rules nowhere")
+
+    def test_a_block_left_behind_is_found(self) -> None:
+        self.run_form(f"[them]({ad.RULES_URL})\n\n{START}x\n{END}")
+        self.assert_finding("rules", "AGENTS.md:10: [rules] the organization rules are a link now")
+        self.run_form(f"[them]({ad.RULES_URL})\n\n{START.replace('organization-rules', 'own')}x\n")
+        self.assertEqual(self.findings("rules"), [])
+
+    def test_the_form_is_read_from_the_record(self) -> None:
+        for body in ("[]", "{", '{"commit": "self"}'):
+            fx.write(self.root, ".github/quality/SOURCE.json", body)
+            self.assertFalse(ad.runs_the_kit(ad.Repo(self.root)), body)
+        (self.root / ".github/quality/SOURCE.json").unlink()
+        self.assertFalse(ad.runs_the_kit(ad.Repo(self.root)))
+
     # -- block -------------------------------------------------------------------
 
     def test_a_missing_block_is_found(self) -> None:

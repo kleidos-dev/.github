@@ -9,7 +9,7 @@
 #   tests:
 #     name: "🧪 Tests"
 #     needs: lint
-#     uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@<kit commit> # quality-vX.Y.Z
+#     uses: kleidos-dev/.github/.github/workflows/reusable-python-tests.yml@v3
 #     with:
 #       run: python -m pytest -rs --cov --cov-report=xml:coverage.xml tests
 #     permissions:
