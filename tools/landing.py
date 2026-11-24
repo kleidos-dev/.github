@@ -47,13 +47,16 @@ GATE, ACTIONS_APP = "✅ Check", 15368  # the job every repository requires; Git
 # What may differ between a line and its old one: the group "version" is masked.
 VERSION = r"\d[0-9A-Za-z.+!_-]*"
 # A version of a package: pip's operators only, right after the package's name
-# (and its extras), or after a comma that adds a bound to it. A bare `=` and an
-# operator after a quote are no requirement: `fail_under = 90`,
-# `--cov-fail-under=90` and `requires-python = ">=3.12"` are floors, never masked.
+# (and its extras), and each further bound a comma adds to that requirement.
+# A bare `=` and an operator after a quote are no requirement: `fail_under =
+# 90`, `--cov-fail-under=90`, `requires-python = ">=3.12"` and Poetry's
+# `python = "<4,>=3.12"` are floors, never masked.
+OPERATOR = r"(?:===|==|~=|!=|<=|>=|<|>)"
 PINNED = re.compile(
-    r"(?P<keep>(?:(?<![\w.-])[A-Za-z0-9][\w.-]*(?:\[[\w.,\s-]*\])?\s*|,\s*)"
-    rf"(?:===|==|~=|!=|<=|>=|<|>)\s*)(?P<version>{VERSION})"
+    rf"(?P<keep>(?<![\w.-])[A-Za-z0-9][\w.-]*(?:\[[\w.,\s-]*\])?\s*{OPERATOR}\s*)"
+    rf"(?P<version>{VERSION})(?P<more>(?:\s*,\s*{OPERATOR}\s*{VERSION})*)"
 )
+BOUND = re.compile(rf"(?P<keep>\s*,\s*{OPERATOR}\s*)(?P<version>{VERSION})")
 RANGE = re.compile(
     rf'^(?P<keep>\s*"[^"]+": ")'
     rf'(?P<version>(?:(?:[\^~<>=]*\s?{VERSION}|\|\||-|\*)(?:\s|(?=")))+)(?=",?$)'
@@ -73,7 +76,8 @@ PYTHON, NODE = (HASH, PINNED), (RESOLVED, INTEGRITY, RANGE)
 # packages come from. Dependabot moves versions; these are a person's to move.
 PYTHON_FLOORS = re.compile(
     r"fail[_-]under|requires[_-]python|python[_-]requires|index[_-]url|find[_-]links"
-    r"|trusted[_-]host|^\s*-[ifc]\b|\[\[?tool\.(?:uv|poetry|pdm|hatch)\b.*\b(?:index|source)",
+    r"|trusted[_-]host|^\s*-[ifc]\b|\[\[?tool\.(?:uv|poetry|pdm|hatch)\b.*\b(?:index|source)"
+    r"|^\s*python\s*=|required[_-]version",
     re.IGNORECASE,
 )
 ENGINES = re.compile(r'^\s*"(?:node|npm|pnpm|yarn|bun|engines|registry|packageManager)"\s*:')
@@ -86,6 +90,10 @@ MANIFESTS = (
     (re.compile(r"^package-lock\.json$"), NODE, NONE),
 )
 NAME_LINE = re.compile(r"^- dependency-name: ", re.MULTILINE)
+NAMED = re.compile(r"^- dependency-name: (?P<name>\S+)\s*$", re.MULTILINE)
+# A line of package.json that names a version: its key is a package an
+# update names, or it is no package's (an engine, the project's own version).
+KEYED = re.compile(r'^\s*"(?P<key>[^"]+)":\s*"')
 UPDATE_LINE = re.compile(
     r"^\s+update-type: version-update:semver-(major|minor|patch)\s*$", re.MULTILINE
 )
@@ -123,8 +131,14 @@ def masked(line: str, rules: tuple[re.Pattern[str], ...]) -> str:
     """A line with its versions and checksums left out, as its first rule that fits reads it."""
     for rule in rules:
         if rule.search(line):
-            return rule.sub(lambda found: f"{found['keep']}…", line)
+            return rule.sub(lambda found: f"{found['keep']}…{bounds(found)}", line)
     return line
+
+
+def bounds(found: re.Match[str]) -> str:
+    """The further bounds of a requirement (`,<2`), their versions left out too."""
+    more = found.groupdict().get("more") or ""
+    return BOUND.sub(lambda bound: f"{bound['keep']}…", more)
 
 
 def blocks(patch: str) -> list[tuple[list[str], list[str]]]:
@@ -165,8 +179,13 @@ def line_refusal(
     return None
 
 
-def file_refusal(changed: dict[str, Any]) -> str | None:
-    """Why a changed file is more than a version, or None."""
+def file_refusal(changed: dict[str, Any], names: frozenset[str] | None = None) -> str | None:
+    """Why a changed file is more than a version, or None.
+
+    With the names of the packages the pull request updates, a changed line
+    of package.json that names a version names one of them: every child of
+    `engines`, whatever the engine, is no package's.
+    """
     name = str(changed["filename"])
     if name.startswith(".github/"):
         return f"{name}: a green {GATE} proves nothing about a change under .github/"
@@ -182,7 +201,19 @@ def file_refusal(changed: dict[str, Any]) -> str | None:
     if not blocks(patch):
         return f"{name} shows no diff to read"
     why = line_refusal(patch, *kind)
+    if why is None and names is not None and base == "package.json":
+        why = unnamed(patch, names)
     return f"{name} {why}" if why else None
+
+
+def unnamed(patch: str, names: frozenset[str]) -> str | None:
+    """A changed version line of package.json whose key no update names, or None."""
+    for old, new in blocks(patch):
+        for line in [*old, *new]:
+            key = KEYED.match(line)
+            if key and RANGE.match(line) and key["key"] not in names:
+                return f"changes {key['key']}, which no update of it names: {line.strip()[:80]}"
+    return None
 
 
 def commit_refusal(commit: dict[str, Any], viewer: str) -> str | None:
@@ -246,7 +277,9 @@ def refusal(
     if len(commits) >= 100 or len(files) >= 100:
         return "too large to read whole"
     reasons = [push_refusal(pushes, pull["head"]["sha"], viewer)]
-    reasons += [commit_refusal(c, viewer) for c in commits] + [file_refusal(f) for f in files]
+    names = frozenset(n for c in commits for n in NAMED.findall(c["commit"]["message"]))
+    reasons += [commit_refusal(c, viewer) for c in commits]
+    reasons += [file_refusal(f, names) for f in files]
     if not commits or not files:
         reasons.append("it changes nothing")
     reasons.append(update_refusal([c for c in commits if len(c.get("parents") or ()) == 1]))

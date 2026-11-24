@@ -7,7 +7,8 @@ From kit 3.0.0 a repository runs the kit and holds none of its code
 (docs/quality.md, "How a repository runs the kit"); tools/kit_switch.py
 moves it there. This script serves what has not moved yet: the kit's home,
 which still records its own copies and blocks, the kit 2.x repositories'
-weekly drift notice, and the kit's own release check. It goes with kit 3.1.
+weekly drift notice, and the kit's own release check. It goes in the first
+release after no repository holds copies any more.
 
     sync.py --write REPO [--profiles base,python,...] [--test-dir tests]
         (kleidos-dev/.github itself, and no other) writes the copies, the
@@ -160,6 +161,21 @@ def verified_on_github(tag_object: str) -> bool | None:
     return {"true": True, "false": False}.get(done.stdout.strip()) if not done.returncode else None
 
 
+def clash(name: str, release: bool) -> str:
+    """What to do about a tag and a branch of one name: the release tag always stays."""
+    if release:  # never deleted or moved (docs/quality.md, "Changing the kit")
+        return (
+            f"::error title=A tag named like a branch::the branch {name} is named like the"
+            f" release tag {name}, which hides it (GitHub resolves the tag first) and is never"
+            f" deleted or moved: delete the branch, git push origin :refs/heads/{name}"
+        )
+    return (
+        f"::error title=A tag named like a branch::the tag {name} hides the branch of"
+        f" that name (GitHub resolves the tag first): delete it, git push origin"
+        f" :refs/tags/{name}"
+    )
+
+
 def tag_problems(
     cwd: Path = CENTRAL, verified: Callable[[str], bool | None] | None = None
 ) -> list[str]:
@@ -173,15 +189,14 @@ def tag_problems(
     """
     branches = set(
         git("for-each-ref", "--format=%(refname:lstrip=3)", REMOTE, cwd=cwd).splitlines()
-    ) - {"HEAD"}
+    )
+    releases = release_tags(cwd)
     out = [
-        f"::error title=A tag named like a branch::the tag {name} hides the branch of"
-        f" that name (GitHub resolves the tag first): delete it, git push origin"
-        f" :refs/tags/{name}"
+        clash(name, name in releases)
         for name in git("tag", "-l", cwd=cwd).splitlines()
         if BRANCH_NAME.fullmatch(name) or name in branches
     ]
-    for tag in release_tags(cwd):
+    for tag in releases:
         kind = git_ok("cat-file", "-t", f"refs/tags/{tag}", cwd=cwd)
         body = git("cat-file", "tag", f"refs/tags/{tag}", cwd=cwd) if kind == "tag" else ""
         if not SIGNATURE.search(body):

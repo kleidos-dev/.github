@@ -220,7 +220,8 @@ class ConformanceTest(unittest.TestCase):
             ("regexes = ['.*']\n", "its regexes cover every secret"),
             ("regexes = ['[\\w-]+']\n", "its regexes cover every secret"),
             ("paths = ['^exports\\.json$']\n", ""),
-            ("paths = ['\\.']\n", ""),
+            ("paths = ['\\.']\n", "its paths cover every file"),  # every file with a dot
+            ("paths = ['\\.md$']\n", ""),
             ("paths = ['(']\n", ""),
             ("regexes = ['^[0-9a-f]{64}$']\n", ""),
         ):
@@ -230,6 +231,49 @@ class ConformanceTest(unittest.TestCase):
                 wanted = f"{refused}: it turns its rules off, refused (no waiver)"
                 where = ".gitleaks.toml allowlists[0]: [gitleaks]"
                 self.assertEqual(found, [f"{where} {wanted}"] if refused else [])
+
+    def test_a_gitleaks_rule_of_the_tree_never_redefines_a_default_one(self) -> None:
+        """gitleaks 8.30.1 merges a rule of the tree into the default rule of its id.
+
+        Each of the first three silences the default rule on a generated
+        api_key that the base configuration finds (1 leak, then none).
+        """
+        body = "[extend]\nuseDefault = true\n[[rules]]\n"
+        where = ".gitleaks.toml rules[0]"
+        rule = f"{where}: [gitleaks] "
+        own = (
+            "its id is not one of the repository's own (kleidos-*): a rule of a default"
+            " rule's id redefines it, refused (no waiver)"
+        )
+        off = ": it turns its rules off, refused (no waiver)"
+        allow = f"{where} allowlists[0]: [gitleaks] "
+        for more, refused in (
+            ("id = 'generic-api-key'\nentropy = 99\n", [rule + own]),
+            ("id = 'generic-api-key'\npath = 'nothing-has-this-name'\n", [rule + own]),
+            (
+                "id = 'generic-api-key'\n[[rules.allowlists]]\nregexes = ['.*']\n",
+                [rule + own, f"{allow}its regexes cover every secret{off}"],
+            ),
+            ("regex = 'x'\n", [rule + own]),
+            ("id = 'Kleidos-x'\nregex = 'x'\n", [rule + own]),
+            ("id = 'kleidos-own'\nregex = 'zzz[0-9]+'\n", []),
+            (
+                "id = 'kleidos-own'\nregex = 'x'\n[[rules.allowlists]]\npaths = ['.*']\n",
+                [f"{allow}its paths cover every file{off}"],
+            ),
+            (
+                "id = 'kleidos-own'\nregex = 'x'\n[rules.allowlist]\nregexes = ['']\n",
+                [f"{where} allowlist: [gitleaks] its regexes cover every secret{off}"],
+            ),
+            ("id = 'kleidos-own'\nregex = 'x'\n[[rules.allowlists]]\npaths = ['^tests/']\n", []),
+        ):
+            with self.subTest(more=more):
+                fx.write(self.root, ".gitleaks.toml", fx.header() + body + more)
+                self.assertEqual([f for f in self.found() if "[gitleaks]" in f], refused)
+        fx.write(
+            self.root, ".gitleaks.toml", fx.header() + "[extend]\nuseDefault = true\nrules = 3\n"
+        )
+        self.assertEqual([f for f in self.found() if "[gitleaks]" in f], [])
 
     def weakened(self, needle: str) -> None:
         """A weakening the report names, with no waiver for it."""
@@ -254,6 +298,11 @@ class ConformanceTest(unittest.TestCase):
             ("pkg/pyproject.toml", "[tool.typos.default]\nlocale = 'en-gb'\n"),
             ("Cargo.toml", "[package.metadata.typos]\n"),
             ("crates/x/Cargo.toml", "[ workspace.metadata.typos.files ]\n"),
+            # Other TOML spellings of the same table (typos 1.52.2: 6 typos, then 3).
+            ("sub/pyproject.toml", "[tool]\ntypos.default.extend-ignore-re = ['.']\n"),
+            ("sub/pyproject.toml", '[tool."typos".default]\nextend-ignore-re = ["."]\n'),
+            ("sub/pyproject.toml", "tool = { typos = { default = { locale = 'en' } } }\n"),
+            ("w/Cargo.toml", "[workspace]\nmetadata = { typos = {} }\n"),
         ):
             with self.subTest(rel=rel):
                 fx.write(self.root, rel, fx.header() + text)
@@ -265,6 +314,9 @@ class ConformanceTest(unittest.TestCase):
                 (self.root / rel).unlink()
         fx.write(self.root, "pkg/notypos.toml", fx.header())
         fx.write(self.root, "pkg/Cargo.toml", fx.header() + "[package]\nname = 'typos-free'\n")
+        fx.write(self.root, "a/pyproject.toml", "[tool.ruff]\n# [tool.typos]\nx = 'tool.typos'\n")
+        fx.write(self.root, "b/pyproject.toml", "[tool.typos\n")  # typos skips it and checks
+        fx.write(self.root, "c/Cargo.toml", "package = 3\n[workspace.metadata]\ntypo = 1\n")
         self.assertEqual(self.typos_found(), [])
 
     def typos_off(self, text: str) -> list[str]:
@@ -288,7 +340,8 @@ class ConformanceTest(unittest.TestCase):
             ("[default]\ncheck-filename = false\n", ["default.check-filename=false"]),
             ("[default]\ncheck-file = true\n", []),
             ("[type.py]\ncheck-file = false\n", ["type.py.check-file=false"]),
-            ("[type.py]\nbinary = true\n", ["type.py.binary=true"]),
+            # typos 1.52.2 still checks a type made binary: 7 typos with and without.
+            ("[type.py]\nbinary = true\n", []),
             ("[default]\nbinary = true\n", []),
             ('[type.py]\nextend-glob = ["*.pyi"]\n', []),
             ("[type]\npy = 'not a table'\n", []),
@@ -303,6 +356,29 @@ class ConformanceTest(unittest.TestCase):
                 "[default]\nextend-ignore-words-re = ['^.*$']\n",
                 ["default.extend-ignore-words-re:^.*$"],
             ),
+            # typos skips what the pattern spans: no word left, nothing checked.
+            ("[default]\nextend-ignore-re = ['.']\n", ["default.extend-ignore-re:."]),
+            (
+                "[default]\nextend-ignore-re = ['[A-Za-z]+']\n",
+                ["default.extend-ignore-re:[A-Za-z]+"],
+            ),
+            ("[default]\nextend-ignore-re = ['.+?']\n", ["default.extend-ignore-re:.+?"]),
+            ("[default]\nextend-ignore-re = ['[a-z]']\n", ["default.extend-ignore-re:[a-z]"]),
+            ("[default]\nextend-ignore-re = ['[A-Z]']\n", []),
+            ("[default]\nextend-ignore-re = ['']\n", []),
+            ("[default]\nextend-ignore-re = ['^']\n", []),
+            # An identifier or a word is skipped when the pattern is found in it.
+            (
+                "[default]\nextend-ignore-identifiers-re = ['[a-z]']\n",
+                ["default.extend-ignore-identifiers-re:[a-z]"],
+            ),
+            (
+                "[default]\nextend-ignore-words-re = ['[a-z]']\n",
+                ["default.extend-ignore-words-re:[a-z]"],
+            ),
+            ("[default]\nextend-ignore-identifiers-re = ['[A-Z]']\n", []),
+            ("[default]\nextend-ignore-words-re = ['e']\n", []),
+            ('[files]\nextend-exclude = ["*.*"]\n', ["extend-exclude:*.*"]),
             ("[default]\nextend-ignore-re = ['\\bPNGs\\b']\n", []),
             ("[default]\nextend-ignore-re = ['\\b[0-9a-f]{7,64}\\b']\n", []),
             ("[default]\nextend-ignore-re = ['e']\n", []),
@@ -314,7 +390,7 @@ class ConformanceTest(unittest.TestCase):
 
     def test_an_actionlint_ignore_is_a_weakening(self) -> None:
         whole = (self.root / cq.WAIVERS).read_text(encoding="utf-8")
-        for rel in cq.ACTIONLINT_CONFIGS:
+        for rel in (".github/actionlint.yaml", ".github/actionlint.yml"):
             with self.subTest(rel=rel):
                 text = "paths:\n  .github/workflows/**/*.yml:\n    ignore:\n      - '.*'\n"
                 fx.write(self.root, rel, fx.header() + text)
@@ -344,7 +420,13 @@ class ConformanceTest(unittest.TestCase):
 
     def test_a_second_zizmor_configuration_is_refused(self) -> None:
         text = fx.header() + "rules:\n  unpinned-uses:\n    disable: true\n"
-        for rel in cq.ZIZMOR_SHADOWS:
+        for rel in (
+            "zizmor.yml",
+            "zizmor.yaml",
+            ".zizmor.yml",
+            ".zizmor.yaml",
+            ".github/zizmor.yaml",
+        ):
             with self.subTest(rel=rel):
                 fx.write(self.root, rel, text)
                 said = "a second zizmor configuration: the kit's .github/zizmor.yml is the one"
@@ -387,7 +469,9 @@ class ConformanceTest(unittest.TestCase):
             ("sonar.exclusions=**/*", "sonar.exclusions=**/* excludes every file"),
             ("sonar.exclusions=docs/**, **", "sonar.exclusions=** excludes every file"),
             ("sonar.coverage.exclusions=**", "sonar.coverage.exclusions=** excludes every file"),
-            ("sonar.cpd.exclusions=**/*.*,**/*", "sonar.cpd.exclusions=**/* excludes every file"),
+            # Sonar reads a file by its extension: every one with a dot is every file it reads.
+            ("sonar.cpd.exclusions=**/*.*", "sonar.cpd.exclusions=**/*.* excludes every file"),
+            ("sonar.cpd.exclusions=**/*.md,**/*", "sonar.cpd.exclusions=**/* excludes every file"),
             ("sonar.test.exclusions = **", "sonar.test.exclusions=** excludes every file"),
             ("sonar.exclusions=*", ""),
             ("sonar.exclusions=_shared/kicad/**,_shared/fixtures/**", ""),
@@ -424,6 +508,11 @@ class ConformanceTest(unittest.TestCase):
                 "build:Make it",
             ),
             ("      - run: make\n        continue-on-error: 1\n", "build:1"),
+            (  # the id, which a waiver can rely on, before the name
+                "      - name: Make it\n        id: make\n        run: make\n"
+                "        continue-on-error: true\n",
+                "build:make",
+            ),
         ):
             with self.subTest(step=step):
                 fx.write(self.root, rel, workflow(step))

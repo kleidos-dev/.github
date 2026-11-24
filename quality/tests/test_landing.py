@@ -158,7 +158,7 @@ class RefusalTest(unittest.TestCase):
         sha = "d" * 40
         uses = f"@@\n-      - uses: a/b@{HEAD} # v1\n+      - uses: a/b@{sha} # v2"
         rev = "@@\n-    rev: v3.0.0\n+    rev: v3.1.0"
-        json_patch = '@@\n-    "a": "1.0.0"\n+    "a": "1.0.1"'
+        json_patch = '@@\n-    "x": "1.0.0"\n+    "x": "1.0.1"'
         workflows = "proves nothing about a change under .github/"
         for one, needle in (
             (changed(), "None"),
@@ -331,6 +331,23 @@ class RefusalTest(unittest.TestCase):
             ("package.json", '    "node": ">=20",', '    "node": ">=16",'),
             ("package.json", '    "npm": ">=10"', '    "npm": ">=6"'),
             ("package.json", '    "pnpm": ">=9"', '    "pnpm": ">=8"'),
+            ("package.json", '    "yarn": ">=4"', '    "yarn": ">=1"'),
+            ("package.json", '    "bun": ">=1.1"', '    "bun": ">=1.0"'),
+            ("package.json", '  "engines": { "node": ">=20" },', '  "engines": { "node": ">=8" },'),
+            (
+                "package.json",
+                '    "registry": "https://registry.npmjs.org/"',
+                '    "registry": "https://a.example/"',
+            ),
+            (
+                "package.json",
+                '  "packageManager": "pnpm@9.0.0",',
+                '  "packageManager": "pnpm@8.0.0",',
+            ),
+            # Poetry's and uv's spellings of a floor.
+            ("pyproject.toml", 'python = "<4,>=3.12"', 'python = "<4,>=3.8"'),
+            ("pyproject.toml", 'required-version = ">=0.5,<1"', 'required-version = ">=0.5,<0.1"'),
+            ("pyproject.toml", "Fail_Under = 90", "Fail_Under = 10"),
         ):
             version = '  "x==1",' if name == "pyproject.toml" else "x==1"
             if name == "package.json":
@@ -371,9 +388,48 @@ class RefusalTest(unittest.TestCase):
             ('requires-python = ">=3.12"', 'requires-python = ">=3.12"'),
             ("x = 1", "x = 1"),
             ("--index-url=10.0.0.1", "--index-url=10.0.0.1"),
+            ("x>=1, <2, !=1.5", "x>=…, <…, !=…"),
+            ('python = "<4,>=3.12"', 'python = "<4,>=3.12"'),
+            ('required-version = ">=0.5,<1"', 'required-version = ">=0.5,<1"'),
+            ("--x==1", "--x==1"),  # an option's value, not a package's version
+            ("zope.interface==5.0", "zope.interface==…"),
         ):
             with self.subTest(line=line):
                 self.assertEqual(landing.masked(line, landing.PYTHON), masked)
+
+    def test_a_floor_taken_away_is_never_landed(self) -> None:
+        for name, line in (
+            ("pyproject.toml", "fail_under = 90"),
+            ("requirements.txt", "--index-url https://pypi.org/simple"),
+            ("package.json", '    "node": ">=20",'),
+        ):
+            with self.subTest(name=name):
+                why = landing.file_refusal(changed(name, f"@@ -40 +40 @@\n-{line}"))
+                self.assertEqual(why, f"{name} changes a floor or a package index: {line.strip()}")
+
+    def test_a_version_in_package_json_is_one_of_a_package_the_update_names(self) -> None:
+        """Every child of engines is a floor, whatever the engine: no update names it."""
+        names = frozenset({"a", "@b/c"})
+        for old, new, refused in (
+            ('    "a": "^1.0.0",', '    "a": "^1.1.0",', ""),
+            ('    "@b/c": "~2.0.0"', '    "@b/c": "~2.1.0"', ""),
+            ('    "vscode": "^1.90.0"', '    "vscode": "^1.0.0"', "vscode"),
+            ('    "deno": ">=2",', '    "deno": ">=1",', "deno"),
+            ('  "version": "1.0.0",', '  "version": "1.0.1",', "version"),
+            ('    "b": "^1.0.0",', '    "b": "^1.1.0",', "b"),
+        ):
+            with self.subTest(new=new):
+                patch = f"@@ -1 +1 @@\n-{old}\n+{new}"
+                why = landing.file_refusal(changed("package.json", patch), names)
+                wanted = f"changes {refused}, which no update of it names: {old.strip()}"
+                self.assertEqual(why, f"package.json {wanted}" if refused else None)
+                self.assertIsNone(landing.file_refusal(changed("package-lock.json", patch), names))
+        patch = '@@\n-    "vscode": "^1.90.0"\n+    "vscode": "^1.0.0"'
+        self.assertIn("changes vscode", self.why(files=[changed("package.json", patch)]))
+        patch = '@@\n-    "x": "^1.2.0"\n+    "x": "^1.3.0"'
+        self.assertIsNone(
+            landing.refusal(pull(), [commit()], [changed("package.json", patch)], [push()], OWNER)
+        )
 
     def test_lines_apart_are_compared_apart(self) -> None:
         for patch, accepted in (

@@ -26,4 +26,4 @@ decided = "agent, kit 3.0.0 (the step 0 trial of 2026-11-24 saw 3.13 and 3.14; 3
 tool = "ci"
 what = "continue-on-error:.github/workflows/reusable-commit-check-comment.yml:comment:download"
 reason = "A commit check that was skipped, or whose artifact expired, leaves no result to fetch: the step that fetches it may fail, and the next one runs only when it succeeded, so nothing is posted and nothing is forgiven. quality/tests/test_workflow_contract.py holds this as the one soft step of every kit workflow"
-decided = "agent, kit 3.0.1 (the step-level rule is new; the step is the same since kit 3.0.0)"
+decided = "agent, kit 3.1.0 (the step-level rule is new; the step is the same since kit 3.0.0)"

@@ -54,6 +54,31 @@ SCRIPTS = {
     "SonarCloud accepted the analysis": "curl and jq on Sonar's answer",
 }
 HASHED = 'python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"'
+# The one-line scripts, word for word: a `|| true` would let the step pass whatever it found.
+RUNS = {
+    "Install the kit's tools (hashed)": HASHED,
+    "The hooks that read the deny-list": 'python "${KIT}/quality/deny_hooks.py" "${HOOKS}"',
+}
+# What a step of such a job may hold. Anything else changes how it runs: a
+# shell, a working directory, a soft failure, a condition.
+STEP_KEYS = frozenset({"name", "id", "uses", "with", "env", "run", "timeout-minutes"})
+# The conditions a step may run on, each evaluated case by case in ConditionTest.
+STEP_IFS = {
+    "steps.oidc.outputs.run == 'true'": "Sonar's steps run only where GitHub gave the token",
+    "steps.oidc.outputs.run == 'true' && inputs.coverage-artifact != ''": (
+        "the coverage report is fetched only where a job made one"
+    ),
+    "steps.download.outcome == 'success'": "the comment is written only from a result that came",
+}
+# The one step that may fail and let the job go on: the result it fetches
+# may not be there, and the step after it runs only on its success.
+SOFT = {"Fetch the check's result"}
+# The step that fetches the kit takes the repository's tree as the kit only
+# in the kit's own repository, and says where the kit is from that choice.
+KIT_STEP = "The kit this workflow is part of"
+OWN_REPOSITORY = 'if [ "${GITHUB_REPOSITORY}" = kleidos-dev/.github ]; then'
+OWN_TREE = 'kit="${GITHUB_WORKSPACE}"'
+KIT_OUTPUT = '{ echo "dir=${kit}"; echo "sha=${KIT_SHA}"; } >> "${GITHUB_OUTPUT}"'
 
 
 def holds(thing: Any) -> bool:
@@ -96,13 +121,38 @@ def leaks(workflow: dict[Any, Any]) -> list[str]:
                     out += [f"{job_id}: {name} {why}" for why in told(action, step)]
             elif name not in SCRIPTS:
                 out.append(f"{job_id}: {name} is not a script listed here")
-            elif "hashed" in name and step["run"] != HASHED:
-                out.append(f"{job_id}: {name} installs more than the kit's hashed tools")
+            elif name in RUNS and step["run"] != RUNS[name]:
+                out.append(f"{job_id}: {name} runs more than {RUNS[name]}")
+            elif name == KIT_STEP:
+                out += [f"{job_id}: {name} {why}" for why in kit_step(str(step["run"]))]
+            out += [f"{job_id}: {name} {why}" for why in how(name, step)]
             kit = (step.get("env") or {}).get("KIT")
             if kit is not None and kit != KIT_DIR:
                 out.append(
                     f"{job_id}: {name} takes the kit from {kit}, not from the step that fetched it"
                 )
+    return out
+
+
+def how(name: str, step: dict[str, Any]) -> list[str]:
+    """What is wrong with how a step runs: a key not listed, a condition, a soft failure."""
+    out = [f"sets {key}" for key in sorted(set(step) - STEP_KEYS - {"if", "continue-on-error"})]
+    if "if" in step and step["if"] not in STEP_IFS:
+        out.append(f"runs on a condition not listed here: {step['if']}")
+    if "continue-on-error" in step and not (step["continue-on-error"] is True and name in SOFT):
+        out.append(f"forgives itself: continue-on-error {step['continue-on-error']}")
+    return out
+
+
+def kit_step(run: str) -> list[str]:
+    """What is wrong with where the kit step says the kit is."""
+    lines = [line.strip() for line in run.splitlines()]
+    out = []
+    if lines.count(KIT_OUTPUT) != 1 or sum("dir=" in line for line in lines) != 1:
+        out.append(f"says where the kit is other than by {KIT_OUTPUT}")
+    tree = [i for i, line in enumerate(lines) if "GITHUB_WORKSPACE" in line]
+    if any(lines[i] != OWN_TREE or lines[i - 1] != OWN_REPOSITORY for i in tree):
+        out.append("takes the repository's tree as the kit outside the kit's own repository")
     return out
 
 
@@ -267,6 +317,67 @@ class PlantedTest(unittest.TestCase):
         self.assertNotIn("continue-on-error", self.deny["jobs"]["deny"])
         self.assertNotIn("if", self.deny["jobs"]["deny"])
 
+    def test_the_secret_reaches_the_hooks(self) -> None:
+        """quick.yml passes its secret on, and the last step gives it to the hooks whole."""
+        quick = yaml.safe_load((WORKFLOWS / "quick.yml").read_text(encoding="utf-8"))
+        self.assertEqual(quick["jobs"]["deny"]["secrets"], {"deny": "${{ secrets.deny }}"})
+        self.assertIn("deny", quick[True]["workflow_call"]["secrets"])
+        self.assertIn("deny", self.deny[True]["workflow_call"]["secrets"])
+        env = self.deny["jobs"]["deny"]["steps"][-1]["env"]
+        self.assertEqual(env["KLEIDOS_DENY_EXTRA"], "${{ secrets.deny }}")
+
+    def test_a_step_is_held_by_every_key_it_has(self) -> None:
+        """A step that never runs, or whose failure is forgiven, finds nothing and passes."""
+        steps = self.deny["jobs"]["deny"]["steps"]
+        hooks, install = len(steps) - 1, len(steps) - 2
+        for index, key, value, needle in (
+            (hooks, "if", False, "runs on a condition not listed here: False"),
+            (hooks, "if", "${{ false }}", "runs on a condition not listed here"),
+            (0, "if", "always()", "runs on a condition not listed here"),
+            (hooks, "shell", "bash -c 'exit 0' {0}", "sets shell"),
+            (hooks, "continue-on-error", True, "forgives itself: continue-on-error True"),
+            (hooks, "continue-on-error", "${{ true }}", "forgives itself"),
+            (install, "working-directory", "planted", "sets working-directory"),
+            (1, "continue-on-error", False, "forgives itself: continue-on-error False"),
+        ):
+            with self.subTest(index=index, key=key, value=value):
+                planted = copy.deepcopy(self.deny)
+                planted["jobs"]["deny"]["steps"][index][key] = value
+                found = leaks(planted)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(needle, found[0])
+        planted = copy.deepcopy(self.deny)
+        planted["jobs"]["deny"]["steps"][hooks]["timeout-minutes"] = 5
+        self.assertEqual(leaks(planted), [])
+
+    def test_a_script_runs_its_own_words(self) -> None:
+        steps = self.deny["jobs"]["deny"]["steps"]
+        for index, more in ((len(steps) - 1, " || true"), (len(steps) - 2, " pre-commit")):
+            with self.subTest(index=index):
+                planted = copy.deepcopy(self.deny)
+                planted["jobs"]["deny"]["steps"][index]["run"] += more
+                found = leaks(planted)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn("runs more than", found[0])
+
+    def test_the_kit_is_the_trees_only_in_the_kits_own_repository(self) -> None:
+        run = self.deny["jobs"]["deny"]["steps"][1]["run"]
+        for old, new in (
+            ('echo "dir=${kit}"', 'echo "dir=${GITHUB_WORKSPACE}"'),
+            ('kit="${RUNNER_TEMP}/kit"', 'kit="${GITHUB_WORKSPACE}"'),
+            (OWN_REPOSITORY, 'if [ -n "${GITHUB_REPOSITORY}" ]; then'),
+            (KIT_OUTPUT, KIT_OUTPUT + '\necho "dir=." >> "${GITHUB_OUTPUT}"'),
+            (KIT_OUTPUT, 'echo "sha=${KIT_SHA}" >> "${GITHUB_OUTPUT}"'),
+        ):
+            with self.subTest(new=new):
+                self.assertIn(old, run)
+                planted = copy.deepcopy(self.deny)
+                planted["jobs"]["deny"]["steps"][1]["run"] = run.replace(old, new)
+                found = leaks(planted)
+                self.assertTrue(found)
+                for line in found:
+                    self.assertTrue(line.startswith(f"deny: {KIT_STEP} "), line)
+
 
 ACTION_REF = [
     str(step["uses"]).partition("@")[2]
@@ -281,7 +392,7 @@ class EveryKitTest(unittest.TestCase):
     """Rules of every kit workflow, not only of the jobs with something to lose."""
 
     def test_every_step_takes_the_kit_from_the_step_that_fetched_it(self) -> None:
-        # The 2.x drift job compares two kits and names them itself; it goes with kit 3.1.
+        # The 2.x drift job compares two kits and names them itself; it goes with the 2.x copies.
         found = []
         for path in sorted(WORKFLOWS.glob("*.yml")):
             if path.name == "reusable-quality-drift.yml":
@@ -326,6 +437,32 @@ class ConditionTest(unittest.TestCase):
         ):
             with self.subTest(event=event):
                 self.assertIs(ex.runs(condition, context(github={"event_name": event})), wanted)
+
+    def test_the_listed_step_conditions(self) -> None:
+        """Each condition a step of a job with something to lose may run on, run."""
+        oidc = {"oidc": {"outputs": {"run": "true"}}}
+        cases: dict[str, list[tuple[dict[str, Any], bool]]] = {
+            "steps.oidc.outputs.run == 'true'": [
+                (context(steps=oidc), True),
+                (context(steps={"oidc": {"outputs": {"run": "false"}}}), False),
+                (context(), False),
+            ],
+            "steps.oidc.outputs.run == 'true' && inputs.coverage-artifact != ''": [
+                (context(steps=oidc, inputs={"coverage-artifact": "coverage"}), True),
+                (context(steps=oidc, inputs={"coverage-artifact": ""}), False),
+                (context(inputs={"coverage-artifact": "coverage"}), False),
+            ],
+            "steps.download.outcome == 'success'": [
+                (context(steps={"download": {"outcome": "success"}}), True),
+                (context(steps={"download": {"outcome": "failure"}}), False),
+                (context(), False),
+            ],
+        }
+        self.assertEqual(set(cases), set(STEP_IFS))
+        for condition, runs in cases.items():
+            for given, wanted in runs:
+                with self.subTest(condition=condition, given=given):
+                    self.assertIs(ex.runs(condition, given), wanted)
 
     def test_the_other_quick_jobs_always_run(self) -> None:
         conditional = {job_id for job_id, job in self.quick["jobs"].items() if "if" in job}

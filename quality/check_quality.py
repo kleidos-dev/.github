@@ -1647,13 +1647,13 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
 # where the kit's rules allow no waiver, a problem.
 
 # Paths and words of every kind: a pattern that matches all of them excludes,
-# or ignores, everything (or near enough to read as such).
+# or ignores, everything (or near enough to read as such). Every path has an
+# extension: one of them all (`*.*`, `\.`) leaves out only LICENSE and the like.
 PROBE_PATHS = (
     "README.md",
     "src/main.py",
     "a/b/c/d.ts",
     ".github/workflows/ci.yml",
-    "x",
     "docs/guide.txt",
 )
 PROBE_WORDS = ("word", "Name", "snake_case", "x1y", "CamelCase")
@@ -1689,32 +1689,63 @@ def glob_covers_all(pattern: str, gitignore: bool = True) -> bool:
     return all(rx.fullmatch(path) for path in PROBE_PATHS)
 
 
-def regex_covers_all(pattern: str, probes: tuple[str, ...], whole: bool) -> bool:
-    """Whether a regular expression finds every probe: somewhere in it, or the whole of it.
+def regex_covers_all(pattern: str, probes: tuple[str, ...]) -> bool:
+    """Whether a regular expression finds something in every probe.
 
-    gitleaks allows what a pattern finds anywhere in a path or a secret;
-    typos ignores the text a pattern spans, so only one that spans a whole
-    word ignores every word. A pattern that is no regular expression is the
-    tool's to refuse.
+    gitleaks allows a path or a secret a pattern finds anywhere in it, and
+    typos an identifier or a word. A pattern that is no regular expression
+    is the tool's to refuse.
     """
     try:
         rx = re.compile(pattern)
     except re.error:
         return False
-    found = [rx.search(probe) for probe in probes]
-    return all(
-        f is not None and (not whole or f[0] == probe)
-        for f, probe in zip(found, probes, strict=True)
-    )
+    return all(rx.search(probe) for probe in probes)
+
+
+# Two letters together: what a word needs to be checked at all.
+LETTERS = re.compile(r"[^\W\d_]{2}")
+
+
+def ignores_every_word(pattern: str) -> bool:
+    """Whether typos, skipping the text an extend-ignore-re pattern finds, has no word left.
+
+    Only what the pattern spans is skipped, so `[a-z]` leaves nothing of any
+    word but capitals, while `e` leaves most of them (typos 1.52.2: 7 typos,
+    1 with `[a-z]`, 0 with `.`, 4 with `e`).
+    """
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        return False
+    left = (rx.sub(lambda m: " " if m.group() else "", probe) for probe in PROBE_WORDS)
+    return not any(LETTERS.search(text) for text in left)
 
 
 # typos reads the first of these in a folder, and a folder's own before its
 # parent's: any but the kit's .typos.toml at the top is read instead of it.
 TYPOS_SHADOWS = ("typos.toml", "_typos.toml", ".typos.toml")
 TYPOS_HOSTS = ("pyproject.toml", "Cargo.toml")
-TYPOS_TABLE = re.compile(
-    r"^\s*\[\s*(?:tool|(?:package|workspace)\.metadata)\.typos\b", re.MULTILINE
-)
+# Where pyproject.toml and Cargo.toml hold a typos configuration, however the
+# TOML spells the table (dotted keys, quotes, an inline table).
+TYPOS_TABLES = (("tool",), ("package", "metadata"), ("workspace", "metadata"))
+
+
+def has_typos_table(text: str) -> bool:
+    """Whether a pyproject.toml or Cargo.toml holds a typos configuration typos reads."""
+    try:
+        cfg = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return False  # typos skips it too, and checks the folder as before (1.52.2)
+    for path in TYPOS_TABLES:
+        table: Any = cfg
+        for key in path:
+            table = table.get(key) if isinstance(table, dict) else None
+        if isinstance(table, dict) and "typos" in table:
+            return True
+    return False
+
+
 TYPOS_IGNORE_RE = ("extend-ignore-re", "extend-ignore-identifiers-re", "extend-ignore-words-re")
 
 
@@ -1733,7 +1764,7 @@ def check_typos_off(repo: Repo, report: Report) -> None:
     for rel in repo.files:
         name = PurePosixPath(rel).name
         shadow = name in TYPOS_SHADOWS and rel != ".typos.toml"
-        if shadow or (name in TYPOS_HOSTS and TYPOS_TABLE.search(repo.text(rel))):
+        if shadow or (name in TYPOS_HOSTS and has_typos_table(repo.text(rel))):
             report.weaken("typos", f"config:{rel}", rel)
     if not repo.exists(".typos.toml"):
         return
@@ -1749,11 +1780,14 @@ def check_typos_off(repo: Repo, report: Report) -> None:
         for key in ("check-file", "check-filename"):
             if section.get(key) is False:
                 report.weaken("typos", f"{where}.{key}=false", ".typos.toml")
-        if section.get("binary") is True and where.startswith("type."):
-            report.weaken("typos", f"{where}.binary=true", ".typos.toml")
         for key in TYPOS_IGNORE_RE:
             for pattern in section.get(key) or []:
-                if regex_covers_all(str(pattern), PROBE_WORDS, whole=True):
+                off = (
+                    ignores_every_word(str(pattern))
+                    if key == "extend-ignore-re"
+                    else regex_covers_all(str(pattern), PROBE_WORDS)
+                )
+                if off:
                     report.weaken("typos", f"{where}.{key}:{pattern}", ".typos.toml")
 
 
@@ -1779,8 +1813,9 @@ def check_actionlint(repo: Repo, report: Report) -> None:
                 report.weaken("actionlint", f"ignore:{glob}:{pattern}", rel)
 
 
-# zizmor reads its configuration from the first of these it finds; the kit's
-# is .github/zizmor.yml, and a second one would be read instead of it.
+# zizmor 1.33.1 reads zizmor.yml or zizmor.yaml, at the top or in .github/
+# (the kit's is .github/zizmor.yml): a second one would be read instead of
+# it. The dotted names it does not read yet are refused too.
 ZIZMOR_SHADOWS = ("zizmor.yml", "zizmor.yaml", ".zizmor.yml", ".zizmor.yaml", ".github/zizmor.yaml")
 
 
@@ -1814,24 +1849,55 @@ def check_markdownlint_configs(repo: Repo, report: Report) -> None:
             report.weaken("markdownlint", f"config:{rel}", rel)
 
 
+def tables(value: Any) -> list[dict[str, Any]]:
+    """The tables of a TOML array of tables, whatever else a hand wrote there."""
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+# A repository's own gitleaks rule takes an id no default rule has. One of a
+# default rule's id is merged into that rule (gitleaks 8.30.1): its entropy,
+# path or allowlist would switch the default rule off.
+GITLEAKS_OWN_RULE = "kleidos-"
+
+
 def gitleaks_allowlists_off(cfg: dict[str, Any], rel: str, report: Report) -> None:
-    """An allowlist that covers every path, or every secret, turns its rules off."""
-    for i, allow in enumerate(cfg.get("allowlists") or []):
-        where = f"{rel} allowlists[{i}]"
-        paths = [str(p) for p in allow.get("paths") or []]
-        secrets = [str(r) for r in allow.get("regexes") or []]
-        if any(regex_covers_all(p, PROBE_PATHS, whole=False) for p in paths):
+    """An allowlist that covers every path, or every secret, turns its rules off.
+
+    So does a rule of the tree that takes a default rule's id.
+    """
+    for i, allow in enumerate(tables(cfg.get("allowlists"))):
+        allowlist_off(allow, f"{rel} allowlists[{i}]", report)
+    for i, rule in enumerate(tables(cfg.get("rules"))):
+        where = f"{rel} rules[{i}]"
+        if not str(rule.get("id", "")).startswith(GITLEAKS_OWN_RULE):
             report.add(
                 "gitleaks",
                 where,
-                "its paths cover every file: it turns its rules off, refused (no waiver)",
+                f"its id is not one of the repository's own ({GITLEAKS_OWN_RULE}*): a rule of"
+                " a default rule's id redefines it, refused (no waiver)",
             )
-        if any(regex_covers_all(r, GITLEAKS_PROBES, whole=False) for r in secrets):
-            report.add(
-                "gitleaks",
-                where,
-                "its regexes cover every secret: it turns its rules off, refused (no waiver)",
-            )
+        for j, allow in enumerate(tables(rule.get("allowlists"))):
+            allowlist_off(allow, f"{where} allowlists[{j}]", report)
+        if isinstance(rule.get("allowlist"), dict):
+            allowlist_off(rule["allowlist"], f"{where} allowlist", report)
+
+
+def allowlist_off(allow: dict[str, Any], where: str, report: Report) -> None:
+    """One allowlist whose paths cover every file, or whose regexes cover every secret."""
+    paths = [str(p) for p in allow.get("paths") or []]
+    secrets = [str(r) for r in allow.get("regexes") or []]
+    if any(regex_covers_all(p, PROBE_PATHS) for p in paths):
+        report.add(
+            "gitleaks",
+            where,
+            "its paths cover every file: it turns its rules off, refused (no waiver)",
+        )
+    if any(regex_covers_all(r, GITLEAKS_PROBES) for r in secrets):
+        report.add(
+            "gitleaks",
+            where,
+            "its regexes cover every secret: it turns its rules off, refused (no waiver)",
+        )
 
 
 GITLEAKS_PROBES = (

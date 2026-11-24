@@ -581,6 +581,32 @@ class ReleaseTest(unittest.TestCase):
                 self.assertEqual(sync.tag_problems(self.kit), [], name)
                 fx.git(self.kit, "tag", "-d", name)
 
+    def test_a_branch_named_like_a_release_tag_is_the_one_deleted(self) -> None:
+        """A release tag is never deleted or moved: a branch that takes its name goes."""
+        for name in ("quality-v2.3.0", "v3.0.0"):
+            with self.subTest(name=name):
+                self.tag(name)
+                fx.git(self.kit, "update-ref", f"refs/remotes/origin/{name}", "HEAD")
+                lines = sync.tag_problems(self.kit)
+                self.assertEqual(len(lines), 1, lines)
+                self.assertIn(f"the branch {name} is named like the release tag", lines[0])
+                self.assertIn(f"git push origin :refs/heads/{name}", lines[0])
+                self.assertNotIn(":refs/tags/", lines[0])
+                fx.git(self.kit, "update-ref", "-d", f"refs/remotes/origin/{name}")
+                fx.git(self.kit, "tag", "-d", name)
+
+    def test_an_ssh_signature_signs_a_release_tag(self) -> None:
+        message = (
+            "Quality kit v3.0.0\n-----BEGIN SSH SIGNATURE-----\nU1NIU0lH\n"
+            "-----END SSH SIGNATURE-----"
+        )
+        fx.git(self.kit, "tag", "-a", "--cleanup=verbatim", "v3.0.0", "HEAD", "-m", message)
+        self.assertEqual(sync.tag_problems(self.kit), [])
+        fx.git(self.kit, "tag", "-d", "v3.0.0")
+        unsigned = message.replace("SSH SIGNATURE", "X509 SIGNATURE")
+        fx.git(self.kit, "tag", "-a", "--cleanup=verbatim", "v3.0.0", "HEAD", "-m", unsigned)
+        self.assertIn("an annotated tag with no signature", sync.tag_problems(self.kit)[0])
+
     def test_githubs_verdict_on_each_signature_is_asked_online(self) -> None:
         self.tag("quality-v2.3.0", kind="signed")
         self.tag(f"v{self.version}", kind="signed")

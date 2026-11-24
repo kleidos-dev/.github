@@ -17,8 +17,8 @@
 
 The checkout this script is in is the kit that is written. It prints what it
 did and what is left to do by hand, changes nothing outside REPO, and commits
-nothing. It goes with kit 3.1, when no repository holds copies any more, but
-for --configs.
+nothing. It goes in the first release after no repository holds copies any
+more, but for --configs.
 
 Python 3.14 or newer; PyYAML.
 """
