@@ -353,18 +353,21 @@ class PublicTest(ReportCase):
             f"https://raw.githubusercontent.com/{SECRET.upper()}/x",
         ):
             self.reader.statuses[url] = 404
-        self.reader.answers[f"repos/{CLA}/pulls?state=open&per_page=100"] = [
+        self.pull(CLA, f"Bump {SECRET}")
+        self.reader.answers[f"repos/{KIT}/tags?per_page=100"] = [{"name": "v3.0.0"}]
+        self.reader.answers[f"repos/{KIT}/branches?per_page=100"] = [{"name": "v3"}]
+        self.reader.unread = [f"{SECRET}: cannot be cloned"]
+
+    def pull(self, slug: str, title: str) -> None:
+        self.reader.answers[f"repos/{slug}/pulls?state=open&per_page=100"] = [
             {
                 "user": {"type": "Bot"},
                 "number": 3,
-                "title": f"Bump {SECRET}",
+                "title": title,
                 "created_at": "2026-11-23T00:00:00Z",
                 "head": {"sha": SHA},
             }
         ]
-        self.reader.answers[f"repos/{KIT}/tags?per_page=100"] = [{"name": "v3.0.0"}]
-        self.reader.answers[f"repos/{KIT}/branches?per_page=100"] = [{"name": "v3"}]
-        self.reader.unread = [f"{SECRET}: cannot be cloned"]
 
     def build(self, everything: bool) -> str:
         report = self.fresh(everything)
@@ -390,6 +393,40 @@ class PublicTest(ReportCase):
             self.assertIn(name, text)
         self.assertEqual(self.report.withheld, 0)
         self.assertNotIn("Only the local run", text)
+
+    def test_what_each_half_reads(self) -> None:
+        both = {"copy", "kit", "pin", "pull", "link", "leaving", "unread"}
+        local = {"setting", "worker", "schedule"}
+        head = "Kleidos ecosystem, 2026-11-24 12:00 UTC"
+        for everything, kinds, said in (
+            (False, both, f"# {head}, the public repositories\n"),
+            (True, both | local, f"# {head}, every repository; no public run yet\n"),
+        ):
+            self.plant()
+            self.reader.unread = ["x: y"]
+            own = self.reader.put(BOARDS, "x/k.py", "k")
+            self.reader.put(BRAND, "kicad/k.py", "k")
+            kit = {"kit": "kleidos-kicad/1", "source": BRAND, "files": {"k.py": own}}
+            self.record(BOARDS, "x/KIT.json", kit)
+            self.pull(BOARDS, "Bump x")
+            app = {"app_slug": "odd", "permissions": {"contents": "write"}}
+            path = "orgs/kleidos-dev/installations?per_page=100"
+            self.reader.answers[path] = {"installations": [app]}
+            report = self.fresh(everything)
+            text = eco.render(report, eco.build(report, lambda: ["a pin"]))
+            self.assertEqual({r.kind for r in report.rows}, kinds)
+            self.assertEqual("the App odd can write contents" in text, everything)
+            self.assertTrue(text.startswith(said), text[:120])
+            self.assertEqual(
+                "clone kleidos-dev/hidden" in self.reader.asked, everything, self.reader.asked
+            )
+
+    def test_the_contents_of_what_is_read_are_fetched_at_once(self) -> None:
+        for rel in (".github/x.yml", "README.md", "a/SOURCE.json", "a/b.txt", "pic.png", "i.svg"):
+            self.reader.put(CLA, rel, "{}")
+        list(eco.find_copies(self.fresh()))
+        fetched = next(a for a in self.reader.asked if a.startswith(f"fetch {CLA}"))
+        self.assertEqual(fetched, f"fetch {CLA} ['.github/x.yml', 'README.md', 'a/SOURCE.json']")
 
     def test_what_names_a_private_repository(self) -> None:
         declared = eco.load(self.path)
@@ -587,7 +624,7 @@ class LinkTest(ReportCase):
             "README.md",
             "".join(
                 f"[x](https://{n}.example/)"
-                for n in ("fine", "gone", "left", "down", "late", "shy")
+                for n in ("fine", "gone", "left", "down", "late", "shy", "odd", "bad")
             ),
         )
         self.reader.put(KIT, "profile/README.md", "[x](https://fine.example/)")
@@ -597,6 +634,8 @@ class LinkTest(ReportCase):
             ("left", 410),
             ("down", 503),
             ("late", 0),
+            ("odd", 499),
+            ("bad", 500),
             ("shy", 403),
         ):
             self.reader.statuses[f"https://{name}.example/"] = status
@@ -604,8 +643,8 @@ class LinkTest(ReportCase):
         eco.check_links(self.report)
         self.assertEqual(len(self.rows("red")), 2)
         self.assertIn(f"{BOARDS} README.md: https://gone.example/ answers 404", self.rows("red"))
-        self.assertEqual(len(self.rows("note")), 2)
-        self.assertEqual(self.rows("green"), ["2 of 6 links and banners answer"])
+        self.assertEqual(len(self.rows("note")), 3)
+        self.assertEqual(self.rows("green"), ["3 of 8 links and banners answer"])
         self.assertNotIn("https://secret.example/", self.reader.asked)
 
 
@@ -819,6 +858,7 @@ class CommandTest(ReportCase):
         self.assertEqual(written[0].read_text(encoding="utf-8") + "\n", text)
         self.assertEqual(summary.read_text(encoding="utf-8") + "\n", text)
         self.assertEqual(self.notified, [("Kleidos ecosystem", "1 red, 2 late")])
+        self.run_report("--out", str(out))
         self.run_report(rows=())
         self.assertEqual(self.notified, [])
 
@@ -831,6 +871,7 @@ class CommandTest(ReportCase):
                 eco.notify("Title", "Text")
             self.assertEqual(run.call_count, count, tool)
             if count:
+                self.assertEqual(run.call_args.kwargs, {"check": False})
                 self.assertEqual(run.call_args.args[0][0], tool)
                 self.assertEqual(run.call_args.args[0][-2:], ["Title", "Text"])
 
@@ -844,11 +885,12 @@ class CommandTest(ReportCase):
             os.environ.pop("GITHUB_ACTIONS", None)
             with (
                 mock.patch.object(kit_preview, "table", return_value=("T\n", 0)) as table,
-                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stdout(io.StringIO()) as out,
             ):
                 base = ["--declared", str(self.path), "preview", "--summary", str(summary)]
                 self.assertEqual(eco.main([*base, *argv]), 0)
             self.assertEqual(table.call_args.args[0], chosen)
+            self.assertEqual(out.getvalue(), "T\n\n")
         self.assertEqual(summary.read_text(encoding="utf-8"), "T\n" * 3)
         with (
             mock.patch.object(kit_preview, "table", return_value=("T\n", 1)),
@@ -978,6 +1020,7 @@ class ReaderTest(unittest.TestCase):
             with self.gh(0, "") as run:
                 eco.Reader(Path(self._tmp.name), ssh).fetch("o/r")
             self.assertIn(base, run.call_args.args[0])
+            self.assertIs(run.call_args.kwargs["check"], False)
             self.assertEqual(run.call_args.kwargs["env"]["GIT_TERMINAL_PROMPT"], "0")
 
     def test_the_web(self) -> None:

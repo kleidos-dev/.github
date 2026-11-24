@@ -63,7 +63,7 @@ KIT_WORKFLOW = re.compile(r"^\.github/workflows/(?P<file>[\w.-]+\.ya?ml)$")
 SELF_WORKFLOW = re.compile(r"^\./\.github/workflows/(?P<file>[\w.-]+\.ya?ml)$")
 KIT_HOOKS_URL = "https://github.com/kleidos-dev/.github"
 KIT_HOOKS = {"kleidos-kit": "base", "kleidos-commit-msg": "base", "kleidos-mypy": "python"}
-DENY_SECRET = "${{ secrets.KLEIDOS_DENY_EXTRA }}"  # noqa: S105  the name of a secret, not one
+DENY_INPUT = "${{ secrets.KLEIDOS_DENY_EXTRA }}"
 # What a caller of each kit workflow may grant it; anything else may only read the code.
 READ_CODE = {"contents": "read"}
 ALLOWED_PERMISSIONS = {
@@ -486,13 +486,13 @@ def check_grants(
                         f"grants {shown(extra)} to the kit's {name}: at most {shown(allowed)}",
                     )
             secrets = call.job.get("secrets")
-            if secrets is None or (name == QUICK and secrets == {"deny": DENY_SECRET}):
+            if secrets is None or (name == QUICK and secrets == {"deny": DENY_INPUT}):
                 continue
             report.add(
                 "workflows",
                 where,
                 f"passes secrets to the kit's {name}: only quick.yml takes one, as"
-                f" deny: {DENY_SECRET}, never inherit",
+                f" deny: {DENY_INPUT}, never inherit",
             )
 
 

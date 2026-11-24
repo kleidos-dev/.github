@@ -491,8 +491,8 @@ class GrantTest(CalledCase):
         )
 
     def test_secrets_are_passed_by_name_to_quick_alone(self) -> None:
-        deny = f"    secrets:\n      deny: {rf.DENY_SECRET}\n"
-        for where, secrets, problems in (
+        deny = f"    secrets:\n      deny: {rf.DENY_INPUT}\n"
+        for where, handed, problems in (
             ("quick", deny, 0),
             ("quick", "    secrets: inherit\n", 1),
             ("quick", "    secrets:\n      deny: ${{ secrets.OTHER }}\n", 1),
@@ -500,9 +500,9 @@ class GrantTest(CalledCase):
             ("check", deny, 1),
             ("check", "    secrets: inherit\n", 1),
         ):
-            with self.subTest(where=where, secrets=secrets):
+            with self.subTest(where=where, handed=handed):
                 original = self.text(GATE)
-                self.edit(GATE, f"{where}.yml@v3\n", f"{where}.yml@v3\n{secrets}")
+                self.edit(GATE, f"{where}.yml@v3\n", f"{where}.yml@v3\n{handed}")
                 found = [f for f in self.found() if "passes secrets" in f]
                 self.assertEqual(len(found), problems, found)
                 (self.root / GATE).write_text(original, encoding="utf-8")
