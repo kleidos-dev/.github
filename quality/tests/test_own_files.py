@@ -23,9 +23,9 @@ class WriteTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_it_says_whether_it_changed_the_file(self) -> None:
-        self.assertTrue(own_files.write(self.root, "a/b.txt", "é\n"))
+        self.assertIs(own_files.write(self.root, "a/b.txt", "é\n"), True)
         self.assertEqual((self.root / "a/b.txt").read_bytes(), "é\n".encode())
-        self.assertFalse(own_files.write(self.root, "a/b.txt", "é\n".encode()))
+        self.assertIs(own_files.write(self.root, "a/b.txt", "é\n".encode()), False)
         self.assertTrue(own_files.write(self.root, "a/b.txt", b"\r\n"))
         self.assertEqual((self.root / "a/b.txt").read_bytes(), b"\r\n")
 

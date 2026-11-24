@@ -178,6 +178,9 @@ class RefusalTest(unittest.TestCase):
             (changed("requirements.txt.sh"), "is no manifest"),
             (changed("xrequirements.txt"), "is no manifest"),
             (changed("pyproject.toml.x"), "is no manifest"),
+            (changed("pyprojectxtoml"), "is no manifest"),
+            (changed("requirementsxtxt"), "is no manifest"),
+            (changed("packagexjson", json_patch), "is no manifest"),
             (changed("xpyproject.toml"), "is no manifest"),
             (changed("xpackage.json", json_patch), "is no manifest"),
             (changed("package.json.js", json_patch), "is no manifest"),
@@ -225,6 +228,7 @@ class RefusalTest(unittest.TestCase):
             (["x==1.0"], ["-r evil.txt"], False),
             (["x==1.0"], ["-e ."], False),
             (["x==1.0 \\", one], ["x==1.1"], False),
+            ([f"x==1.0{one}"], [f"x==1.0{two}"], False),
             (["x==1.0 \\", one], ["x==1.1 \\", "    --hash=md5:" + "a" * 32], False),
             (["x==1.0 ; python_version < '3.9'"], ["x==1.1"], False),
             ([], ["y==1.0"], False),
@@ -255,12 +259,19 @@ class RefusalTest(unittest.TestCase):
                 f'      "integrity": "{of.get("hash", "sha512")}-{of.get("fill", "A") * 86}==",',
             ]
 
+        def sha(fill: str, more: str = "") -> str:
+            return f'"integrity": "sha512-{fill * 86}=="{more}'
+
         def ranges(value: str) -> list[str]:
             return [f'        "undici-types": "{value}"']
 
         for old, new, accepted in (
             (entry(), entry("1.1.0", fill="B"), True),
-            (entry(), entry("1.1.0-rc.1", fill="B"), True),
+            (entry(), entry("1.1.0-rc.1", fill="+"), True),
+            (entry(), entry("1.1.0-rc.1", fill="/"), True),
+            ([sha("A")], [sha("B")], True),
+            ([sha("A", ', "x": 1')], [sha("B", ', "x": 1')], False),
+            ([sha("A").replace("==", "=")], [sha("B").replace("==", "=")], False),
             (ranges(">=7.24.0 <7.24.7"), ranges("~8.9.0"), True),
             (ranges("^1.0.0"), ranges("^1.1.0 || >= 2"), True),
             (ranges("1.0.0 - 2.0.0"), ranges("*"), True),
@@ -323,6 +334,9 @@ class RefusalTest(unittest.TestCase):
             (update("major"), "holds a major"),
             (update("patch", "major"), "holds a major"),
             ("Bump x", f"commit {HEAD[:7]} does not say"),
+            (update("minor").replace("  update-type", "update-type"), "does not say"),
+            (update("minor").replace("- dependency", " - dependency"), "does not say"),
+            (update("minor").replace("semver-minor", "semver-minor x"), "does not say"),
             (update("minor") + "- dependency-name: y\n", "does not say"),
             (update("minor") + "  update-type: version-update:semver-minor\n", "does not say"),
             ("", "does not say"),

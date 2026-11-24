@@ -133,7 +133,7 @@ def line_refusal(patch: str, rules: tuple[re.Pattern[str], ...]) -> str | None:
                     kept.append(text)
             sides.append(kept)
         if sides[0] != sides[1]:
-            only = [line for line in sides[1] if line not in sides[0]] or sides[0] or sides[1]
+            only = [line for line in sides[1] if line not in sides[0]] or sides[0]
             return f"changes more than a version: {only[0].strip()[:80]}"
     return None
 

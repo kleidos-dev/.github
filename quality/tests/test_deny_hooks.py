@@ -106,6 +106,7 @@ class MainTest(unittest.TestCase):
                 status, said = self.run_main(*argv)
                 self.assertEqual(status, 2, argv)
                 self.assertIn(needle, said)
+            self.assertEqual(dh.CONFIG, ".pre-commit-config.yaml")
             fx.write(self.root, dh.CONFIG, "repos: [")
             self.assertEqual(self.run_main("own")[0], 2)
             (self.root / dh.CONFIG).unlink()
