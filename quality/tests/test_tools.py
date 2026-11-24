@@ -114,6 +114,9 @@ class NoWrapTest(unittest.TestCase):
             root = fx.init(Path(tmp) / "repo")
             outside = Path(tmp) / "outside.md"
             outside.write_text("One\nwrapped\n", encoding="utf-8")
+            sibling = Path(tmp) / "repo-evil" / "x.md"
+            sibling.parent.mkdir()
+            sibling.write_text("One\nwrapped\n", encoding="utf-8")
             (root / "sub").mkdir()
             (root / "link.md").symlink_to(outside)
             (root / "sub" / "inner.md").write_text("One\n", encoding="utf-8")
@@ -124,6 +127,8 @@ class NoWrapTest(unittest.TestCase):
                     [str(outside)],
                     ["link.md"],
                     ["sub/../../outside.md"],
+                    ["../repo-evil/x.md"],
+                    [str(sibling)],
                 ):
                     with contextlib.redirect_stdout(io.StringIO()) as out:
                         self.assertEqual(md_nowrap.main(argv), 1, argv)
@@ -134,7 +139,8 @@ class NoWrapTest(unittest.TestCase):
                     with contextlib.redirect_stdout(io.StringIO()) as out:
                         self.assertEqual(md_nowrap.main(argv), 0, argv)
                     self.assertEqual(out.getvalue(), "")
-            self.assertIsNone(md_nowrap.in_repository(root), "the repository is no file of it")
+                self.assertIsNone(md_nowrap.in_repository(root), "the repository is no file of it")
+                self.assertIsNone(md_nowrap.in_repository(Path(".")))
 
 
 #: The patterns the scans replaced (SonarCloud S8786: each could backtrack
@@ -290,7 +296,8 @@ class InstallTest(unittest.TestCase):
     def test_a_folder_out_of_the_allowed_ones_is_refused(self) -> None:
         """DEST_DIR resolves into the working, temporary or runner's directory, or is refused."""
         work, temp, runner, elsewhere = (self.tmp / n for n in ("work", "temp", "runner", "else"))
-        for folder in (work, temp, runner, elsewhere):
+        siblings = [self.tmp / n for n in ("work2", "temp-x", "runner2")]
+        for folder in (work, temp, runner, elsewhere, *siblings):
             folder.mkdir()
         (work / "out").symlink_to(elsewhere)
         with (
@@ -308,6 +315,8 @@ class InstallTest(unittest.TestCase):
                 work / ".." / "else",
                 Path("/"),
                 self.tmp,
+                *siblings,
+                Path("../work2/bin"),
             ):
                 with (
                     self.subTest(dest=dest),
@@ -316,7 +325,8 @@ class InstallTest(unittest.TestCase):
                 ):
                     fetch_tool.install("tool", dest, self.lock)
                 get.assert_not_called()
-            self.assertEqual(list(elsewhere.iterdir()), [])
+            for folder in (elsewhere, *siblings):
+                self.assertEqual(list(folder.iterdir()), [], folder)
             for dest, where in (
                 (Path("bin"), work / "bin"),
                 (Path("."), work),
@@ -335,6 +345,28 @@ class InstallTest(unittest.TestCase):
                 self.dest = runner
                 with self.assertRaisesRegex(ValueError, "refusing to install into"):
                     self.install()
+
+    def test_a_link_in_the_file_s_place_is_replaced_not_followed(self) -> None:
+        """DEST_DIR/NAME that is a link to a file elsewhere: the link goes, the file stays."""
+        victim = self.tmp / "victim"
+        victim.write_bytes(b"theirs")
+        self.dest.mkdir(parents=True)
+        (self.dest / "tool").symlink_to(victim)
+        target = self.install()
+        self.assertFalse(target.is_symlink())
+        self.assertEqual(target.read_bytes(), self.DATA)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(victim.read_bytes(), b"theirs")
+        self.assertEqual(victim.stat().st_mode & 0o111, 0)
+        self.assertEqual(sorted(p.name for p in self.dest.iterdir()), ["tool"])
+
+    def test_a_failed_rename_leaves_nothing_behind(self) -> None:
+        with (
+            mock.patch.object(os, "replace", side_effect=OSError("no")),
+            self.assertRaisesRegex(OSError, "no"),
+        ):
+            self.install()
+        self.assertEqual(list(self.dest.iterdir()), [])
 
     def main(self, *argv: str) -> tuple[int, str, str]:
         with (

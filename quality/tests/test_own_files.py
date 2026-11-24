@@ -66,7 +66,7 @@ class WriteTest(unittest.TestCase):
             # The header lines, into a file git lists, opened by the path git gave.
             "quality/spdx_headers.py": ["path."],
             # A binary in the folder the caller names, and a plant in a temporary one.
-            "quality/fetch_tool.py": ["target."],
+            "quality/fetch_tool.py": ["staged."],
             "quality/check_quality.py": ["(folder / name)", "args.json."],
             "quality/deny_hooks.py": ["config."],
             "quality/own_files.py": ["path."],

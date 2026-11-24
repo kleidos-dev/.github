@@ -807,6 +807,14 @@ class SonarTest(ReportCase):
             ],
         )
         self.assertEqual(self.rows("green", "sonar"), ["0 quality gates on main pass"])
+        odd: tuple[Any, ...] = (None, 5, "ERROR", {"status": "ERROR", "metricKey": "x"})
+        for listed in odd:
+            with self.subTest(conditions=listed):
+                self.gate({"projectStatus": {"status": "WARN", "conditions": listed}})
+                self.assertEqual(
+                    self.rows("red", "sonar"),
+                    [f"{KIT}: SonarCloud's quality gate on main is WARN"],
+                )
         self.gate({"projectStatus": {"status": "WARN"}})
         self.assertEqual(
             self.rows("red", "sonar"), [f"{KIT}: SonarCloud's quality gate on main is WARN"]
@@ -838,6 +846,26 @@ class SonarTest(ReportCase):
         )
         self.gate({"projectStatus": {"status": "OK"}})
         self.assertEqual(self.rows(kind="sonar"), ["1 quality gates on main pass"])
+
+    def test_a_private_project_is_not_read(self) -> None:
+        """Even in a run that reads everything, a private repository's gate is not asked for."""
+        self.path.write_text(
+            RAW.replace(
+                'slug = "kleidos-dev/hidden"\n', 'slug = "kleidos-dev/hidden"\nsonar = "k_hidden"\n'
+            ),
+            encoding="utf-8",
+        )
+        hidden = self.URL.replace("k_github", "k_hidden")
+        ok = json.dumps({"projectStatus": {"status": "OK"}}).encode()
+        self.reader.pages = {self.URL: ok, hidden: ok}
+        report = self.fresh(everything=True)
+        self.assertIn(SECRET, [r.slug for r in report.repositories])
+        with mock.patch.object(self.reader, "page", wraps=self.reader.page) as page:
+            eco.check_sonar(report)
+        page.assert_called_once_with(self.URL)
+        self.assertEqual(
+            [r.text for r in report.rows if r.kind == "sonar"], ["1 quality gates on main pass"]
+        )
 
 
 class SettingTest(ReportCase):

@@ -11,7 +11,9 @@ NAME is a tool tools.lock pins, and the file installed takes the lock's
 spelling of it, never the command line's. DEST_DIR must resolve, links
 followed, to the working directory, the temporary directory or the runner's
 (RUNNER_TEMP), or to a folder in one of them: a command line an agent or a
-script wrote cannot make the tool write anywhere else.
+script wrote cannot make the tool write anywhere else. The binary is written
+to a new file in that folder and renamed over DEST_DIR/NAME, so a link there
+is replaced, never followed.
 
 Standard library only (Python 3.15 or newer).
 """
@@ -114,8 +116,16 @@ def install(name: str, dest: Path, lock: Path = LOCK) -> Path:
     binary = extract(data, entry)
     os.makedirs(folder, exist_ok=True)
     target = Path(folder, file_name)
-    target.write_bytes(binary)
-    target.chmod(0o755)
+    handle, fresh = tempfile.mkstemp(dir=folder, prefix=f".{file_name}.")
+    os.close(handle)
+    staged = Path(fresh)
+    try:
+        staged.write_bytes(binary)
+        staged.chmod(0o755)
+        os.replace(staged, target)
+    except BaseException:
+        staged.unlink()
+        raise
     return target
 
 

@@ -644,10 +644,12 @@ def check_sonar(report: Report) -> None:
         try:
             status = json.loads(page or b"")["projectStatus"]
             verdict = str(status["status"])
-            conditions = status.get("conditions") or []
+            conditions = status.get("conditions")
         except ValueError, KeyError, TypeError:
             report.add("note", "sonar", f"{repo.slug}: SonarCloud gave no quality gate")
             continue
+        if not isinstance(conditions, list):
+            conditions = []
         if verdict == "OK":
             passed += 1
             continue
