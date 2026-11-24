@@ -83,6 +83,30 @@ class SubjectRulesTest(unittest.TestCase):
         ):
             self.assertIn("subject-imperative", errors(subject), subject)
 
+    def test_a_merge_subject_is_gits_own(self) -> None:
+        long = "x" * 80
+        whats = ["branch", "branches", "remote-tracking branch", "pull request", "tag", "commit"]
+        for what in whats:
+            self.assertEqual(rules(f"Merge {what} {long}."), [], what)
+            self.assertNotEqual(rules(f"Merge {what}{long}."), [], what)
+        self.assertNotEqual(rules(f"Re-Merge branch {long}."), [])
+        self.assertNotEqual(rules(f"Merge it {long}"), [])
+        self.assertEqual(rules(f'Revert "{long}"'), [])
+        self.assertNotEqual(rules(f'Re-Revert "{long}"'), [])
+
+    def test_what_each_rule_says_to_do(self) -> None:
+        hints = {
+            "subject-empty": "write a one-line summary of the change",
+            "subject-max-length": "shorten the subject to 72 columns or fewer",
+            "subject-soft-length": "aim for 50 columns or fewer",
+            "subject-trailing-period": "drop the final period",
+            "subject-imperative": "start with an imperative verb: Add, Fix, Update, Remove",
+            "body-leading-blank": "leave line 2 empty",
+            "body-max-length": "wrap the body at 72 columns",
+            "attribution": "remove the attribution line",
+        }
+        self.assertEqual(hints, ccm.HINTS)
+
     def test_every_verb_of_the_rule_in_every_form(self) -> None:
         bases = "add fix update remove change implement refactor move rename create delete"
         for base in [*bases.split(), "improve", "bump"]:
@@ -855,7 +879,14 @@ class RevisionTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "is not a revision range"):
                 ccm.read_range(rev)
         with mock.patch.object(ccm, "git", return_value="") as git:
-            for rev in ("main..HEAD", "a" * 40 + ".." + "b" * 40, "HEAD~3..", "^main", "v1.0-rc.1"):
+            for rev in (
+                "main..HEAD",
+                "a" * 40 + ".." + "b" * 40,
+                "HEAD~3..",
+                "^main",
+                "v1.0-rc.1",
+                "x",
+            ):
                 self.assertEqual(ccm.read_range(rev), [])
                 self.assertEqual(git.call_args.args[0][-2:], [rev, "--"])
 

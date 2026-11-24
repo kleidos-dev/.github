@@ -184,6 +184,8 @@ class RecordTest(CalledCase):
             ({"max_age_days": True}, "max_age_days must be a whole number"),
             ({"upstream": {**upstream, "repo": "other/kit"}}, "upstream.repo must be kleidos-dev"),
             ({"upstream": {**upstream, "repo": "nothing"}}, "must name the source repository"),
+            ({"upstream": {**upstream, "repo": "a/b/c"}}, "must name the source repository"),
+            ({"upstream": {**upstream, "repo": "/a/b"}}, "must name the source repository"),
             ({"upstream": {**upstream, "commit": "main"}}, "must be a 40-hex commit"),
             ({"upstream": []}, "must name the source repository"),
             ({"kit": {"profiles": ["python"]}}, "must be a list of profiles that includes base"),
@@ -329,7 +331,7 @@ class ReferenceTest(CalledCase):
             with self.subTest(path=path):
                 reference = f"kleidos-dev/.github/{path}@v3"
                 self.assertIn(needle, str(rf.reference_problem(reference, "v3", KIT)))
-        for path in (".github/workflows/quick.yml/x", ".github/workflows/quick.yml?", "x"):
+        for path in (".github/workflows/quick.yml/x", ".github/workflows/quick.yml?", "x", ""):
             reference = f"kleidos-dev/.github/{path}@v3"
             self.assertIn("is not a workflow", str(rf.reference_problem(reference, "v3", KIT)))
         for path in ("quick.yml", "check.yml", "sonar.yml", "reusable-python-tests.yml"):
@@ -367,6 +369,8 @@ class ReferenceTest(CalledCase):
             ("./.github/workflows/quick.yml/x", []),
             ("./.github/workflows/quickxyml", []),
             (".x/.github/workflows/quick.yml", []),
+            ("x/.github/workflows/quick.yml", []),
+            ("./xgithub/workflows/quick.yml", []),
             ("./.github/workflows/x/quick.yml", []),
         ):
             own = rf.Workflow("w", {}, {"a": {"uses": reference}}, {})
