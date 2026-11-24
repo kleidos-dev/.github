@@ -736,6 +736,7 @@ def plan(root: Path) -> Plan:
     tables = reuse_annotations(root)
     specific = [t for t in tables if not is_catch_all(t)]
     copies = kit_copies(root)
+    held = holds_kit_copies(root)
     full: list[str] = []
     presence: list[str] = []
     skipped: dict[str, str] = {}
@@ -746,7 +747,7 @@ def plan(root: Path) -> Plan:
             continue
         if "node_modules" in p.parts or LOCKFILES.match(p.name):
             continue
-        if rel in COMMIT_CHECK_COPIES and agents_copy(root, rel):
+        if held and rel in COMMIT_CHECK_COPIES and agents_copy(root, rel):
             skipped[rel] = "a held copy of the commit-message gate: checked where it comes from"
             continue
         if _style_by_name(rel) is None:

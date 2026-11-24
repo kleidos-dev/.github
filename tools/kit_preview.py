@@ -83,7 +83,7 @@ def examine(repo: Path, kit: cq.Kit) -> Found:
     commit = str(recorded.get("commit"))
     drift = sync.drift_status(commit, KIT)["behind"]
     # The 2.x form first: its copies brought to this kit, judged as 2.x was.
-    sync.write(repo, commit=commit, allow_dirty=True)
+    sync.write(repo, commit=commit)
     held = cq.run(repo, kit=kit).problems
     problems, _notes = spdx_headers.check_repo(repo)
     count = len(held) + len(problems)

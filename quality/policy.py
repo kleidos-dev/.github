@@ -61,6 +61,16 @@ def kit_check(opts: Options) -> list[str]:
     """check_quality.py, with this kit as the kit of the run form and of its home."""
     kit = cq.DirKit(KIT)
     report = cq.run(opts.repo, kit=kit)
+    repo = cq.Repo(opts.repo)
+    if repo.root != KIT and not repo.runs_the_kit():
+        # Which form a repository has is not its own choice here: kit 2.x
+        # copies are judged by the kit they were taken from.
+        report.add(
+            "record",
+            cq.SOURCE_JSON,
+            "is not a record of the run form: a repository that runs the kit holds none of it"
+            " (tools/kit_switch.py)",
+        )
     refused = cq.refused_skips(opts.lint_skip, cq.kit_block_hook_ids(kit) | set(run_form.KIT_HOOKS))
     for hook in refused:
         report.add("workflows", "skip", f"names the kit hook {hook}: only the repository's own")

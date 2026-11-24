@@ -234,6 +234,10 @@ class ConvertTest(unittest.TestCase):
         jobs = self.convert(self.old("lint", "lint"), ["base", "actions"])
         self.assertEqual(jobs["check"]["with"], {"types": False})
         self.assertNotIn("with", jobs["quick"])
+        # Nothing may skip, and the gate says so: nothing outside its step can.
+        step = jobs["done"]["steps"]
+        assert isinstance(step, list)
+        self.assertEqual(step[0]["env"]["MAY_SKIP"], "")
 
     def test_typescript(self) -> None:
         jobs = self.convert(

@@ -60,22 +60,23 @@ class EntryTest(unittest.TestCase):
                         set(job.get("with") or {}) - set(inputs.get("inputs") or {}), set()
                     )
 
-    def test_only_quick_takes_a_secret_and_hands_it_to_the_lint_job_alone(self) -> None:
+    def test_only_quick_takes_a_secret_and_hands_it_to_one_job(self) -> None:
         for name in rf.ENTRY:
             data = load(name)
             call = cq.workflow_triggers(data)["workflow_call"] or {}
             self.assertEqual(list(call.get("secrets") or {}), ["deny"] if name == rf.QUICK else [])
             handed = {j: job["secrets"] for j, job in data["jobs"].items() if "secrets" in job}
-            expected = {"lint": {"deny": "${{ secrets.deny }}"}} if name == rf.QUICK else {}
+            expected = {"deny": {"deny": "${{ secrets.deny }}"}} if name == rf.QUICK else {}
             self.assertEqual(handed, expected)
+        self.assertNotIn("secrets.", (WORKFLOWS / "reusable-lint.yml").read_text(encoding="utf-8"))
 
-    def test_the_secret_reaches_a_hook_of_the_caller_and_no_other_step(self) -> None:
+    def test_what_reads_the_deny_list_is_skipped_where_hooks_run(self) -> None:
         steps = load("reusable-lint.yml")["jobs"]["lint"]["steps"]
-        readers = [s["name"] for s in steps if "secrets." in json.dumps(s)]
-        self.assertEqual(readers, ["The repository's hooks that read the deny-list"])
         every = next(s for s in steps if s.get("name") == "Every pre-commit hook on every file")
         self.assertIn("${OWN_HOOKS}", every["run"])
         self.assertIn("inputs.deny-hooks", every["env"]["OWN_HOOKS"])
+        quick = load("quick.yml")["jobs"]
+        self.assertEqual(quick["lint"]["with"]["deny-hooks"], quick["deny"]["with"]["hooks"])
 
     def test_the_lint_job_skips_the_hooks_the_policy_checks_replace(self) -> None:
         steps = load("reusable-lint.yml")["jobs"]["lint"]["steps"]
@@ -111,6 +112,7 @@ class OwnKitTest(unittest.TestCase):
             [
                 "reusable-commit-check-comment.yml",
                 "reusable-commit-check.yml",
+                "reusable-deny.yml",
                 "reusable-lint.yml",
                 "reusable-mypy.yml",
                 "reusable-osv.yml",
@@ -183,27 +185,70 @@ class OwnKitTest(unittest.TestCase):
 class GateScriptTest(unittest.TestCase):
     """The gate's own script, run: what passes, and everything that must not."""
 
-    def gate(self, results: dict[str, str], may_skip: str | None = None) -> tuple[int, str]:
-        script = rf.model_gate(KIT)["steps"][0]["run"]
+    def gate(
+        self, results: dict[str, str], may_skip: str = "", outside: dict[str, str] | None = None
+    ) -> tuple[int, str]:
+        """The gate's step as GitHub starts it, with what the environment around it holds."""
+        step = rf.model_gate(KIT)["steps"][0]
         with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "script.sh"
+            script.write_text(step["run"], encoding="utf-8")
             env = {
+                "MAY_SKIP": may_skip,
                 "PATH": os.environ["PATH"],
                 "GITHUB_STEP_SUMMARY": str(Path(tmp) / "summary"),
                 "NEEDS": json.dumps({k: {"result": v, "outputs": {}} for k, v in results.items()}),
             }
-            if may_skip is not None:
-                env["MAY_SKIP"] = may_skip
+            # GitHub gives a step its own env over everything around it.
+            command = [word.replace("{0}", str(script)) for word in step["shell"].split()]
             done = subprocess.run(
-                ["bash", "-c", script], capture_output=True, text=True, check=False, env=env
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**(outside or {}), **env, "PATH": (outside or env).get("PATH", env["PATH"])},
             )
             return done.returncode, done.stdout + done.stderr
+
+    def test_nothing_around_it_steers_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            planted = Path(tmp) / "planted"
+            planted.write_text("exit 0\n", encoding="utf-8")
+            fakes = Path(tmp) / "bin"
+            fakes.mkdir()
+            for name in ("jq", "tee", "echo"):
+                fake = fakes / name
+                fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                fake.chmod(0o755)
+            rules = Path(tmp) / "home"
+            rules.mkdir()
+            (rules / ".jq").write_text("def all(f; g): true; def length: 1;\n", encoding="utf-8")
+            for outside in (
+                {"BASH_ENV": str(planted)},
+                {"ENV": str(planted)},
+                {"BASH_ENV": f"$(echo {planted})"},
+                {"BASH_FUNC_jq%%": "() { return 0; }"},
+                {"BASH_FUNC_echo%%": "() { return 0; }"},
+                {"SHELLOPTS": "noexec"},
+                {"BASHOPTS": "extdebug"},
+                {"PATH": str(fakes)},
+                {"HOME": str(rules)},
+                {"MAY_SKIP": "a"},
+                {"NEEDS": "{}"},
+            ):
+                for result in ("failure", "skipped", "cancelled"):
+                    with self.subTest(outside=outside, result=result):
+                        status, said = self.gate({"a": result}, "", outside)
+                        self.assertNotEqual(status, 0, said)
+                        self.assertIn(f"a: {result}", said)
+                self.assertEqual(self.gate({"a": "success"}, "", outside)[0], 0, outside)
 
     def test_every_combination_of_two_results(self) -> None:
         kinds = ("success", "failure", "cancelled", "skipped")
         for one, two in itertools.product(kinds, kinds):
-            for may in (None, "", "b", "a b", "ab", "c"):
+            for may in ("", "b", "a b", "ab", "c"):
                 with self.subTest(a=one, b=two, may=may):
-                    allowed = (may or "").split()
+                    allowed = may.split()
                     fine = all(
                         r == "success" or (r == "skipped" and job in allowed)
                         for job, r in (("a", one), ("b", two))

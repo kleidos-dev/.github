@@ -41,6 +41,7 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import check_quality as cq
+import deny_hooks
 import yaml
 
 if TYPE_CHECKING:
@@ -55,6 +56,12 @@ COMMENT = "reusable-commit-check-comment.yml"
 GATE = "✅ Check"
 GATE_KEYS = {"name", "needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"}
 GATE_STEP_KEYS = {"name", "shell", "env", "run"}
+GATE_ENV = {"NEEDS", "MAY_SKIP"}
+# What a caller may not compute: an input that decides what a kit workflow checks.
+LITERAL_INPUTS = {
+    QUICK: ("skip", "deny-hooks"),
+    CHECK: ("types", "node-directory", "node-projects"),
+}
 # The one reference of our own that is a name: the branch the release moves.
 KIT_REF = re.compile(
     r"kleidos-dev/\.github/(?P<path>[^\s'\"@#]*)@(?P<ref>[^\s'\"#]+)", re.IGNORECASE
@@ -367,15 +374,29 @@ def check_references(
             if problem:
                 report.add("workflows", f"{workflow.rel} jobs.{job_id}", problem)
     for rel in repo.files:
-        if PurePosixPath(rel).name not in ("action.yml", "action.yaml"):
-            continue
-        for num, line in enumerate(repo.text(rel).splitlines(), 1):
-            if KIT_REF.search(line) and not line.lstrip().startswith("#"):
+        if PurePosixPath(rel).name in ("action.yml", "action.yaml"):
+            called = [ref for ref in action_uses(repo.text(rel)) if KIT_REF.search(ref)]
+            for reference in called:
                 report.add(
                     "workflows",
-                    f"{rel}:{num}",
-                    "an action cannot call the kit: a job of a workflow does",
+                    rel,
+                    f"calls {reference}: an action cannot call the kit, a job of a workflow does",
                 )
+
+
+def action_uses(text: str) -> list[str]:
+    """The `uses:` of a composite action's steps, parsed so no spelling hides one."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return []
+    runs = data.get("runs") if isinstance(data, dict) else None
+    steps = runs.get("steps") if isinstance(runs, dict) else None
+    return [
+        str(step["uses"])
+        for step in (steps if isinstance(steps, list) else ())
+        if isinstance(step, dict) and "uses" in step
+    ]
 
 
 def callers(found: list[Workflow], self_ref: bool) -> dict[str, list[cq.Caller]]:
@@ -426,16 +447,20 @@ def check_callers(
                     f"{call.workflow} jobs.{call.job_id}",
                     f"calls {name} but {gap}, so the check may never run (no waiver)",
                 )
+    for name in ENTRY:
+        for call in by_file.get(name, []):
+            check_literal(name, call, report)
     for call in by_file.get(CHECK, []):
         where = f"{call.workflow} jobs.{call.job_id}"
         given = call.job.get("with")
         given = given if isinstance(given, dict) else {}
-        types = given.get("types", True)
-        if "python" in profiles and (types is False or str(types).lower() == "false"):
-            report.add("workflows", where, "types: false, but the tree holds Python (no waiver)")
+        if "python" in profiles and given.get("types", True) is not True:
+            report.add(
+                "workflows", where, "types is not true, but the tree holds Python (no waiver)"
+            )
         if "ts" in profiles and not str(given.get("node-directory") or "").strip():
             report.add("workflows", where, "node-directory is empty, but the tree holds TypeScript")
-    local = local_hooks(repo)
+    local = own_hooks(repo)
     for call in by_file.get(QUICK, []):
         where = f"{call.workflow} jobs.{call.job_id}"
         given = call.job.get("with")
@@ -447,22 +472,33 @@ def check_callers(
                 f"skip names the kit hook {hook}: only the repository's own hooks may be skipped",
             )
         for hook in str(given.get("deny-hooks", "")).replace(",", " ").split():
-            if hook not in local:
+            why = deny_hooks.refusal(hook, local)
+            if why:
                 report.add(
                     "workflows",
                     where,
-                    f"deny-hooks names {hook}, which is not a local hook: no third party's code"
-                    " reads the deny-list",
+                    f"deny-hooks: {why} (no third party's code runs beside the deny-list)",
                 )
 
 
-def local_hooks(repo: cq.Repo) -> set[str]:
-    """The ids and aliases of a repository's own hooks."""
+def check_literal(name: str, call: cq.Caller, report: cq.Report) -> None:
+    """A kit caller is called once, as it is written: nothing of it is computed or forgiven."""
+    where = f"{call.workflow} jobs.{call.job_id}"
+    for key in ("strategy", "continue-on-error"):
+        if key in call.job:
+            report.add("workflows", where, f"sets {key}: the kit's {name} is called as it is")
+    given = call.job.get("with")
+    for key in LITERAL_INPUTS.get(name, ()):
+        if isinstance(given, dict) and "${{" in str(given.get(key, "")):
+            report.add("workflows", where, f"{key} is an expression: write its value")
+
+
+def own_hooks(repo: cq.Repo) -> dict[str, dict[str, Any]]:
+    """The hooks a repository itself defines, by id."""
     try:
-        have = hook_lists(repo.text(".pre-commit-config.yaml"))
+        return deny_hooks.local_hooks(repo.text(".pre-commit-config.yaml"))
     except OSError, yaml.YAMLError:
-        return set()
-    return {hook_key(h["hook"]) for h in have if h["url"] == "local"}
+        return {}
 
 
 def check_grants(
@@ -547,7 +583,12 @@ def gate_job(workflow: Workflow) -> str | None:
     return next((i for i, job in workflow.jobs.items() if job.get("name") == GATE), None)
 
 
-def check_gate(found: list[Workflow], kit: cq.Kit, report: cq.Report) -> None:
+def check_gate(
+    found: list[Workflow],
+    by_file: dict[str, list[cq.Caller]],
+    kit: cq.Kit,
+    report: cq.Report,
+) -> None:
     """One job named "✅ Check" needs every other job of its file and fails with any of them.
 
     It is the one required check of the repository, and GitHub counts a
@@ -574,7 +615,19 @@ def check_gate(found: list[Workflow], kit: cq.Kit, report: cq.Report) -> None:
     workflow, gate_id = gates[0]
     gate = workflow.jobs[gate_id]
     where = f"{workflow.rel} jobs.{gate_id}"
-    for problem in [*gate_shape(gate, model_gate(kit)), *gate_needs(workflow, gate_id)]:
+    problems = [*gate_shape(gate, model_gate(kit)), *gate_needs(workflow, gate_id)]
+    problems += [
+        f"{workflow.rel} sets {key} for every job, the gate's script included"
+        for key in ("env", "defaults")
+        if key in workflow.data
+    ]
+    problems += [
+        f"{name} is called in {call.workflow}, not in the gate's file: the gate needs every call"
+        for name in ENTRY
+        for call in by_file.get(name, [])
+        if call.workflow != workflow.rel
+    ]
+    for problem in problems:
         report.add("gate", where, problem)
     for event in cq.DEFAULT_TRIGGERS:
         gap = (
@@ -603,15 +656,17 @@ def gate_shape(gate: dict[str, Any], model: dict[str, Any]) -> Iterator[str]:
         return
     wanted = model["steps"][0]
     if step.keys() - GATE_STEP_KEYS or step.get("shell") != wanted["shell"]:
-        yield "its step sets name, shell: bash, env and run, as the kit's"
+        yield "its step sets name, shell, env and run, as the kit's"
     if str(step.get("run", "")).strip() != wanted["run"].strip():
         yield "its step must run the kit's script, unchanged (quality/templates/run/ci.yml)"
     env = step.get("env")
     env = env if isinstance(env, dict) else {}
     if cq.normalized_if(env.get("NEEDS", "")) != "toJSON(needs)":
         yield "its step reads NEEDS: ${{ toJSON(needs) }}"
-    if env.keys() - {"NEEDS", "MAY_SKIP"}:
-        yield "its step's env holds NEEDS and MAY_SKIP only"
+    if env.keys() != GATE_ENV:
+        yield "its step's env holds NEEDS and MAY_SKIP, both and nothing else"
+    if "${{" in str(env.get("MAY_SKIP", "")):
+        yield "MAY_SKIP is an expression: name the jobs"
 
 
 def gate_needs(workflow: Workflow, gate_id: str) -> Iterator[str]:
@@ -782,7 +837,7 @@ def check_workflows(
     check_callers(repo, by_file, profiles, report)
     check_grants(found, by_file, report)
     check_forgery(found, report)
-    check_gate(found, kit, report)
+    check_gate(found, by_file, kit, report)
     for call in by_file.get(COMMENT, []):
         follows = call.triggers.get("workflow_run")
         named = follows.get("workflows") if isinstance(follows, dict) else None

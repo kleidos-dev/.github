@@ -376,9 +376,7 @@ def gate_text(kit: cq.Kit, ids: list[str], skippable: list[str]) -> str:
     model = kit.read(run_form.MODEL_CI).decode("utf-8")
     gate = model[model.index("  done:\n") :]
     gate = re.sub(r"needs: \[[^\]]*\]", f"needs: [{', '.join(ids)}]", gate, count=1)
-    if skippable:
-        return re.sub(r"MAY_SKIP: .*", f"MAY_SKIP: {' '.join(skippable)}", gate, count=1)
-    return re.sub(r" *MAY_SKIP: .*\n", "", gate, count=1)
+    return re.sub(r"MAY_SKIP: .*", f"MAY_SKIP: {' '.join(skippable) or '""'}", gate, count=1)
 
 
 def gate_workflow(repo: Path) -> Path | None:

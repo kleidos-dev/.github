@@ -68,14 +68,17 @@ jobs:
     permissions: {}
     steps:
       - name: Every job of this file succeeded
-        shell: bash
+        # -p: no BASH_ENV, no function and no option from the environment; and
+        # both variables are always set here, so nothing outside the step steers it.
+        shell: /bin/bash --noprofile --norc -p -e -o pipefail {0}
         env:
           NEEDS: ${{ toJSON(needs) }}
           MAY_SKIP: sonar
         run: |
           set -euo pipefail
+          export PATH=/usr/bin:/bin HOME=/nonexistent
           echo "${NEEDS}" | jq -r 'to_entries[] | "\(.key): \(.value.result)"' | tee -a "${GITHUB_STEP_SUMMARY}"
-          echo "${NEEDS}" | jq -e --arg may " ${MAY_SKIP:-} " '
+          echo "${NEEDS}" | jq -e --arg may " ${MAY_SKIP} " '
             length > 0 and all(to_entries[];
               .value.result == "success"
               or (.value.result == "skipped" and (.key as $job | $may | contains(" \($job) "))))' > /dev/null || {

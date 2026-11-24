@@ -200,10 +200,3 @@ target = ".github/workflows/commit-check-comment.yml"
 profile = "base"
 consumer_only = true
 replace_if = "Vendored from kleidos-dev/agents"
-
-# --- The repositories that adopt the kit (the impact preview's list) --------
-
-[consumers]
-public = ["kleidos-dev/boards", "kleidos-dev/brand", "kleidos-dev/social", "kleidos-dev/cla"]
-private = ["kleidos-dev/qa", "kleidos-dev/meter", "kleidos-dev/videos", "kleidos-dev/agents", "kleidos-dev/posts"]
-planned = ["jmrplens/kleidos"]

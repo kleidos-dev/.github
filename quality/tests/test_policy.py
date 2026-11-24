@@ -67,6 +67,26 @@ class PolicyTest(unittest.TestCase):
         self.assertNotIn("the hooks here are at", said)
         self.assertEqual(self.run_policy("a-file-pre-commit-names.py")[0], 0)
 
+    def test_a_repository_does_not_choose_its_form(self) -> None:
+        whole = (self.root / cq.SOURCE_JSON).read_text(encoding="utf-8")
+        bare = whole.replace('"schema"', '"scheme"')
+        own = fx.header() + "# no kit at all\n"
+        for rel, text in (
+            (cq.SOURCE_JSON, bare),
+            (cq.SOURCE_JSON, '{"commit": "self", "version": "3.0.0", "profiles": ["base"]}'),
+            (cq.SOURCE_JSON, "[]"),
+            (cq.SOURCE_JSON, "{"),
+        ):
+            with self.planted(rel, text), self.planted("quality/kit.toml", own):
+                status, said = self.run_policy("--only", "kit")
+            self.assertEqual(status, 1, said)
+            self.assertIn("is not a record of the run form", said)
+
+    def test_the_kits_home_is_judged_as_the_home(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            status = policy.main(["--repo", str(fx.CENTRAL), "--only", "kit"])
+        self.assertEqual(status, 0, out.getvalue())
+
     def test_each_check_finds_its_own(self) -> None:
         for rel, text, check in (
             (".github/quality/x.py", fx.header(), "kit"),
@@ -113,10 +133,12 @@ class PolicyTest(unittest.TestCase):
     def test_the_global_exclude_counts_for_markdown(self) -> None:
         config = (self.root / ".pre-commit-config.yaml").read_text(encoding="utf-8")
         excluded = config.replace("repos:\n", "exclude: '^legal/'\nrepos:\n", 1)
+        anywhere = config.replace("repos:\n", "exclude: 'egal/te'\nrepos:\n", 1)
         with self.planted("legal/text.md", fx.md_header() + "One\nline.\n"):
             self.assertEqual(self.run_policy("--only", "md-nowrap")[0], 1)
-            with self.planted(".pre-commit-config.yaml", excluded):
-                self.assertEqual(self.run_policy("--only", "md-nowrap")[0], 0)
+            for text in (excluded, anywhere):
+                with self.planted(".pre-commit-config.yaml", text):
+                    self.assertEqual(self.run_policy("--only", "md-nowrap")[0], 0)
 
     def test_a_file_that_is_not_utf8_is_read_all_the_same(self) -> None:
         path = self.root / "latin.md"
@@ -148,6 +170,11 @@ class PolicyTest(unittest.TestCase):
             status, said = self.run_policy("--only", "agent-docs")
         self.assertEqual(status, 0, said)
         self.assertIn("warning: AGENTS.md", said)
+        with self.planted("GEMINI.md", fx.md_header() + "x\n"):
+            fx.git(self.root, "add", "-N", "GEMINI.md")
+            _status, said = self.run_policy("--only", "agent-docs")
+            fx.git(self.root, "reset", "-q", "GEMINI.md")
+        self.assertNotIn("warning:", said)
 
     def test_a_waiver_is_said(self) -> None:
         waiver = (self.root / cq.WAIVERS).read_text(encoding="utf-8") + (

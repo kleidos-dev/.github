@@ -620,6 +620,8 @@ class Repo:
         """
         out = {p for p in KIT_DIR_OWN if p in self.files}
         out.update(p for p in self.recorded_copies() if is_kit_target(p))
+        if self.runs_the_kit():
+            return out  # no kit code is held: every other file is the repository's own
         out.update(p for p in COMMIT_CHECK_COPIES if p in self.files and self._agents_copy(p))
         kit_toml = self.root / "quality" / "kit.toml"
         if kit_toml.is_file():
@@ -633,6 +635,14 @@ class Repo:
             out.add(COMMIT_CHECK_SOURCE)
             out.update(p for p in self.commit_check_paths() if p in COMMIT_CHECK_COPIES)
         return out
+
+    def runs_the_kit(self) -> bool:
+        """Whether the record is the run form's (it has a schema)."""
+        try:
+            data = json.loads((self.root / SOURCE_JSON).read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return False
+        return isinstance(data, dict) and "schema" in data
 
     def recorded_copies(self) -> list[str]:
         """The copy paths .github/quality/SOURCE.json records (empty when unreadable)."""
@@ -679,7 +689,7 @@ class Repo:
         ]
 
     def is_central(self) -> bool:
-        return (self.root / "quality" / "kit.toml").is_file()
+        return (self.root / "quality" / "kit.toml").is_file() and not self.runs_the_kit()
 
 
 def detect_profiles(repo: Repo) -> set[str]:
@@ -716,6 +726,9 @@ def load_source(repo: Repo, report: Report) -> dict[str, Any] | None:
         data: dict[str, Any] = json.loads(repo.text(SOURCE_JSON))
     except ValueError as exc:
         report.add("source", SOURCE_JSON, f"not JSON: {exc}")
+        return None
+    if not isinstance(data, dict):
+        report.add("source", SOURCE_JSON, "is not a record")
         return None
     commit = data.get("commit")
     if commit == "self":
@@ -1747,7 +1760,12 @@ def check_ci(repo: Repo, report: Report, kit_ref: str | None = None) -> None:
                 report.add("ci", where, "the job's name starts with an emoji (the CI convention)")
             if "uses" not in job and "timeout-minutes" not in job:
                 report.add("ci", where, "needs a timeout-minutes")
-            if job.get("continue-on-error") in (True, "true"):
+            forgiven = job.get("continue-on-error", False)
+            if "${{" in str(forgiven):
+                report.add(
+                    "ci", where, "continue-on-error is an expression: write true, with its waiver"
+                )
+            elif forgiven is not False:
                 report.weaken("ci", f"continue-on-error:{rel}:{job_id}", rel)
         for num, line in enumerate(text.splitlines(), 1):
             m = USES_LINE.match(line)
@@ -2953,11 +2971,10 @@ def run(
 
 def record_of(repo: Repo) -> dict[str, Any] | None:
     """The run form's record (.github/quality/SOURCE.json by its schema), or None."""
-    try:
-        data = json.loads(repo.text(SOURCE_JSON))
-    except OSError, ValueError:
+    if not repo.runs_the_kit():
         return None
-    return data if isinstance(data, dict) and "schema" in data else None
+    data: dict[str, Any] = json.loads(repo.text(SOURCE_JSON))
+    return data
 
 
 def own_kit() -> Kit:

@@ -9,8 +9,10 @@ import json
 import shutil
 import tempfile
 import unittest
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import kit_fixtures as fx
 import yaml
@@ -327,19 +329,45 @@ class ReferenceTest(CalledCase):
             with self.subTest(path=path):
                 reference = f"kleidos-dev/.github/{path}@v3"
                 self.assertIn(needle, str(rf.reference_problem(reference, "v3", KIT)))
+        for path in (".github/workflows/quick.yml/x", ".github/workflows/quick.yml?", "x"):
+            reference = f"kleidos-dev/.github/{path}@v3"
+            self.assertIn("is not a workflow", str(rf.reference_problem(reference, "v3", KIT)))
         for path in ("quick.yml", "check.yml", "sonar.yml", "reusable-python-tests.yml"):
             reference = f"kleidos-dev/.github/.github/workflows/{path}@v3"
             self.assertIsNone(rf.reference_problem(reference, "v3", KIT))
         self.assertIsNone(rf.reference_problem(f"actions/checkout@{SHA}", "v3", KIT))
         self.assertEqual(rf.branch_of("4.12.0"), "v4")
 
+    def test_only_a_whole_reference_is_a_call(self) -> None:
+        quick = "kleidos-dev/.github/.github/workflows/quick.yml@v3"
+        for reference, files in (
+            (quick, ["quick.yml"]),
+            (f"x/{quick}", []),
+            (f"{quick} x", []),
+            (quick.replace("quick.yml", "quick.yml/x"), []),
+            ("./.github/workflows/quick.yml", []),
+        ):
+            jobs = {"a": {"uses": reference}}
+            found = rf.callers([rf.Workflow("w", {}, jobs, {})], self_ref=False)
+            self.assertEqual(list(found), files, reference)
+        own = rf.Workflow("w", {}, {"a": {"uses": "./.github/workflows/quick.yml"}}, {})
+        self.assertEqual(list(rf.callers([own], self_ref=True)), ["quick.yml"])
+
     def test_a_local_action_cannot_call_the_kit(self) -> None:
         body = fx.header() + "runs:\n  using: composite\n  steps:\n"
         call = "    - uses: kleidos-dev/.github/actions/x@v3\n"
         fx.write(self.root, "actions/a/action.yml", body + "    # kleidos-dev/.github/x@v3\n")
         self.assertEqual(self.found(), [])
-        fx.write(self.root, "actions/a/action.yaml", body + call)
-        self.assert_only("actions/a/action.yaml:6: [workflows] an action cannot call the kit")
+        for spelled in (
+            call,
+            "    - uses: >-\n        kleidos-dev/.github/actions/x@main\n",
+            '    - uses: "kleidos-dev/.github/quality\\x40main"\n',
+            "    - run: 'true'\n    - uses: Kleidos-Dev/.github/x@v3\n",
+        ):
+            fx.write(self.root, "actions/a/action.yaml", body + spelled)
+            self.assert_only("actions/a/action.yaml: [workflows] calls ")
+        for odd in ("[]", "runs: 3", "runs:\n  steps: 3", "runs: [", "runs:\n  steps: [3, {a: b}]"):
+            self.assertEqual(rf.action_uses(odd), [], odd)
 
     def test_the_kits_name_is_no_third_party_action(self) -> None:
         self.edit(GATE, "quick.yml@v3", "quick.yml@v3x")
@@ -375,11 +403,25 @@ class CallerTest(CalledCase):
                 self.assertTrue(any(needle in f for f in found), found)
                 (self.root / GATE).write_text(original, encoding="utf-8")
 
+    def test_one_caller_that_always_runs_is_enough(self) -> None:
+        again = (
+            '  again:\n    name: "🧪 Again"\n    needs: quick\n    if: github.x\n'
+            "    uses: kleidos-dev/.github/.github/workflows/check.yml@v3\n"
+            "    permissions:\n      contents: read\n"
+        )
+        self.edit(GATE, "  done:\n", again + "  done:\n")
+        self.edit(GATE, "needs: [quick, check, sonar]", "needs: [quick, check, sonar, again]")
+        self.assertEqual(self.found(), [])
+        self.edit(
+            GATE, "    needs: quick\n    uses", "    needs: quick\n    if: github.x\n    uses"
+        )
+        self.assertEqual(len([f for f in self.found() if "may never run" in f]), 2)
+
     def test_types_and_typescript_follow_the_tree(self) -> None:
         self.edit(GATE, "    with:\n", "    with:\n      types: false\n")
-        self.assert_only("types: false, but the tree holds Python")
+        self.assert_only("types is not true, but the tree holds Python")
         self.edit(GATE, "types: false", 'types: "False"')
-        self.assert_only("types: false, but the tree holds Python")
+        self.assert_only("types is not true, but the tree holds Python")
         self.edit(GATE, 'types: "False"', "types: true")
         self.assertEqual(self.found(), [])
 
@@ -408,8 +450,8 @@ class CallerTest(CalledCase):
         call = "quick.yml@v3\n"
         self.edit(GATE, call, f"{call}    with:\n      deny-hooks: typos, own\n")
         self.assert_only(
-            "deny-hooks names typos, which is not a local hook",
-            "deny-hooks names own, which is not a local hook",
+            "deny-hooks: typos is not a local hook",
+            "deny-hooks: own is not a local hook",
         )
         self.edit(
             ".pre-commit-config.yaml",
@@ -417,7 +459,20 @@ class CallerTest(CalledCase):
             "repos:\n  - repo: local\n    hooks:\n      - id: own\n        name: own\n"
             "        entry: 'true'\n        language: system\n",
         )
-        self.assert_only("deny-hooks names typos, which is not a local hook")
+        self.assert_only("deny-hooks: typos is not a local hook")
+        self.edit(GATE, "typos, own", "own")
+        self.assertEqual(self.found(), [])
+        for old, new, needle in (
+            ("language: system\n", "language: python\n", "it may install something"),
+            (
+                "language: python\n",
+                "language: system\n        stages: [manual]\n",
+                "pre-commit stage",
+            ),
+        ):
+            self.edit(".pre-commit-config.yaml", old, new)
+            self.assert_only("deny-hooks: own ")
+            self.assertIn(needle, self.found()[0])
 
     def test_the_comment_follows_the_gate(self) -> None:
         self.edit(COMMENT, "workflows: [CI]", "workflows: [Commit check]")
@@ -473,6 +528,25 @@ class GrantTest(CalledCase):
                 (self.root / GATE).write_text(original, encoding="utf-8")
         self.edit(GATE, call, "quick.yml@v3\n    permissions:\n      issues: none\n")
         self.assertEqual(self.found(), [])
+
+    def test_what_each_workflow_may_be_granted(self) -> None:
+        read = {"contents": "read"}
+        self.assertEqual(rf.READ_CODE, read)
+        self.assertEqual(
+            rf.ALLOWED_PERMISSIONS,
+            {
+                "sonar.yml": {**read, "id-token": "write"},
+                "reusable-sonarcloud.yml": {**read, "id-token": "write"},
+                rf.COMMENT: {**read, "actions": "read", "pull-requests": "write"},
+            },
+        )
+
+    def test_the_comment_callers_grants_are_bounded(self) -> None:
+        for grant in ("contents: write", "actions: write", "id-token: write"):
+            original = self.text(COMMENT)
+            self.edit(COMMENT, "      actions: read\n", f"      {grant}\n")
+            self.assert_only(f"grants {grant} to the kit's {rf.COMMENT}")
+            (self.root / COMMENT).write_text(original, encoding="utf-8")
 
     def test_permissions_are_stated(self) -> None:
         for stated in ("read-all", "write-all"):
@@ -569,16 +643,44 @@ class GateTest(CalledCase):
             (self.step({"continue-on-error": True}), "its step sets name, shell"),
             (self.step({"if": "false"}), "its step sets name, shell"),
             (self.step({"shell": "true {0}"}), "its step sets name, shell"),
+            (self.step({"shell": "bash"}), "its step sets name, shell"),
+            (self.gate({"env": {"MAY_SKIP": "a"}}), "sets env"),
+            (self.gate({"defaults": {"run": {"shell": "x {0}"}}}), "sets defaults"),
+            (self.gate({"container": "x"}), "sets container"),
+            (self.gate({"services": {}}), "sets services"),
+            (self.gate({"environment": "x"}), "sets environment"),
+            (self.gate({"concurrency": "x"}), "sets concurrency"),
+            (self.gate({"outputs": {}}), "sets outputs"),
+            (self.step({"working-directory": "x"}), "its step sets name, shell"),
+            (self.script("exit 0\n", ""), "must run the kit's script"),
+            (self.script("", "\nexit 0\n"), "must run the kit's script"),
+            (self.script("# a comment\n", ""), "must run the kit's script"),
+            (self.env(NEEDS="${{ toJSON(needs) }} "), ""),
+            (self.env(NEEDS="${{ toJSON(needs) || toJSON(needs) }}"), "reads NEEDS"),
+            (self.env(NEEDS="x ${{ toJSON(needs) }}"), "reads NEEDS"),
+            (self.env(NEEDS="toJSON(needs.a)"), "reads NEEDS"),
+            (self.env(MAY_SKIP="${{ vars.SKIP }}"), "MAY_SKIP is an expression"),
+            (self.env({"MAY_SKIP"}), "both and nothing else"),
+            (self.env(BASH_ENV="x"), "both and nothing else"),
+            (self.env(PATH="x"), "both and nothing else"),
             (self.step({}, drop=("shell",)), "its step sets name, shell"),
             (self.step({"env": {"NEEDS": "{}"}}), "reads NEEDS"),
             (self.step({}, drop=("env",)), "reads NEEDS"),
-            (
-                self.step({"env": {"NEEDS": "${{ toJSON(needs) }}", "BASH_ENV": "x"}}),
-                "holds NEEDS and MAY_SKIP only",
-            ),
         ):
             with self.subTest(needle=needle):
-                self.assertTrue(any(needle in p for p in problems), problems)
+                if needle:
+                    self.assertTrue(any(needle in p for p in problems), problems)
+                else:
+                    self.assertEqual(problems, [])
+
+    def script(self, before: str, after: str) -> list[str]:
+        """The kit's script with something before it, or after it."""
+        run = rf.model_gate(KIT)["steps"][0]["run"]
+        return self.step({"run": before + run + after})
+
+    def env(self, drop: Iterable[str] = (), **more: str) -> list[str]:
+        env = {**rf.model_gate(KIT)["steps"][0]["env"], **more}
+        return self.step({"env": {k: v for k, v in env.items() if k not in drop}})
 
     def needs(self, jobs: dict[str, Any], gate: dict[str, Any]) -> list[str]:
         whole = {**jobs, "done": gate}
@@ -607,6 +709,9 @@ class GateTest(CalledCase):
             ({"b": {**some, "uses": kit}}, "always run"),
             ({"b": {**some, "uses": kit.replace(rf.QUICK, rf.CHECK)}}, "always run"),
             ({"b": {**some, "uses": kit.replace(rf.QUICK, rf.SONAR)}}, ""),
+            ({"b": {"if": "0"}}, "whose condition is false"),
+            ({"b": {"if": "''"}}, "whose condition is false"),
+            ({"b": {"needs": "c"}, "c": {"if": "x", "needs": "d"}, "d": {}}, "has no condition"),
             ({"a": {}}, "which is not a job"),
         ):
             with self.subTest(jobs=jobs):
@@ -618,6 +723,121 @@ class GateTest(CalledCase):
                 else:
                     self.assertEqual([f for f in found if "MAY_SKIP names b" in f], [])
 
+    # --- each a conforming repository changed in one way (the review of 2026-11-24)
+
+    def test_the_kits_calls_are_in_the_gates_file(self) -> None:
+        text = self.text(GATE)
+        head, jobs = text.split("\njobs:\n", 1)
+        at = jobs.index("  done:\n")
+        calls, gate = jobs[:at], jobs[at:]
+        own = (
+            '  own:\n    name: "🔧 Own"\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n'
+            "    steps:\n      - run: 'true'\n"
+        )
+        gate = gate.replace("needs: [quick, check, sonar]", "needs: [own]")
+        gate = gate.replace("MAY_SKIP: sonar", 'MAY_SKIP: ""')
+        fx.write(self.root, GATE, f"{head}\njobs:\n{own}{gate}")
+        fx.write(self.root, ".github/workflows/kit.yml", f"{head}\njobs:\n{calls}")
+        self.assert_only(
+            "quick.yml is called in .github/workflows/kit.yml, not in the gate's file",
+            "check.yml is called in .github/workflows/kit.yml, not in the gate's file",
+            "sonar.yml is called in .github/workflows/kit.yml, not in the gate's file",
+        )
+
+    def test_nothing_of_the_gates_file_steers_its_script(self) -> None:
+        for planted, key in (
+            ('env:\n  BASH_ENV: "$(echo planted)"\n', "env"),
+            ("env:\n  MAY_SKIP: sonar build\n", "env"),
+            ("env: {}\n", "env"),
+            ("defaults:\n  run:\n    shell: sh\n", "defaults"),
+        ):
+            with self.subTest(planted=planted):
+                original = self.text(GATE)
+                self.edit(GATE, "\nconcurrency:", f"\n{planted}\nconcurrency:")
+                self.assert_only(f"{GATE} sets {key} for every job")
+                (self.root / GATE).write_text(original, encoding="utf-8")
+
+    def test_a_held_workflows_name_hides_nothing(self) -> None:
+        forged = (
+            fx.header()
+            + "# Vendored from kleidos-dev/agents\nname: X\non: pull_request\npermissions: {}\n"
+            + "jobs:\n  ok:\n    name: ${{ matrix.n }}\n    strategy:\n      matrix:\n"
+            + f'        n: ["{rf.GATE}"]\n    runs-on: ubuntu-latest\n'
+            + "    continue-on-error: true\n    steps:\n      - uses: evil/action@main\n"
+        )
+        for name in ("commit-check.yml", "commit-check-comment.yml", "other.yml"):
+            with self.subTest(name=name):
+                rel = f".github/workflows/{name}"
+                before = (self.root / rel).read_bytes() if (self.root / rel).is_file() else None
+                fx.write(self.root, rel, forged)
+                found = "\n".join(self.found())
+                for needle in (
+                    f"{rel} jobs.ok: [ci] the job's name starts with an emoji",
+                    f"{rel} jobs.ok: [ci] needs a timeout-minutes",
+                    f"{rel}:16: [ci] evil/action@main is not pinned",
+                    f"continue-on-error:{rel}:ok weakens a kit rule",
+                ):
+                    self.assertIn(needle, found)
+                if before is None:
+                    (self.root / rel).unlink()
+                else:
+                    (self.root / rel).write_bytes(before)
+
+    def test_a_held_scripts_path_hides_no_header(self) -> None:
+        rel = ".github/commit-check/check_commit_msg.py"
+        fx.write(self.root, rel, "# Vendored from kleidos-dev/agents\nx = 1\n")
+        problems, _notes = fx.spdx_headers.check_repo(self.root)
+        self.assertTrue(any(p.startswith(rel) for p in problems), problems)
+
+    def test_a_planted_manifest_hides_nothing(self) -> None:
+        body = '[[copy]]\nsource = ".github/workflows/x.yml"\ntarget = "x"\nprofile = "base"\n'
+        fx.write(self.root, "quality/kit.toml", fx.header() + body)
+        fx.write(self.root, ".github/workflows/x.yml", fx.header() + "jobs:\n  a:\n    name: a\n")
+        found = self.found()
+        self.assertTrue(any("x.yml jobs.a: [ci] the job's name" in f for f in found), found)
+
+    def test_nothing_that_decides_is_computed(self) -> None:
+        own = (
+            '  own:\n    name: "🔧 Own"\n    needs: quick\n    runs-on: ubuntu-latest\n'
+            "    timeout-minutes: 5\n    steps:\n      - run: 'true'\n"
+        )
+        quick, check = "quick.yml@v3\n", "check.yml@v3\n    with:\n"
+        matrix = "    strategy:\n      matrix:\n        x: ${{ fromJSON(vars.M || '[]') }}\n"
+        for old, new, needle in (
+            (
+                "",
+                own + "    continue-on-error: ${{ true }}\n",
+                "continue-on-error is an expression",
+            ),
+            ("", own + "    continue-on-error: true\n", "continue-on-error:.github"),
+            ("", own + "    continue-on-error: yes\n", "continue-on-error:.github"),
+            ("", own + "    continue-on-error: 'no'\n", "continue-on-error:.github"),
+            (check, f"{check}      types: ${{{{ false }}}}\n", "types is an expression"),
+            (check, f"{check}      types: ''\n", "types is not true"),
+            (check, f"{check}      node-directory: ${{{{ '' }}}}\n", "node-directory is an"),
+            (
+                check,
+                f"{check}      node-projects: ${{{{ x }}}}\n",
+                "node-projects is an expression",
+            ),
+            (quick, f"{quick}    with:\n      skip: ${{{{ vars.S }}}}\n", "skip is an expression"),
+            (quick, f"{quick}    with:\n      deny-hooks: ${{{{ x }}}}\n", "deny-hooks is an"),
+            (quick, quick + matrix, "sets strategy"),
+            (quick, f"{quick}    continue-on-error: false\n", "sets continue-on-error"),
+            (check, f"check.yml@v3\n{matrix}    with:\n", "sets strategy"),
+            ("sonar.yml@v3\n", f"sonar.yml@v3\n{matrix}", "sets strategy"),
+        ):
+            with self.subTest(new=new):
+                original = self.text(GATE)
+                if old:
+                    self.edit(GATE, old, new)
+                else:
+                    self.edit(GATE, "  done:\n", f"{new}  done:\n")
+                    self.edit(GATE, "[quick, check, sonar]", "[quick, check, sonar, own]")
+                found = self.found()
+                self.assertTrue(any(needle in f for f in found), found)
+                (self.root / GATE).write_text(original, encoding="utf-8")
+
     def test_there_is_one_and_it_runs(self) -> None:
         self.edit(GATE, 'name: "✅ Check"', 'name: "🏁 Check"')
         self.assertTrue(any('no job is named "✅ Check"' in f for f in self.found()))
@@ -625,18 +845,47 @@ class GateTest(CalledCase):
         self.assertTrue(any("only the gate's name starts with ✅" in f for f in self.found()))
 
     def test_a_second_one_is_caught(self) -> None:
+        rel = ".github/workflows/zz.yml"
         fx.write(
             self.root,
-            ".github/workflows/fake.yml",
+            rel,
             fx.header()
             + f'name: Fake\non: push\npermissions: {{}}\njobs:\n  x:\n    name: "{rf.GATE}"\n'
             + "    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n"
             + "      - run: 'true'\n",
         )
-        found = self.found()
-        self.assertTrue(
-            any('fake.yml jobs.x: [gate] a second job named "✅ Check"' in f for f in found)
-        )
+        # The first is judged as the gate, and the second is refused whatever it is.
+        self.assert_only(f'{rel} jobs.x: [gate] a second job named "✅ Check"')
+
+    def test_a_name_that_is_almost_the_gates_is_not_it(self) -> None:
+        for name in ("✅ Check ", " ✅ Check", "✅ check"):
+            original = self.text(GATE)
+            self.edit(GATE, 'name: "✅ Check"', f'name: "{name}"')
+            found = self.found()
+            self.assertTrue(any('no job is named "✅ Check"' in f for f in found), found)
+            (self.root / GATE).write_text(original, encoding="utf-8")
+
+    def test_how_a_condition_is_read(self) -> None:
+        for raw, text in (
+            ("${{ always() }}", "always()"),
+            ('github.event_name != "schedule"', "github.event_name != 'schedule'"),
+            ("a\n  &&   b", "a && b"),
+            (False, "False"),
+        ):
+            self.assertEqual(cq.normalized_if(raw), text)
+        for item, never in (
+            ({}, False),
+            ({"if": False}, True),
+            ({"if": "false"}, True),
+            ({"if": "FALSE"}, True),
+            ({"if": "0"}, True),
+            ({"if": "''"}, True),
+            ({"if": '""'}, True),
+            ({"if": "${{ false }}"}, True),
+            ({"if": "true"}, False),
+            ({"if": "github.x"}, False),
+        ):
+            self.assertIs(cq.never_runs(item), never, item)
 
     def test_its_workflow_runs_on_every_pull_request(self) -> None:
         self.edit(GATE, "  pull_request:\n    branches: [main]\n", "")
@@ -674,6 +923,19 @@ class HookTest(CalledCase):
                 self.edit(self.CONFIG, f"      - id: {hook}\n", "")
                 self.assert_only(f"no {hook} hook from {rf.KIT_HOOKS_URL}")
                 (self.root / self.CONFIG).write_text(original, encoding="utf-8")
+
+    def test_the_same_hook_of_another_repository_is_not_it(self) -> None:
+        theirs = "repo: https://github.com/fsfe/reuse-tool"
+        self.edit(self.CONFIG, theirs, "repo: https://x/reuse-tool")
+        self.assert_only("no reuse hook from https://github.com/fsfe/reuse-tool")
+
+    def test_a_kit_hook_with_an_entry_of_its_own_is_refused(self) -> None:
+        for key in ("entry: 'true'", "args: [x]", "stages: [manual]", "language: system"):
+            original = self.text(self.CONFIG)
+            hook = "      - id: kleidos-kit\n"
+            self.edit(self.CONFIG, hook, f"{hook}        {key}\n")
+            self.assert_only(f"kleidos-kit sets {key.split(':')[0]}")
+            (self.root / self.CONFIG).write_text(original, encoding="utf-8")
 
     def test_without_python_the_mypy_hook_is_not_asked(self) -> None:
         self.edit(self.CONFIG, "      - id: kleidos-mypy\n", "")
@@ -800,8 +1062,10 @@ class DependabotTest(CalledCase):
                 self.edit(self.REL, old, new)
                 self.assert_only("pre-commit must ignore")
         (self.root / self.REL).write_text(text, encoding="utf-8")
-        self.edit(self.REL, f'name: "{rf.KIT_HOOKS_URL}"', f'name: "{rf.KIT_HOOKS_URL}*"')
-        self.assertEqual(self.found(), [])
+        for name in (f"{rf.KIT_HOOKS_URL}*", rf.KIT_HOOKS_URL.upper().replace("HTTPS", "https")):
+            (self.root / self.REL).write_text(text, encoding="utf-8")
+            self.edit(self.REL, f'name: "{rf.KIT_HOOKS_URL}"', f'name: "{name}"')
+            self.assertEqual(self.found(), [], name)
 
     def test_the_kits_calls_are_still_ignored(self) -> None:
         self.edit(self.REL, '- dependency-name: "kleidos-dev/.github*"', '- dependency-name: "x"')
@@ -840,6 +1104,14 @@ class BehindTest(CalledCase):
         notes = "\n".join(report.notes)
         self.assertIn("python:py311 is behind 3.15 (a note, never red)", notes)
         self.assertIn("action:actions/checkout@v4.0.0 is behind", notes)
+
+    def test_a_submodules_pins_are_not_compared(self) -> None:
+        report = cq.Report(behind_is_note=True)
+        with mock.patch.object(cq, "check_submodule_pins") as compared:
+            cq.check_pins(cq.Repo(self.root), report)
+            compared.assert_not_called()
+            cq.check_pins(cq.Repo(self.root), cq.Report())
+            compared.assert_called_once()
 
     def test_a_written_reason_silences_the_note(self) -> None:
         self.edit(
@@ -929,8 +1201,9 @@ class ModelTest(unittest.TestCase):
         model = yaml.safe_load(KIT.read(rf.MODEL_CI).decode("utf-8"))
         workflow = rf.Workflow("x", model, model["jobs"], cq.workflow_triggers(model))
         report = cq.Report()
-        rf.check_gate([workflow], KIT, report)
-        rf.check_grants([workflow], rf.callers([workflow], self_ref=False), report)
+        by_file = rf.callers([workflow], self_ref=False)
+        rf.check_gate([workflow], by_file, KIT, report)
+        rf.check_grants([workflow], by_file, report)
         self.assertEqual(report.problems, [])
 
     def test_every_base_configuration_is_listed_at_its_newest_bytes(self) -> None:

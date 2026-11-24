@@ -8,7 +8,6 @@ import contextlib
 import datetime as dt
 import io
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -441,33 +440,6 @@ class ReleaseTest(unittest.TestCase):
     def tag(self, name: str, ref: str = "HEAD") -> None:
         fx.git(self.kit, "tag", name, ref)
 
-    def on_main(self) -> None:
-        fx.git(self.kit, "update-ref", sync.MAIN_REF, "HEAD")
-
-    def test_a_write_records_only_the_release_tag_on_main(self) -> None:
-        with self.assertRaises(SystemExit) as no_tag:
-            sync.release_commit(self.version, self.kit)
-        self.assertIn("no tag", str(no_tag.exception))
-        self.tag(f"v{self.version}")
-        with self.assertRaises(SystemExit) as no_main:
-            sync.release_commit(self.version, self.kit)
-        self.assertIn("origin/main", str(no_main.exception))
-        self.on_main()
-        self.assertEqual(sync.release_commit(self.version, self.kit), self.head)
-        fx.write(self.kit, "later.txt", "x\n")
-        fx.commit(self.kit, "Later")
-        self.on_main()
-        with self.assertRaises(SystemExit) as moved:
-            sync.release_commit(self.version, self.kit)
-        self.assertIn("is not v", str(moved.exception))
-        fx.git(self.kit, "checkout", "-q", "-b", "side", f"v{self.version}")
-        fx.write(self.kit, "side.txt", "x\n")
-        fx.commit(self.kit, "Side")
-        self.tag("v9.9.9")
-        with self.assertRaises(SystemExit) as off_main:
-            sync.release_commit("9.9.9", self.kit)
-        self.assertIn("not on origin/main", str(off_main.exception))
-
     def test_a_kit_change_needs_a_new_version_and_main_needs_its_tag(self) -> None:
         status, lines = sync.release_check(on_main=False, cwd=self.kit)
         self.assertEqual(status, 0, lines)
@@ -475,6 +447,7 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(status, 1, lines)
         self.assertIn("git tag -s", "\n".join(lines))
         self.tag(f"v{self.version}")
+        fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", "HEAD")
         self.assertEqual(sync.release_check(on_main=True, cwd=self.kit)[0], 0)
         # Central's own files move nothing a repository receives.
         fx.write(self.kit, "docs/note.md", "x\n")
@@ -538,7 +511,27 @@ class ReleaseTest(unittest.TestCase):
 
     def test_the_release_line_also_moves_the_branch(self) -> None:
         _status, lines = sync.release_check(on_main=True, cwd=self.kit)
-        self.assertIn(f"git push origin v{self.version} main:v3", lines[0])
+        self.assertIn("git fetch origin && git tag -s", lines[0])
+        self.assertIn(
+            f"git push origin v{self.version} refs/remotes/origin/main:refs/heads/v3", lines[0]
+        )
+
+    def test_a_release_whose_branch_was_not_moved_is_red_on_main(self) -> None:
+        old = self.head
+        self.tag(f"v{self.version}")
+        for where in (None, old):
+            if where is not None:
+                fx.write(self.kit, "docs/note.md", "x\n")
+                fx.commit(self.kit, "Docs")
+                fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", "HEAD")
+            status, lines = sync.release_check(on_main=True, cwd=self.kit)
+            self.assertEqual(status, 1, lines)
+            self.assertIn("Branch not moved", lines[0])
+            self.assertIn(f"git push origin v{self.version}^{{commit}}:refs/heads/v3", lines[0])
+            self.assertEqual(sync.release_check(on_main=False, cwd=self.kit)[0], 0)
+        fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", old)
+        status, lines = sync.release_check(on_main=True, cwd=self.kit)
+        self.assertEqual((status, "released" in lines[0]), (0, True), lines)
 
     def old_kit(self, version: str) -> str:
         """A commit whose kit is a 2.x one."""
@@ -594,17 +587,9 @@ class CommandTest(unittest.TestCase):
                 self.assertEqual(sync.main(["--write", str(root)]), 2)
             self.assertIn("kit_switch.py", err.getvalue())
             self.assertFalse((root / cq.SOURCE_JSON).exists())
-
-
-class PreviewTest(unittest.TestCase):
-    def test_the_format_count_reads_ruff_itself(self) -> None:
-        if shutil.which("ruff") is None:
-            self.skipTest("ruff is not on PATH")
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "a.py").write_text("x=1\ny  =  2\n", encoding="utf-8")
-            Path(tmp, "b.py").write_text("z = 3\n", encoding="utf-8")
-            Path(tmp, "c.py").write_text("w  = 4\n", encoding="utf-8")
-            self.assertEqual(sync.format_count(Path(tmp)), "2")
+            with self.assertRaisesRegex(SystemExit, "run, not copied"):
+                sync.write(root)
+            self.assertFalse((root / cq.SOURCE_JSON).exists())
 
 
 class CentralTest(unittest.TestCase):
