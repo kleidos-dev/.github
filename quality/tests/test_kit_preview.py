@@ -219,6 +219,68 @@ class RefreshTest(unittest.TestCase):
         self.record.symlink_to(moved)
         self.refuse("vendor/boards/SOURCE.json is a symbolic link")
 
+    def test_nothing_is_written_that_github_or_the_hooks_run(self) -> None:
+        """A record that names a workflow, an action or the hooks would write code that runs."""
+        fx.write(self.source, "evil.yml", "on: push\n")
+        fx.commit(self.source, "Plant")
+        fx.write(self.root, ".github/workflows/ci.yml", "on: pull_request\n")
+        fx.write(self.root, ".pre-commit-config.yaml", "repos: []\n")
+        fx.commit(self.root, "Own workflow")
+        kept = {
+            rel: (self.root / rel).read_bytes()
+            for rel in (".github/workflows/ci.yml", ".pre-commit-config.yaml")
+        }
+        for more, name in (
+            ({"root": "."}, ".github/workflows/ci.yml"),
+            ({"root": "."}, ".GitHub/Workflows/ci.yml"),
+            ({"root": "."}, ".github/workflow\u017f/ci.yml"),  # long s: APFS reads workflows
+            ({"root": "."}, ".github/work\ufb02ows/ci.yml"),  # the fl ligature
+            ({"root": "."}, ".\uff47ithub/workflows/ci.yml"),  # a full-width g
+            ({"root": "."}, "./.github/workflows/x/y.yaml"),
+            ({"root": "."}, "a/../.github/workflows/ci.yml"),
+            ({}, "../../.github/workflows/ci.yml"),
+            ({"root": "."}, ".github/actions/setup/action.yml"),
+            ({"root": "."}, ".github/dependabot.yml"),
+            ({"root": "."}, ".pre-commit-config.yaml"),
+            ({"root": "."}, ".PRE-COMMIT-CONFIG.yaml"),
+        ):
+            with self.subTest(name=name):
+                self.write(files={name: "0" * 64}, sources={name: "evil.yml"}, **more)
+                self.refuse("a refresh writes nothing GitHub or the hooks run")
+                for rel, content in kept.items():
+                    self.assertEqual((self.root / rel).read_bytes(), content, rel)
+                self.assertEqual(fx.git(self.root, "status", "--porcelain", ".github"), "")
+        moved = self.root / ".github/quality/SOURCE.json"
+        moved.parent.mkdir(parents=True)
+        self.record.rename(moved)
+        self.record = moved
+        self.write(files={"a/front.svg": cq.sha256(b"old\n")})
+        self.refuse(".github/quality/SOURCE.json is under .github/")
+
+    def test_what_is_never_written(self) -> None:
+        """Every spelling a file system may fold, and any path the file system resolves there."""
+        (self.root / ".github/workflows").mkdir(parents=True)
+        (self.root / "alias").symlink_to(self.root / ".github/workflows")
+        (self.root / "hooks.yaml").symlink_to(self.root / ".pre-commit-config.yaml")
+        (self.root / ".pre-commit-config.yaml").write_text("repos: []\n", encoding="utf-8")
+        for rel, never in (
+            (".github", True),
+            (".github/workflows", True),
+            (".github/quality/ruff.toml", True),
+            ("a/../.github/x.yml", True),
+            (".gith\u00fab/x.yml", False),
+            (".githubs/x.yml", False),
+            ("docs/.github/workflows/x.yml", False),
+            (".pre-commit-config.yaml", True),
+            ("x/.pre-commit-config.yaml", False),
+            (".pre-commit-config.yml", False),
+            ("alias/ci.yml", True),  # the file system's own spelling of the workflows
+            ("hooks.yaml", True),
+            ("vendor/x.svg", False),
+        ):
+            with self.subTest(rel=rel):
+                self.assertIs(kp.never_written(self.root, rel), never)
+
     def test_a_record_that_lacks_only_its_date_is_refreshed(self) -> None:
         self.write(taken="")
         self.assertEqual(len(kp.refresh(self.record, None, TODAY)), 1)

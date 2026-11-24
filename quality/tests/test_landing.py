@@ -158,7 +158,7 @@ class RefusalTest(unittest.TestCase):
         sha = "d" * 40
         uses = f"@@\n-      - uses: a/b@{HEAD} # v1\n+      - uses: a/b@{sha} # v2"
         rev = "@@\n-    rev: v3.0.0\n+    rev: v3.1.0"
-        json_patch = '@@\n-    "a": "1.0.0"\n+    "a": "1.0.1"'
+        json_patch = '@@\n-    "x": "1.0.0"\n+    "x": "1.0.1"'
         workflows = "proves nothing about a change under .github/"
         for one, needle in (
             (changed(), "None"),
@@ -299,6 +299,168 @@ class RefusalTest(unittest.TestCase):
                 self.assertIs(self.lines("package.json", old, new), accepted)
                 self.assertIs(self.lines("package-lock.json", old, new), accepted)
 
+    def test_a_floor_or_an_index_is_never_landed(self) -> None:
+        """What a check holds the code to, and where packages come from, are a person's to move."""
+        for name, old, new in (
+            ("pyproject.toml", "fail_under = 90", "fail_under = 50"),
+            ("pyproject.toml", "fail-under = 90", "fail-under = 0"),
+            ("pyproject.toml", 'addopts = "--cov-fail-under=90"', 'addopts = "--cov-fail-under=9"'),
+            ("pyproject.toml", 'requires-python = ">=3.12"', 'requires-python = ">=3.9"'),
+            ("pyproject.toml", 'requires-python = ">=3.12,<4"', 'requires-python = ">=3.9,<4"'),
+            ("pyproject.toml", 'python_requires = ">=3.12"', 'python_requires = ">=3.8"'),
+            ("pyproject.toml", "[[tool.uv.index]]", "[[tool.uv.index]]  # moved"),
+            (
+                "requirements.txt",
+                "--index-url https://pypi.org/simple",
+                "--index-url https://10.0.0.1/simple",
+            ),
+            ("requirements.txt", "--index-url=10.0.0.1", "--index-url=10.0.0.2"),
+            ("requirements.txt", "-i https://a.example:1/simple", "-i https://a.example:2/simple"),
+            (
+                "requirements.in",
+                "--extra-index-url https://a.example/1",
+                "--extra-index-url https://a.example/2",
+            ),
+            (
+                "requirements.txt",
+                "--find-links https://a.example/1",
+                "--find-links https://a.example/2",
+            ),
+            ("requirements.txt", "--trusted-host 10.0.0.1", "--trusted-host 10.0.0.2"),
+            ("requirements.txt", "-c constraints-1.txt", "-c constraints-2.txt"),
+            ("package.json", '    "node": ">=20",', '    "node": ">=16",'),
+            ("package.json", '    "npm": ">=10"', '    "npm": ">=6"'),
+            ("package.json", '    "pnpm": ">=9"', '    "pnpm": ">=8"'),
+            ("package.json", '    "yarn": ">=4"', '    "yarn": ">=1"'),
+            ("package.json", '    "bun": ">=1.1"', '    "bun": ">=1.0"'),
+            ("package.json", '  "engines": { "node": ">=20" },', '  "engines": { "node": ">=8" },'),
+            (
+                "package.json",
+                '    "registry": "https://registry.npmjs.org/"',
+                '    "registry": "https://a.example/"',
+            ),
+            (
+                "package.json",
+                '  "packageManager": "pnpm@9.0.0",',
+                '  "packageManager": "pnpm@8.0.0",',
+            ),
+            # Poetry's and uv's spellings of a floor.
+            ("pyproject.toml", 'python = "<4,>=3.12"', 'python = "<4,>=3.8"'),
+            ("pyproject.toml", 'required-version = ">=0.5,<1"', 'required-version = ">=0.5,<0.1"'),
+            ("pyproject.toml", "Fail_Under = 90", "Fail_Under = 10"),
+        ):
+            version = '  "x==1",' if name == "pyproject.toml" else "x==1"
+            if name == "package.json":
+                version = '    "a": "^1.0.0",'
+            bumped = (
+                version.replace("1", "2", 1) if name != "package.json" else '    "a": "^1.1.0",'
+            )
+            first = f"@@ -1 +1 @@\n-{version}\n+{bumped}"
+            floor = f"@@ -40 +40 @@\n-{old}\n+{new}"
+            for patch in (
+                floor,
+                f"{first}\n{floor}",
+                f"{first}\n context\n{floor[floor.index(chr(10)) + 1 :]}",
+            ):
+                with self.subTest(name=name, old=old, patch=patch.count("@@")):
+                    why = landing.file_refusal(changed(name, patch))
+                    self.assertEqual(
+                        why, f"{name} changes a floor or a package index: {new.strip()[:80]}"
+                    )
+            with self.subTest(name=name, only="the version"):
+                self.assertIsNone(landing.file_refusal(changed(name, first)))
+
+    def test_a_floor_a_lock_records_for_a_dependency_moves_with_it(self) -> None:
+        patch = (
+            '@@\n-      "version": "1.0.0",\n+      "version": "1.1.0",'
+            '\n-        "node": ">=14"\n+        "node": ">=18"'
+        )
+        self.assertIsNone(landing.file_refusal(changed("package-lock.json", patch)))
+        self.assertIsNotNone(landing.file_refusal(changed("package.json", patch)))
+
+    def test_only_a_packages_own_version_is_masked(self) -> None:
+        for line, masked in (
+            ("x==1.0", "x==…"),
+            ("x[a,b] >= 1.0", "x[a,b] >= …"),
+            ('  "x>=1,<2",', '  "x>=…,<…",'),
+            ("fail_under = 90", "fail_under = 90"),
+            ("--cov-fail-under=90", "--cov-fail-under=90"),
+            ('requires-python = ">=3.12"', 'requires-python = ">=3.12"'),
+            ("x = 1", "x = 1"),
+            ("--index-url=10.0.0.1", "--index-url=10.0.0.1"),
+            ("x>=1, <2, !=1.5", "x>=…, <…, !=…"),
+            ('python = "<4,>=3.12"', 'python = "<4,>=3.12"'),
+            ('required-version = ">=0.5,<1"', 'required-version = ">=0.5,<1"'),
+            ("--x==1", "--x==1"),  # an option's value, not a package's version
+            ("zope.interface==5.0", "zope.interface==…"),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(landing.masked(line, landing.PYTHON), masked)
+
+    def test_a_floor_taken_away_is_never_landed(self) -> None:
+        for name, line in (
+            ("pyproject.toml", "fail_under = 90"),
+            ("requirements.txt", "--index-url https://pypi.org/simple"),
+            ("package.json", '    "node": ">=20",'),
+        ):
+            with self.subTest(name=name):
+                why = landing.file_refusal(changed(name, f"@@ -40 +40 @@\n-{line}"))
+                self.assertEqual(why, f"{name} changes a floor or a package index: {line.strip()}")
+
+    def test_a_version_in_package_json_is_one_of_a_package_the_update_names(self) -> None:
+        """Every child of engines is a floor, whatever the engine: no update names it."""
+        names = frozenset({"a", "@b/c"})
+        for old, new, refused in (
+            ('    "a": "^1.0.0",', '    "a": "^1.1.0",', ""),
+            ('    "@b/c": "~2.0.0"', '    "@b/c": "~2.1.0"', ""),
+            ('    "vscode": "^1.90.0"', '    "vscode": "^1.0.0"', "vscode"),
+            ('    "deno": ">=2",', '    "deno": ">=1",', "deno"),
+            ('  "version": "1.0.0",', '  "version": "1.0.1",', "version"),
+            ('    "b": "^1.0.0",', '    "b": "^1.1.0",', "b"),
+        ):
+            with self.subTest(new=new):
+                patch = f"@@ -1 +1 @@\n-{old}\n+{new}"
+                why = landing.file_refusal(changed("package.json", patch), names)
+                wanted = f"changes {refused}, which no update of it names: {old.strip()}"
+                self.assertEqual(why, f"package.json {wanted}" if refused else None)
+                self.assertIsNone(landing.file_refusal(changed("package-lock.json", patch), names))
+        patch = '@@\n-    "vscode": "^1.90.0"\n+    "vscode": "^1.0.0"'
+        self.assertIn("changes vscode", self.why(files=[changed("package.json", patch)]))
+        patch = '@@\n-    "x": "^1.2.0"\n+    "x": "^1.3.0"'
+        self.assertIsNone(
+            landing.refusal(pull(), [commit()], [changed("package.json", patch)], [push()], OWNER)
+        )
+
+    def test_a_scoped_package_dependabot_quotes_is_named(self) -> None:
+        """Dependabot quotes a scoped name in its commit (kleidos-dev/cla#1): the name is inside."""
+        message = (
+            "Bump @types/node from 22.19.1 to 22.19.2 in /worker\n\n"
+            "Bumps [@types/node](https://github.com/DefinitelyTyped/DefinitelyTyped) "
+            "from 22.19.1 to 22.19.2.\n\n---\nupdated-dependencies:\n"
+            '- dependency-name: "@types/node"\n  dependency-version: 22.19.2\n'
+            "  dependency-type: direct:development\n"
+            "  update-type: version-update:semver-patch\n...\n\n"
+            "Signed-off-by: dependabot[bot] <support@github.com>\n"
+        )
+        patch = '@@\n-    "@types/node": "^22.19.1",\n+    "@types/node": "^22.19.2",'
+        files = [changed("worker/package.json", patch)]
+        self.assertIsNone(landing.refusal(pull(), [commit(message)], files, [push()], OWNER))
+        for name, named in (
+            ('"@types/node"', True),
+            ("'@types/node'", True),
+            ("@types/node", True),
+            ('"@types/node', False),
+            ("\"@types/node'", False),
+            ('"@types/other"', False),
+        ):
+            with self.subTest(name=name):
+                text = message.replace('"@types/node"', name, 1)
+                why = landing.refusal(pull(), [commit(text)], files, [push()], OWNER)
+                if named:
+                    self.assertIsNone(why)
+                else:
+                    self.assertIn("changes @types/node, which no update of it names", str(why))
+
     def test_lines_apart_are_compared_apart(self) -> None:
         for patch, accepted in (
             ("@@\n-x==1\n+x==2\n y==1\n-z==1\n+z==2", True),
@@ -313,7 +475,9 @@ class RefusalTest(unittest.TestCase):
         patch = "@@\n-x==1\n+x==2\n+--index-url evil " + "y" * 99
         why = str(landing.file_refusal(changed(patch=patch)))
         self.assertTrue(
-            why.startswith("requirements.txt changes more than a version: --index-url evil yyy"),
+            why.startswith(
+                "requirements.txt changes a floor or a package index: --index-url evil y"
+            ),
             why,
         )
         self.assertLess(len(why), 140)

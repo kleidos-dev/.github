@@ -8,7 +8,7 @@
 # reason, on an entry that matches nothing any more, and on an expired one.
 #
 # [[waiver]]
-# tool = "ruff"                       # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot
+# tool = "ruff"                       # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins, typos, actionlint
 # what = "ignore:E501"                # the exact weakening, as check_quality.py names it
 # where = "pyproject.toml"            # optional: the file it is in, when the same weakening is in two
 # reason = "Why the rule is wrong for this code, with the sites read"
@@ -21,3 +21,9 @@ what = "python:py39"
 where = "hooks/ruff.toml"
 reason = "pre-commit starts the kit's hooks on whichever python3 comes first on a machine, and the oldest in use is the one macOS ships (3.9.6 on macOS 26): ruff refuses syntax newer than that in hooks/, and hooks/launch.py finds a newer Python for everything else"
 decided = "agent, kit 3.0.0 (the step 0 trial of 2026-11-24 saw 3.13 and 3.14; 3.9 is the machines' oldest)"
+
+[[waiver]]
+tool = "ci"
+what = "continue-on-error:.github/workflows/reusable-commit-check-comment.yml:comment:download"
+reason = "A commit check that was skipped, or whose artifact expired, leaves no result to fetch: the step that fetches it may fail, and the next one runs only when it succeeded, so nothing is posted and nothing is forgiven. quality/tests/test_workflow_contract.py holds this as the one soft step of every kit workflow"
+decided = "agent, kit 3.1.0 (the step-level rule is new; the step is the same since kit 3.0.0)"

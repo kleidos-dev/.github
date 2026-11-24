@@ -95,6 +95,28 @@ class EntryTest(unittest.TestCase):
         rf.check_forgery(rf.workflows(repo), report)
         self.assertEqual(report.problems, [])
 
+    def test_python_reads_no_module_from_the_tree_it_runs_in(self) -> None:
+        """`python -m` and `python -c` put the working directory first on the path.
+
+        The working directory of a kit job is the repository's tree, so a
+        `pip.py` or a `json.py` planted there would run instead of the module
+        named: -I leaves it out (and the environment's PYTHON* variables too).
+        A script named by its path reads from its own folder, the kit's.
+        """
+        unisolated = re.compile(r"\bpython3?(?:\.\d+)?\s+(?!-I\b)-[mc]\b")
+        found = []
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            if path.name == "ci.yml":
+                continue  # this repository's own tests, which import its own tree
+            for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if not line.lstrip().startswith("#") and unisolated.search(line):
+                    found.append(f"{path.name}:{num}: {line.strip()}")
+        self.assertEqual(found, [])
+        self.assertTrue(unisolated.search("run: python -m pip install x"))
+        self.assertTrue(unisolated.search("python3 -c 'import json'"))
+        self.assertFalse(unisolated.search("python -I -m pip install x"))
+        self.assertFalse(unisolated.search('python "${KIT}/quality/policy.py"'))
+
     def test_the_weekly_report_reads_and_nothing_else(self) -> None:
         data = load("ecosystem.yml")
         self.assertEqual(data["permissions"], {"contents": "read"})

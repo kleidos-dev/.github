@@ -79,7 +79,7 @@ jobs:
     if: inputs.tests != ''
     uses: ./.github/workflows/reusable-python-tests.yml
     with:
-      install: ${{ inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+      install: ${{ inputs.install || (inputs.python && format('python -I -m pip install {0}', inputs.python)) || '' }}
       run: ${{ inputs.tests }}
       python-version-file: ${{ inputs.python-version-file }}
       coverage-report: ${{ inputs.coverage-report }}
@@ -93,7 +93,7 @@ jobs:
     if: inputs.types
     uses: ./.github/workflows/reusable-mypy.yml
     with:
-      install: ${{ inputs.types-install || inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+      install: ${{ inputs.types-install || inputs.install || (inputs.python && format('python -I -m pip install {0}', inputs.python)) || '' }}
       python-version-file: ${{ inputs.python-version-file }}
     permissions:
       contents: read

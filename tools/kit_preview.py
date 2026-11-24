@@ -162,6 +162,23 @@ def source_checkout(named: Path | None, record: Path, repo: str) -> Path:
     return found
 
 
+# What a refresh never writes, whatever a record names and however it spells
+# it: what GitHub and the hooks run (workflows, actions, Dependabot's
+# settings, the hook list). A copy there would run, with the repository's
+# token, whatever the source holds, and a pull request with it proves
+# nothing (docs/quality.md, "Merging"); it changes by a person's own edit.
+NEVER_WRITTEN = (".github", ".pre-commit-config.yaml")
+NEVER_WRITTEN_WHY = (
+    "is under .github/ or is .pre-commit-config.yaml: a refresh writes nothing GitHub or the"
+    " hooks run"
+)
+
+
+def never_written(root: Path, rel: str) -> bool:
+    """Whether a path of the repository is one a refresh never writes."""
+    return any(own_files.reaches(root, rel, place) for place in NEVER_WRITTEN)
+
+
 def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> list[str]:
     """Copy again what a record names; return what changed."""
     today = today or dt.datetime.now(tz=dt.UTC).date()
@@ -186,6 +203,8 @@ def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> l
     root = Path(git_out(record.parent, "rev-parse", "--show-toplevel")).resolve()
     rel = (record.parent.resolve() / record.name).relative_to(root).as_posix()
     own_files.own_file(root, rel)
+    if never_written(root, rel):
+        raise RefreshError(f"{rel} {NEVER_WRITTEN_WHY}")
     log = []
     fresh: dict[str, bytes] = {}
     targets = run_form.record_targets(rel, data)
@@ -194,6 +213,8 @@ def refresh(record: Path, named: Path | None, today: dt.date | None = None) -> l
             posixpath.join(upstream["path"], data.get("sources", {}).get(name, name))
         )
         target = targets[name]
+        if target is not None and never_written(root, target):
+            raise RefreshError(f"{target} {NEVER_WRITTEN_WHY}")
         origin = (source / path).resolve()
         if target is None or not origin.is_relative_to(source.resolve()) or not origin.is_file():
             raise RefreshError(f"{upstream['repo']} has no {path}")

@@ -34,8 +34,12 @@ class WriteTest(unittest.TestCase):
         outside.mkdir()
         (self.root / "link").symlink_to(outside)
         (self.root / "file").symlink_to(outside / "x")
+        (self.root / ".git").mkdir(exist_ok=True)
+        (self.root / "gitlink").symlink_to(self.root / ".git")
         for rel, why in (
             (".git/config", "is in git's own folder"),
+            (".\uff27it/config", "is in git's own folder"),  # a full-width G
+            ("gitlink/config", "is in git's own folder"),  # the file system's own spelling
             ("sub/.GIT/hooks/x", "is in git's own folder"),
             (".git", "is in git's own folder"),
             ("link/x", "link is a symbolic link"),

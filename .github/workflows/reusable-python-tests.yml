@@ -34,7 +34,7 @@ on:
       install:
         description: The command that installs the repository's pinned dependencies
         type: string
-        default: python -m pip install -r requirements.txt
+        default: python -I -m pip install -r requirements.txt
       run:
         description: The test command; it writes the coverage report
         type: string

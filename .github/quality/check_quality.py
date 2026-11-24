@@ -66,6 +66,7 @@ import tempfile
 import tokenize
 import tomllib
 import unicodedata
+import warnings
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -153,6 +154,8 @@ WAIVABLE_TOOLS = (
     "pre-commit",
     "reuse",
     "pins",
+    "typos",
+    "actionlint",
 )
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -1598,12 +1601,23 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
         except tomllib.TOMLDecodeError as exc:
             report.add("gitleaks", rel, f"not valid TOML: {exc}")
             cfg = {}
-        extend = cfg.get("extend") or {}
-        if extend.get("useDefault") is not True:
+        # gitleaks reads every key without regard to case: so does the kit.
+        twice: list[str] = []
+        cfg = fold_keys(cfg, "", twice)
+        for key in twice:
+            report.add(
+                "gitleaks",
+                rel,
+                f"{key} is spelled more than once in different case: gitleaks reads them as one,"
+                " refused (no waiver)",
+            )
+        extend = cfg.get("extend")
+        extend = extend if isinstance(extend, dict) else {}
+        if extend.get("usedefault") is not True:
             report.add(
                 "gitleaks", rel, "[extend] useDefault = true is required: every default rule"
             )
-        if extend.get("disabledRules"):
+        if extend.get("disabledrules"):
             report.add(
                 "gitleaks", rel, "disabledRules turns default rules off: refused (no waiver)"
             )
@@ -1613,10 +1627,11 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
                 rel,
                 "a global [allowlist] reaches every rule: use [[allowlists]] with targetRules",
             )
-        for i, allow in enumerate(cfg.get("allowlists") or []):
+        gitleaks_allowlists_off(cfg, rel, report)
+        for i, allow in enumerate(tables(cfg.get("allowlists"))):
             if not str(allow.get("description", "")).strip():
                 report.add("gitleaks", f"{rel} allowlists[{i}]", "needs a description saying why")
-            if not allow.get("targetRules"):
+            if not allow.get("targetrules"):
                 report.add(
                     "gitleaks",
                     f"{rel} allowlists[{i}]",
@@ -1635,6 +1650,432 @@ def check_gitleaks(repo: Repo, report: Report) -> None:
             prev = stripped
             if stripped and not stripped.startswith("#"):
                 report.suppressions["gitleaks fingerprint"] += 1
+
+
+# --------------------------------------------------------------------------
+# A tool switched off from the tree: a pattern that covers every file, a
+# second configuration the tool reads before the kit's, a setting that turns
+# its check off. Each is a weakening like any other (a waiver says why), or,
+# where the kit's rules allow no waiver, a problem.
+
+# Paths and words of every kind: a pattern that matches all of them excludes,
+# or ignores, everything (or near enough to read as such). Every path has an
+# extension: one of them all (`*.*`, `\.`) leaves out only LICENSE and the like.
+PROBE_PATHS = (
+    "README.md",
+    "src/main.py",
+    "a/b/c/d.ts",
+    ".github/workflows/ci.yml",
+    "docs/guide.txt",
+)
+PROBE_WORDS = ("word", "Name", "snake_case", "x1y", "CamelCase")
+
+
+def glob_class(body: str, start: int) -> tuple[str, int] | None:
+    """The `[...]` or `[!...]` class at body[start] as a regex class, and where it ends.
+
+    None where no `]` closes it: the glob tool refuses such a pattern. A
+    negated class may match a slash too, so it is read as covering more.
+    """
+    i = start + 1
+    negated = i < len(body) and body[i] in "!^"
+    i += negated
+    first = i
+    while i < len(body) and (body[i] != "]" or i == first):
+        i += 1
+    if i >= len(body):
+        return None
+    inner = "".join(c if c == "-" else re.escape(c) for c in body[first:i])
+    return ("[^" if negated else "[") + inner + "]", i + 1
+
+
+def glob_regex(pattern: str, gitignore: bool) -> re.Pattern[str] | None:
+    """A glob as a regex over a path: `**` any folders, `*` and `?` within one name.
+
+    gitignore (typos): a pattern with no slash but at its end names a file or
+    a folder at any depth, and a folder takes what is in it; `[...]`, `[!...]`
+    and `{a,b}` are read as globset reads them, and `\\` escapes. Otherwise
+    (Ant, as SonarQube reads it) the pattern is the whole path. None where
+    the kit cannot read the glob.
+    """
+    body = pattern.strip().lstrip("/") if gitignore else pattern.strip()
+    out, i, depth = "", 0, 0
+    while i < len(body):
+        if body.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif body.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif body[i] in "*?":
+            out, i = out + ("[^/]*" if body[i] == "*" else "[^/]"), i + 1
+        elif gitignore and body[i] == "\\" and i + 1 < len(body):
+            out, i = out + re.escape(body[i + 1]), i + 2
+        elif gitignore and body[i] == "[" and (cls := glob_class(body, i)):
+            out, i = out + cls[0], cls[1]
+        elif gitignore and body[i] in "{},":
+            more = {"{": ("(?:", 1), "}": (")", -1), ",": ("|" if depth else ",", 0)}[body[i]]
+            out, depth, i = out + more[0], depth + more[1], i + 1
+        else:
+            out, i = out + re.escape(body[i]), i + 1
+    if not gitignore:
+        return re.compile(out)
+    lead = "" if "/" in body.rstrip("/") else "(?:.*/)?"
+    try:
+        return re.compile(f"{lead}{out.removesuffix('/')}(?:/.*)?" if out else ".*")
+    except re.error:
+        return None
+
+
+def glob_covers_all(pattern: str, gitignore: bool = True) -> bool:
+    """Whether a glob matches every probe path: an exclusion of everything.
+
+    A glob the kit cannot read counts as one of everything: the check fails closed.
+    """
+    rx = glob_regex(pattern, gitignore)
+    return rx is None or all(rx.fullmatch(path) for path in PROBE_PATHS)
+
+
+# What Python's re reads otherwise than typos (Rust's regex) and gitleaks (Go's
+# RE2) do, or the tool reads and Python does not: a Unicode class (`\pL`,
+# `\p{L}`), a POSIX class (`[[:alpha:]]`), the flags `U` (lazy by default)
+# and `-u` (bytes). The kit judges a pattern only in the syntax all three
+# share; one outside it counts as covering everything.
+POSIX_CLASS = re.compile(r"\[:\^?[A-Za-z]+:\]")
+# An inline flag group: `(?flags)`, `(?flags:`, `(?flags-flags:`.
+FLAG_GROUP = re.compile(r"\(\?(?P<on>[A-Za-z]*)(?:-(?P<off>[A-Za-z]*))?(?P<end>[:)])")
+
+
+def escapes(pattern: str) -> list[str]:
+    """The letter after each backslash that escapes one, read left to right (`\\\\p` has none)."""
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern[i] == "\\" and i + 1 < len(pattern):
+            out.append(pattern[i + 1])
+            i += 2
+        else:
+            i += 1
+    return out
+
+
+def foreign_flags(group: re.Match[str]) -> bool:
+    """Whether a flag group asks what Python reads otherwise: `U`, or `u` switched off."""
+    off = group["off"] or ""
+    return "U" in group["on"] + off or "u" in off
+
+
+def python_flags(group: re.Match[str]) -> str:
+    """A flag group without Rust's `R` (CRLF lines), which changes only where a line ends."""
+    on, off = group["on"].replace("R", ""), (group["off"] or "").replace("R", "")
+    if not on and not off:
+        return "(?:" if group["end"] == ":" else ""
+    return f"(?{on}{'-' + off if off else ''}{group['end']}"
+
+
+def python_syntax(pattern: str) -> str | None:
+    """A typos or gitleaks pattern in Python's syntax, or None where Python reads it otherwise."""
+    if set(escapes(pattern)) & {"p", "P"} or POSIX_CLASS.search(pattern):
+        return None
+    if any(foreign_flags(group) for group in FLAG_GROUP.finditer(pattern)):
+        return None
+    return FLAG_GROUP.sub(python_flags, pattern)
+
+
+def tool_regex(pattern: str) -> re.Pattern[str] | None:
+    """A typos or gitleaks pattern as Python reads it, or None where it may read it otherwise.
+
+    None too where Python refuses it or warns about it (a nested class, a set
+    operation): Rust and Go may read it, and read it otherwise.
+    """
+    python = python_syntax(pattern)
+    if python is None:
+        return None
+    re.purge()  # a cached pattern would not warn again
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        try:
+            return re.compile(python)
+        except re.error, Warning:
+            return None
+
+
+def regex_covers_all(pattern: str, probes: tuple[str, ...]) -> bool:
+    """Whether a regular expression finds something in every probe.
+
+    gitleaks allows a path or a secret a pattern finds anywhere in it, and
+    typos an identifier or a word. A pattern the kit cannot read as the tool
+    does counts as one that finds everything: the check fails closed.
+    """
+    rx = tool_regex(pattern)
+    return rx is None or all(rx.search(probe) for probe in probes)
+
+
+# Two letters together: what a word needs to be checked at all.
+LETTERS = re.compile(r"[^\W\d_]{2}")
+
+
+def ignores_every_word(pattern: str) -> bool:
+    """Whether typos, skipping the text an extend-ignore-re pattern finds, has no word left.
+
+    Only what the pattern spans is skipped, so `[a-z]` leaves nothing of any
+    word but capitals, while `e` leaves most of them (typos 1.52.2: 7 typos,
+    1 with `[a-z]`, 0 with `.`, 4 with `e`). A pattern the kit cannot read
+    as typos does leaves nothing: the check fails closed.
+    """
+    rx = tool_regex(pattern)
+    if rx is None:
+        return True
+    left = (rx.sub(lambda m: " " if m.group() else "", probe) for probe in PROBE_WORDS)
+    return not any(LETTERS.search(text) for text in left)
+
+
+# typos reads the first of these in a folder, and a folder's own before its
+# parent's: any but the kit's .typos.toml at the top is read instead of it.
+TYPOS_SHADOWS = ("typos.toml", "_typos.toml", ".typos.toml")
+TYPOS_HOSTS = ("pyproject.toml", "Cargo.toml")
+# Where pyproject.toml and Cargo.toml hold a typos configuration, however the
+# TOML spells the table (dotted keys, quotes, an inline table).
+TYPOS_TABLES = (("tool",), ("package", "metadata"), ("workspace", "metadata"))
+
+
+def has_typos_table(text: str) -> bool:
+    """Whether a pyproject.toml or Cargo.toml holds a typos configuration typos reads.
+
+    typos reads a file that starts with a byte order mark, and TOML 1.1
+    (an inline table over several lines, `\\e`), which tomllib before
+    Python 3.15 refuses. A file tomllib cannot read holds one wherever its
+    text names typos: the check fails closed.
+    """
+    text = text.removeprefix("﻿")
+    try:
+        cfg = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return "typos" in text
+    for path in TYPOS_TABLES:
+        table: Any = cfg
+        for key in path:
+            table = table.get(key) if isinstance(table, dict) else None
+        if isinstance(table, dict) and "typos" in table:
+            return True
+    return False
+
+
+TYPOS_IGNORE_RE = ("extend-ignore-re", "extend-ignore-identifiers-re", "extend-ignore-words-re")
+
+
+def typos_sections(cfg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The sections of a typos configuration that say what is checked: default and each type."""
+    default, types = cfg.get("default"), cfg.get("type")
+    out = [("default", default)] if isinstance(default, dict) else []
+    for name, section in (types if isinstance(types, dict) else {}).items():
+        if isinstance(section, dict):
+            out.append((f"type.{name}", section))
+    return out
+
+
+def check_typos_off(repo: Repo, report: Report) -> None:
+    """typos switched off: a second configuration, an exclusion of everything, a check off."""
+    for rel in repo.files:
+        name = PurePosixPath(rel).name
+        shadow = name in TYPOS_SHADOWS and rel != ".typos.toml"
+        if shadow or (name in TYPOS_HOSTS and has_typos_table(repo.text(rel))):
+            report.weaken("typos", f"config:{rel}", rel)
+    if not repo.exists(".typos.toml"):
+        return
+    try:
+        cfg = tomllib.loads(repo.text(".typos.toml"))
+    except tomllib.TOMLDecodeError:
+        return  # check_typos says so
+    files = cfg.get("files")
+    for pattern in (files.get("extend-exclude") or []) if isinstance(files, dict) else []:
+        if glob_covers_all(str(pattern)):
+            report.weaken("typos", f"extend-exclude:{pattern}", ".typos.toml")
+    for where, section in typos_sections(cfg):
+        for key in ("check-file", "check-filename"):
+            if section.get(key) is False:
+                report.weaken("typos", f"{where}.{key}=false", ".typos.toml")
+        for key in TYPOS_IGNORE_RE:
+            for pattern in section.get(key) or []:
+                off = (
+                    ignores_every_word(str(pattern))
+                    if key == "extend-ignore-re"
+                    else regex_covers_all(str(pattern), PROBE_WORDS)
+                )
+                if off:
+                    report.weaken("typos", f"{where}.{key}:{pattern}", ".typos.toml")
+
+
+ACTIONLINT_CONFIGS = (".github/actionlint.yaml", ".github/actionlint.yml")
+
+
+def check_actionlint(repo: Repo, report: Report) -> None:
+    """Every error actionlint is told to ignore is a weakening."""
+    for rel in ACTIONLINT_CONFIGS:
+        if not repo.exists(rel):
+            continue
+        try:
+            cfg = yaml.safe_load(repo.text(rel)) or {}
+        except yaml.YAMLError as exc:
+            report.add("actionlint", rel, f"not valid YAML: {exc}")
+            continue
+        paths = cfg.get("paths") if isinstance(cfg, dict) else None
+        for glob, entry in (paths if isinstance(paths, dict) else {}).items():
+            ignored = entry.get("ignore") if isinstance(entry, dict) else None
+            if isinstance(ignored, str):
+                ignored = [ignored]
+            for pattern in ignored if isinstance(ignored, list) else []:
+                report.weaken("actionlint", f"ignore:{glob}:{pattern}", rel)
+
+
+# zizmor 1.33.1 reads zizmor.yml or zizmor.yaml, at the top or in .github/
+# (the kit's is .github/zizmor.yml): a second one would be read instead of
+# it. The dotted names it does not read yet are refused too.
+ZIZMOR_SHADOWS = ("zizmor.yml", "zizmor.yaml", ".zizmor.yml", ".zizmor.yaml", ".github/zizmor.yaml")
+
+
+def check_zizmor_configs(repo: Repo, report: Report) -> None:
+    for rel in ZIZMOR_SHADOWS:
+        if repo.exists(rel):
+            report.add(
+                "zizmor",
+                rel,
+                "a second zizmor configuration: the kit's .github/zizmor.yml is the one",
+            )
+
+
+# markdownlint-cli2 reads a configuration in every folder, for that folder.
+MARKDOWNLINT_CONFIG = re.compile(r"^\.markdownlint(?:-cli2)?\.(?:jsonc|json|ya?ml|cjs|mjs)$")
+MARKDOWNLINT_ROOT = (
+    ".markdownlint-cli2.jsonc",
+    ".markdownlint.jsonc",
+    ".markdownlint.json",
+    ".markdownlint.yaml",
+    ".markdownlint.yml",
+)
+
+
+def check_markdownlint_configs(repo: Repo, report: Report) -> None:
+    """A markdownlint configuration the kit does not read: in a folder, or a second at the top."""
+    for rel in repo.files:
+        if "node_modules/" in rel or not MARKDOWNLINT_CONFIG.match(PurePosixPath(rel).name):
+            continue
+        if rel not in MARKDOWNLINT_ROOT:
+            report.weaken("markdownlint", f"config:{rel}", rel)
+
+
+def tables(value: Any) -> list[dict[str, Any]]:
+    """The tables of a TOML array of tables, whatever else a hand wrote there.
+
+    gitleaks 8.30.1 reads one table alone (`[allowlists]`) as an array of one.
+    """
+    if isinstance(value, dict):
+        return [value]
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def fold_keys(value: Any, where: str, twice: list[str]) -> Any:
+    """A parsed configuration with every key in lower case, as gitleaks 8.30.1 reads it.
+
+    gitleaks reads `[[Rules]]`, `ID`, `Paths` or `DisabledRules` as the
+    lower-case key. Two spellings of one key are both kept, arrays end to end
+    and tables merged, and each such key is named in `twice`.
+    """
+    if isinstance(value, list):
+        return [fold_keys(v, where, twice) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out: dict[str, Any] = {}
+    for key, item in value.items():
+        low = str(key).lower()
+        path = f"{where}.{low}" if where else low
+        folded = fold_keys(item, path, twice)
+        if low in out:
+            twice.append(path)
+            folded = merge_folded(out[low], folded)
+        out[low] = folded
+    return out
+
+
+def merge_folded(first: Any, second: Any) -> Any:
+    """Two values of one key spelled twice, so that the rules read both.
+
+    Arrays end to end, tables merged, a table and an array as one array; of
+    two other values the second (the key is refused either way).
+    """
+    if isinstance(first, list) and isinstance(second, list):
+        return first + second
+    if isinstance(first, dict) and isinstance(second, dict):
+        merged = dict(first)
+        for key, item in second.items():
+            merged[key] = merge_folded(merged[key], item) if key in merged else item
+        return merged
+    return [*tables(first), *tables(second)] or second
+
+
+# A repository's own gitleaks rule takes an id no default rule has. One of a
+# default rule's id is merged into that rule (gitleaks 8.30.1): its entropy,
+# path or allowlist would switch the default rule off.
+GITLEAKS_OWN_RULE = "kleidos-"
+
+
+def gitleaks_allowlists_off(cfg: dict[str, Any], rel: str, report: Report) -> None:
+    """An allowlist that covers every path, or every secret, turns its rules off.
+
+    So does a rule of the tree that takes a default rule's id.
+    """
+    for i, allow in enumerate(tables(cfg.get("allowlists"))):
+        allowlist_off(allow, f"{rel} allowlists[{i}]", report)
+    for i, rule in enumerate(tables(cfg.get("rules"))):
+        where = f"{rel} rules[{i}]"
+        if not str(rule.get("id", "")).startswith(GITLEAKS_OWN_RULE):
+            report.add(
+                "gitleaks",
+                where,
+                f"its id is not one of the repository's own ({GITLEAKS_OWN_RULE}*): a rule of"
+                " a default rule's id redefines it, refused (no waiver)",
+            )
+        for j, allow in enumerate(tables(rule.get("allowlists"))):
+            allowlist_off(allow, f"{where} allowlists[{j}]", report)
+        if isinstance(rule.get("allowlist"), dict):
+            allowlist_off(rule["allowlist"], f"{where} allowlist", report)
+
+
+def strings(value: Any) -> list[str]:
+    """A list of strings as gitleaks reads it: one string alone is a list of one."""
+    if isinstance(value, str):
+        return [value]
+    return [str(v) for v in value] if isinstance(value, list) else []
+
+
+def allowlist_off(allow: dict[str, Any], where: str, report: Report) -> None:
+    """One allowlist whose paths cover every file, or whose regexes cover every secret.
+
+    A pattern the kit cannot read as gitleaks (Go's RE2) does is refused too.
+    """
+    for key, probes, what in (
+        ("paths", PROBE_PATHS, "every file"),
+        ("regexes", GITLEAKS_PROBES, "every secret"),
+    ):
+        patterns = strings(allow.get(key))
+        if any(tool_regex(p) is None for p in patterns):
+            report.add(
+                "gitleaks",
+                where,
+                f"its {key} hold a pattern the kit cannot read as gitleaks does (\\p, a POSIX"
+                " class, the flag U or -u, or one Python refuses): refused (no waiver)",
+            )
+        elif any(regex_covers_all(p, probes) for p in patterns):
+            report.add(
+                "gitleaks",
+                where,
+                f"its {key} cover {what}: it turns its rules off, refused (no waiver)",
+            )
+
+
+GITLEAKS_PROBES = (
+    "ghp_" + "a1" * 18,
+    "AKIA" + "B2" * 8,
+    "xoxb-12345-abcdef",
+    "sk_live_" + "c3" * 12,
+)
 
 
 def check_osv(repo: Repo, report: Report, today: dt.date) -> None:
@@ -1714,14 +2155,33 @@ SONAR_REFUSED = re.compile(
 SONAR_ALLOWED = {"sonar.scanner.autoconfig.enabled": "false"}
 
 
+# What would keep an issue from being raised: no SonarCloud suppression is
+# waived (docs/quality.md, "Overrides"), and an exclusion of every file is one.
+SONAR_SUPPRESSION = re.compile(r"^sonar\.issue\.(?:ignore|enforce)\.")
+SONAR_EXCLUSIONS = (
+    "sonar.exclusions",
+    "sonar.test.exclusions",
+    "sonar.coverage.exclusions",
+    "sonar.cpd.exclusions",
+)
+
+
 def check_sonar(repo: Repo, report: Report) -> None:
-    """The scanner's own settings are the kit's, not the repository's."""
+    """The scanner's own settings are the kit's, not the repository's; nothing is suppressed."""
     rel = "sonar-project.properties"
     if not repo.exists(rel):
         return
     for key, value in properties_keys(repo.text(rel)):
         if SONAR_REFUSED.match(key) and SONAR_ALLOWED.get(key) != value:
             report.add("sonar", rel, f"{key} is refused: the kit's job runs the scan")
+        elif SONAR_SUPPRESSION.match(key):
+            report.add("sonar", rel, f"{key} suppresses issues: refused (no waiver)")
+        elif key in SONAR_EXCLUSIONS:
+            for pattern in filter(None, (p.strip() for p in value.split(","))):
+                if glob_covers_all(pattern, gitignore=False):
+                    report.add(
+                        "sonar", rel, f"{key}={pattern} excludes every file: refused (no waiver)"
+                    )
 
 
 def check_dependabot(repo: Repo, report: Report, central: bool, run: bool = False) -> None:
@@ -1815,6 +2275,19 @@ def check_ci(repo: Repo, report: Report, kit_ref: str | None = None) -> None:
                 )
             elif forgiven is not False:
                 report.weaken("ci", f"continue-on-error:{rel}:{job_id}", rel)
+            steps = job.get("steps")
+            for index, step in enumerate(steps if isinstance(steps, list) else []):
+                if not isinstance(step, dict) or step.get("continue-on-error", False) is False:
+                    continue
+                label = str(step.get("id") or step.get("name") or index)
+                if "${{" in str(step["continue-on-error"]):
+                    report.add(
+                        "ci",
+                        f"{where} step {label}",
+                        "continue-on-error is an expression: write true, with its waiver",
+                    )
+                else:
+                    report.weaken("ci", f"continue-on-error:{rel}:{job_id}:{label}", rel)
         for num, line in enumerate(text.splitlines(), 1):
             m = USES_LINE.match(line)
             if not m:
@@ -3073,8 +3546,12 @@ def check_shared(
     check_osv(repo, report, today)
     check_sonar(repo, report)
     check_markdownlint(repo, kit, report)
+    check_markdownlint_configs(repo, report)
     check_reuse(repo, report)
     check_typos(repo, report)
+    check_typos_off(repo, report)
+    check_actionlint(repo, report)
+    check_zizmor_configs(repo, report)
     if not repo.exists(WAIVERS):
         report.add("waivers", WAIVERS, "missing (the kit's templates/waivers.toml is the model)")
     if "python" in profiles:

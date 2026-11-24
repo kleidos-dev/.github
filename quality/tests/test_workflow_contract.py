@@ -300,7 +300,7 @@ class VerdictTest(ScriptCase):
                 self.assertEqual(
                     ran.calls,
                     [
-                        "python -m pip install --require-hashes"
+                        "python -I -m pip install --require-hashes"
                         " -r /kit/quality/requirements-tools.txt"
                     ],
                 )
@@ -577,7 +577,7 @@ class HomeTest(ScriptCase):
                     ran.calls,
                     [
                         "git fetch -q --tags --force origin",
-                        f"python quality/sync.py --release-check{flag}",
+                        f"python quality/sync.py --release-check --online{flag}",
                     ],
                 )
 

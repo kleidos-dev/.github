@@ -7,7 +7,8 @@ From kit 3.0.0 a repository runs the kit and holds none of its code
 (docs/quality.md, "How a repository runs the kit"); tools/kit_switch.py
 moves it there. This script serves what has not moved yet: the kit's home,
 which still records its own copies and blocks, the kit 2.x repositories'
-weekly drift notice, and the kit's own release check. It goes with kit 3.1.
+weekly drift notice, and the kit's own release check. It goes in the first
+release after no repository holds copies any more.
 
     sync.py --write REPO [--profiles base,python,...] [--test-dir tests]
         (kleidos-dev/.github itself, and no other) writes the copies, the
@@ -20,10 +21,12 @@ weekly drift notice, and the kit's own release check. It goes with kit 3.1.
         check_quality.py against this working tree of the kit (exit 1 on
         any problem), the way kleidos-dev/agents' sync_commit_check.py
         --check compares copies
-    sync.py --release-check [--on-main]
+    sync.py --release-check [--on-main] [--online]
         kleidos-dev/.github's CI: a change to what repositories receive
         bumps quality/VERSION, and a version on main is tagged and is
-        where the branch v<major> is
+        where the branch v<major> is; every release tag is annotated and
+        signed (--online: GitHub verifies the signature, through gh), and
+        no tag is named like a branch
     sync.py --drift RECORDED_COMMIT
         the drift notice of a kit 2.x repository (its weekly job runs the
         default branch's copy of this script): key=value lines naming the
@@ -45,6 +48,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -137,18 +141,98 @@ def release_tags(cwd: Path = CENTRAL) -> list[str]:
     return sorted(tags, key=version_of, reverse=True)
 
 
-def release_check(on_main: bool, cwd: Path = CENTRAL) -> tuple[int, list[str]]:
+# A signed tag carries its signature after the message; GitHub verifies it.
+SIGNATURE = re.compile(r"^-----BEGIN (?:PGP|SSH) SIGNATURE-----$", re.MULTILINE)
+# The kit's branches are v<major>: a tag of that form would hide one.
+BRANCH_NAME = re.compile(rf"{TAG_PREFIX}\d+")
+
+
+def verified_on_github(tag_object: str) -> bool | None:
+    """Whether GitHub verifies a tag object's signature (gh, the CI's token); None if unknown."""
+    done = subprocess.run(
+        [
+            *("gh", "api", f"repos/{cq.KIT_REPO}/git/tags/{tag_object}"),
+            *("--jq", ".verification.verified"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {"true": True, "false": False}.get(done.stdout.strip()) if not done.returncode else None
+
+
+def clash(name: str, release: bool) -> str:
+    """What to do about a tag and a branch of one name: the release tag always stays."""
+    if release:  # never deleted or moved (docs/quality.md, "Changing the kit")
+        return (
+            f"::error title=A tag named like a branch::the branch {name} is named like the"
+            f" release tag {name}, which hides it (GitHub resolves the tag first) and is never"
+            f" deleted or moved: delete the branch, git push origin :refs/heads/{name}"
+        )
+    return (
+        f"::error title=A tag named like a branch::the tag {name} hides the branch of"
+        f" that name (GitHub resolves the tag first): delete it, git push origin"
+        f" :refs/tags/{name}"
+    )
+
+
+def tag_problems(
+    cwd: Path = CENTRAL, verified: Callable[[str], bool | None] | None = None
+) -> list[str]:
+    """What is wrong with the tags: one named like a branch, a release tag not signed.
+
+    A release tag is the hooks' `rev` in every repository and the release a
+    record notes, so it is annotated and signed, as docs/quality.md
+    "Changing the kit" writes it; a lightweight one, or one with no
+    signature, was pushed by a hand that skipped -s. With `verified`,
+    GitHub's verdict on each signature is asked too.
+    """
+    branches = set(
+        git("for-each-ref", "--format=%(refname:lstrip=3)", REMOTE, cwd=cwd).splitlines()
+    )
+    releases = release_tags(cwd)
+    out = [
+        clash(name, name in releases)
+        for name in git("tag", "-l", cwd=cwd).splitlines()
+        if BRANCH_NAME.fullmatch(name) or name in branches
+    ]
+    for tag in releases:
+        kind = git_ok("cat-file", "-t", f"refs/tags/{tag}", cwd=cwd)
+        body = git("cat-file", "tag", f"refs/tags/{tag}", cwd=cwd) if kind == "tag" else ""
+        if not SIGNATURE.search(body):
+            what = "a lightweight tag" if kind != "tag" else "an annotated tag with no signature"
+            out.append(
+                f"::error title=Release tag not signed::{tag} is {what}: release tags are"
+                f" signed (git tag -s {tag} -m 'Quality kit"
+                f" {'.'.join(map(str, version_of(tag)))}' <its commit>)"
+            )
+        elif verified is not None:
+            answer = verified(git("rev-parse", f"refs/tags/{tag}", cwd=cwd))
+            if answer is not True:
+                said = "does not verify" if answer is False else "could not be asked to verify"
+                out.append(
+                    f"::error title=Release tag not verified::GitHub {said} {tag}'s signature"
+                )
+    return out
+
+
+def release_check(
+    on_main: bool, cwd: Path = CENTRAL, verified: Callable[[str], bool | None] | None = None
+) -> tuple[int, list[str]]:
     """Whether this commit's kit is a release: (exit status, lines to print).
 
     A pull request that changes what repositories receive bumps
     quality/VERSION and adds its CHANGELOG entry; once merged to main, the
     release is tagged at the merge commit, which is what repositories record.
+    Every tag is held to tag_problems first.
     """
     version = (cwd / "quality" / "VERSION").read_text(encoding="utf-8").strip()
     tag = f"{TAG_PREFIX}{version}"
     head = git("rev-parse", "HEAD", cwd=cwd)
     tags = release_tags(cwd)
-    lines: list[str] = []
+    lines: list[str] = tag_problems(cwd, verified)
+    if lines:
+        return 1, lines
     if tag in tags:
         tagged = tag_commit(tag, cwd) or ""
         if kit_fingerprint(tagged, cwd) != kit_fingerprint(head, cwd):
@@ -608,9 +692,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--on-main", action="store_true", help="--release-check: this is a commit on main"
     )
+    ap.add_argument(
+        "--online",
+        action="store_true",
+        help="--release-check: GitHub verifies each release tag's signature (gh, GH_TOKEN)",
+    )
     args = ap.parse_args(argv)
     if args.release_check:
-        status, lines = release_check(args.on_main)
+        status, lines = release_check(
+            args.on_main, verified=verified_on_github if args.online else None
+        )
         print("\n".join(lines))
         return status
     if args.drift:

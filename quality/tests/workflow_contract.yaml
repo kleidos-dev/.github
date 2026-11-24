@@ -66,7 +66,7 @@ check.yml:
       if: inputs.tests != ''
       uses: ./.github/workflows/reusable-python-tests.yml
       with:
-        install: ${{ inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+        install: ${{ inputs.install || (inputs.python && format('python -I -m pip install {0}', inputs.python)) || '' }}
         run: ${{ inputs.tests }}
         python-version-file: ${{ inputs.python-version-file }}
         coverage-report: ${{ inputs.coverage-report }}
@@ -80,7 +80,7 @@ check.yml:
       if: inputs.types
       uses: ./.github/workflows/reusable-mypy.yml
       with:
-        install: ${{ inputs.types-install || inputs.install || (inputs.python && format('python -m pip install {0}', inputs.python)) || '' }}
+        install: ${{ inputs.types-install || inputs.install || (inputs.python && format('python -I -m pip install {0}', inputs.python)) || '' }}
         python-version-file: ${{ inputs.python-version-file }}
       permissions:
         contents: read
@@ -136,7 +136,7 @@ ci.yml:
       needs: quick
       uses: ./.github/workflows/check.yml
       with:
-        install: python -m pip install -r requirements.txt && python -m pip install --require-hashes -r quality/requirements-tools.txt
+        install: python -I -m pip install -r requirements.txt && python -I -m pip install --require-hashes -r quality/requirements-tools.txt
         tests: python -m coverage run -m unittest discover -s tests -v && python -m coverage run --append -m unittest discover -s quality/tests -v && python -m coverage xml -o coverage.xml && python -m coverage report && python quality/coverage_floor.py
       permissions:
         contents: read
@@ -159,11 +159,12 @@ ci.yml:
           python-version-file: .python-version
       - why: every package is checked against its SHA-256
         name: Install the kit's tools (hashed)
-        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
-      - why: on main the version must be tagged and the branch moved; a pull request must carry a new version
+        run: python -I -m pip install --require-hashes -r quality/requirements-tools.txt
+      - why: on main the version must be tagged and the branch moved, a pull request must carry a new version, and every release tag is signed, as GitHub verifies with the read token
         name: The kit at this commit is a release, or a new version
         env:
           EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git fetch -q --tags --force origin
@@ -171,7 +172,7 @@ ci.yml:
           if [ "${EVENT}" != pull_request ]; then
             on_main=(--on-main)
           fi
-          python quality/sync.py --release-check "${on_main[@]}"
+          python quality/sync.py --release-check --online "${on_main[@]}"
     preview:
       name: 🔭 Impact on the public consumers
       needs: check
@@ -190,7 +191,7 @@ ci.yml:
           python-version-file: .python-version
       - why: every package is checked against its SHA-256
         name: Install the kit's tools (hashed)
-        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+        run: python -I -m pip install --require-hashes -r quality/requirements-tools.txt
       - why: 'informs, with the public repositories only: no --all'
         name: Apply the kit to throwaway clones and count what it finds
         run: python tools/ecosystem.py preview --summary "${GITHUB_STEP_SUMMARY}"
@@ -289,7 +290,7 @@ ecosystem.yml:
           python-version-file: .python-version
       - why: every package is checked against its SHA-256
         name: Install the kit's tools (hashed)
-        run: python -m pip install --require-hashes -r quality/requirements-tools.txt
+        run: python -I -m pip install --require-hashes -r quality/requirements-tools.txt
       - why: 'the public half only: no --all, the job''s own read token; red fails it, but on a pull request'
         name: Read the public repositories
         env:
@@ -565,7 +566,7 @@ reusable-deny.yml:
         name: Install the kit's tools (hashed)
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+        run: python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
       - why: the one step with the secret, the last of a job where no third party's code ran; without it the checks say so
         name: The hooks that read the deny-list
         env:
@@ -696,7 +697,7 @@ reusable-lint.yml:
         name: Install the kit's tools (hashed)
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+        run: python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
       - why: every policy check but the header lines, which have their own job; a hook the caller skips is judged; its failure fails the job
         name: The kit's policy checks
         env:
@@ -787,7 +788,7 @@ reusable-mypy.yml:
         name: Install the kit's tools (hashed)
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+        run: python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
       - why: the caller's command, in a shell that stops at the first failure, from the environment and never pasted into the script
         name: Install the repository's dependencies
         if: inputs.install != ''
@@ -873,7 +874,7 @@ reusable-python-tests.yml:
         install:
           description: The command that installs the repository's pinned dependencies
           type: string
-          default: python -m pip install -r requirements.txt
+          default: python -I -m pip install -r requirements.txt
         run:
           description: The test command; it writes the coverage report
           type: string
@@ -958,8 +959,8 @@ reusable-quality-drift.yml:
           set -euo pipefail
           kit="${RUNNER_TEMP}/kit"
           git clone -q --filter=blob:none https://github.com/kleidos-dev/.github "${kit}"
-          recorded="$(python3 -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
-          python -m pip install -q --require-hashes -r "${kit}/quality/requirements-tools.txt"
+          recorded="$(python3 -I -c 'import json; print(json.load(open(".github/quality/SOURCE.json"))["commit"])')"
+          python -I -m pip install -q --require-hashes -r "${kit}/quality/requirements-tools.txt"
           # The kit's own sync.py names the newest quality-v* tag and compares
           # what a repository receives at the two commits (key=value lines).
           python "${kit}/quality/sync.py" --drift "${recorded}" > "${RUNNER_TEMP}/drift.txt"
@@ -982,7 +983,7 @@ reusable-quality-drift.yml:
           KIT: ${{ steps.compare.outputs.kit }}
         run: |
           set -euo pipefail
-          python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+          python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
           tree="${RUNNER_TEMP}/tree"
           cp -a "${GITHUB_WORKSPACE}" "${tree}"
           python "${KIT}/quality/sync.py" --write "${tree}" > "${RUNNER_TEMP}/sync.log" || true
@@ -1083,7 +1084,7 @@ reusable-reuse.yml:
         name: Install the kit's tools (hashed)
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+        run: python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
       - why: REUSE's own verdict fails the job
         name: Every file states its copyright and license (reuse lint)
         run: reuse lint
@@ -1145,7 +1146,7 @@ reusable-secrets.yml:
         run: |
           python3 "${KIT}/quality/fetch_tool.py" gitleaks "${RUNNER_TEMP}/bin"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
-          python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+          python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
       - why: the whole history, every default rule, inline allow comments ignored, a finding fails the job
         name: History, default rules
         run: gitleaks git . --config .gitleaks.toml --no-banner --redact --ignore-gitleaks-allow --verbose

@@ -82,7 +82,7 @@ jobs:
       - name: Install the kit's tools (hashed)
         env:
           KIT: ${{ steps.kit.outputs.dir }}
-        run: python -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
+        run: python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
       - name: Install the repository's dependencies
         if: inputs.install != ''
         env:

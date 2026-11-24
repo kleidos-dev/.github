@@ -195,7 +195,7 @@ OWNER_NAME = re.compile(
 ADDRESS = r"[\w.+-]+(?:@|\W+at\W+)[\w-]+(?:\.|\W+dot\W+)\w[\w.-]*"
 # An address before or after the name, with nothing but marks and a label between.
 OWNER_EMAIL = re.compile(
-    rf"(?:{OWNER_NAME.pattern})\W{{0,12}}(?:(?:e-?mail|mail|contact)\W{{1,4}})?{ADDRESS}"
+    rf"(?:{OWNER_NAME.pattern})\W{{0,12}}(?:(?:e-?mail|mail(?:to)?|contact)\W{{1,4}})?{ADDRESS}"
     rf"|{ADDRESS}\W{{1,12}}(?:{OWNER_NAME.pattern})",
     re.IGNORECASE,
 )

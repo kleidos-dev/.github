@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import kit_fixtures as fx
 from kit_fixtures import check_quality as cq
@@ -440,8 +441,17 @@ class ReleaseTest(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def tag(self, name: str, ref: str = "HEAD") -> None:
-        fx.git(self.kit, "tag", name, ref)
+    def tag(self, name: str, ref: str = "HEAD", kind: str = "signed") -> None:
+        """A tag as a release is made (signed), or as a hand that skipped -s makes one."""
+        if kind == "lightweight":
+            fx.git(self.kit, "tag", name, ref)
+            return
+        message = f"Quality kit {name}"
+        if kind == "signed":  # the shape of a signature; GitHub's verdict is asked apart
+            message += (
+                "\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQQ=\n-----END PGP SIGNATURE-----"
+            )
+        fx.git(self.kit, "tag", "-a", "--cleanup=verbatim", name, ref, "-m", message)
 
     def test_a_kit_change_needs_a_new_version_and_main_needs_its_tag(self) -> None:
         status, lines = sync.release_check(on_main=False, cwd=self.kit)
@@ -535,6 +545,122 @@ class ReleaseTest(unittest.TestCase):
         fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", old)
         status, lines = sync.release_check(on_main=True, cwd=self.kit)
         self.assertEqual((status, "released" in lines[0]), (0, True), lines)
+
+    def test_a_release_tag_that_is_not_signed_is_refused(self) -> None:
+        for kind, said in (
+            ("lightweight", "is a lightweight tag"),
+            ("annotated", "is an annotated tag with no signature"),
+        ):
+            for name in (f"v{self.version}", "v3.0.0", "quality-v2.3.0"):
+                with self.subTest(kind=kind, name=name):
+                    self.tag(name, kind=kind)
+                    for on_main in (False, True):
+                        status, lines = sync.release_check(on_main=on_main, cwd=self.kit)
+                        self.assertEqual(status, 1, lines)
+                        self.assertIn(f"{name} {said}", lines[0])
+                        self.assertIn(f"git tag -s {name}", lines[0])
+                    fx.git(self.kit, "tag", "-d", name)
+        # A tag that is no release (a note, a nightly) need not be signed.
+        self.tag("nightly", kind="lightweight")
+        self.assertEqual(sync.tag_problems(self.kit), [])
+
+    def test_a_tag_named_like_a_branch_is_refused(self) -> None:
+        fx.git(self.kit, "update-ref", "refs/remotes/origin/main", "HEAD")
+        fx.git(self.kit, "update-ref", "refs/remotes/origin/feature", "HEAD")
+        for name in ("v3", "v4", "v12", "main", "feature"):
+            with self.subTest(name=name):
+                self.tag(name)
+                status, lines = sync.release_check(on_main=False, cwd=self.kit)
+                self.assertEqual(status, 1, lines)
+                self.assertIn(f"the tag {name} hides the branch", lines[0])
+                self.assertIn(f"git push origin :refs/tags/{name}", lines[0])
+                fx.git(self.kit, "tag", "-d", name)
+        for name in ("v3.0", "v3x", "va", "HEAD-tag"):
+            with self.subTest(name=name):
+                self.tag(name)
+                self.assertEqual(sync.tag_problems(self.kit), [], name)
+                fx.git(self.kit, "tag", "-d", name)
+
+    def test_a_branch_named_like_a_release_tag_is_the_one_deleted(self) -> None:
+        """A release tag is never deleted or moved: a branch that takes its name goes."""
+        for name in ("quality-v2.3.0", "v3.0.0"):
+            with self.subTest(name=name):
+                self.tag(name)
+                fx.git(self.kit, "update-ref", f"refs/remotes/origin/{name}", "HEAD")
+                lines = sync.tag_problems(self.kit)
+                self.assertEqual(len(lines), 1, lines)
+                self.assertIn(f"the branch {name} is named like the release tag", lines[0])
+                self.assertIn(f"git push origin :refs/heads/{name}", lines[0])
+                self.assertNotIn(":refs/tags/", lines[0])
+                fx.git(self.kit, "update-ref", "-d", f"refs/remotes/origin/{name}")
+                fx.git(self.kit, "tag", "-d", name)
+
+    def test_an_ssh_signature_signs_a_release_tag(self) -> None:
+        message = (
+            "Quality kit v3.0.0\n-----BEGIN SSH SIGNATURE-----\nU1NIU0lH\n"
+            "-----END SSH SIGNATURE-----"
+        )
+        fx.git(self.kit, "tag", "-a", "--cleanup=verbatim", "v3.0.0", "HEAD", "-m", message)
+        self.assertEqual(sync.tag_problems(self.kit), [])
+        fx.git(self.kit, "tag", "-d", "v3.0.0")
+        unsigned = message.replace("SSH SIGNATURE", "X509 SIGNATURE")
+        fx.git(self.kit, "tag", "-a", "--cleanup=verbatim", "v3.0.0", "HEAD", "-m", unsigned)
+        self.assertIn("an annotated tag with no signature", sync.tag_problems(self.kit)[0])
+
+    def test_githubs_verdict_on_each_signature_is_asked_online(self) -> None:
+        self.tag("quality-v2.3.0", kind="signed")
+        self.tag(f"v{self.version}", kind="signed")
+        fx.git(self.kit, "update-ref", "refs/remotes/origin/v3", "HEAD")
+        objects = {
+            name: fx.git(self.kit, "rev-parse", f"refs/tags/{name}").strip()
+            for name in ("quality-v2.3.0", f"v{self.version}")
+        }
+        asked: list[str] = []
+        for answer, wanted in ((True, 0), (False, 1), (None, 1)):
+            with self.subTest(answer=answer):
+                asked.clear()
+
+                def verdict(sha: str, answer: bool | None = answer) -> bool | None:
+                    asked.append(sha)
+                    return answer
+
+                status, lines = sync.release_check(True, cwd=self.kit, verified=verdict)
+                self.assertEqual(status, wanted, lines)
+                self.assertEqual(sorted(asked), sorted(objects.values()))
+                if answer is False:
+                    self.assertIn("GitHub does not verify", lines[0])
+                if answer is None:
+                    self.assertIn("could not be asked to verify", lines[0])
+        self.assertEqual(sync.release_check(True, cwd=self.kit)[0], 0)  # offline: the shape only
+
+    def test_github_is_asked_through_gh(self) -> None:
+        for out, status, wanted in (
+            ("true\n", 0, True),
+            ("false\n", 0, False),
+            ("", 1, None),
+            ("true\n", 1, None),
+            ("maybe\n", 0, None),
+        ):
+            with self.subTest(out=out, status=status):
+                done = subprocess.CompletedProcess([], status, out, "")
+                with mock.patch("subprocess.run", return_value=done) as run:
+                    self.assertIs(sync.verified_on_github("abc123"), wanted)
+                cmd = run.call_args.args[0]
+                self.assertEqual(
+                    cmd[:3], ["gh", "api", "repos/kleidos-dev/.github/git/tags/abc123"]
+                )
+                self.assertEqual(cmd[3:], ["--jq", ".verification.verified"])
+
+    def test_the_command_line_asks_online_only_when_told(self) -> None:
+        for argv, online in ((["--release-check"], False), (["--release-check", "--online"], True)):
+            with self.subTest(argv=argv):
+                with (
+                    mock.patch.object(sync, "release_check", return_value=(0, ["ok"])) as check,
+                    mock.patch("builtins.print"),
+                ):
+                    self.assertEqual(sync.main(argv), 0)
+                verified = check.call_args.kwargs["verified"]
+                self.assertIs(verified, sync.verified_on_github if online else None)
 
     def old_kit(self, version: str) -> str:
         """A commit whose kit is a 2.x one."""
