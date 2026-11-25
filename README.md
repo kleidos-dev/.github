@@ -38,7 +38,7 @@ This repository holds the kleidos-dev organization's profile, its community defa
 | [`docs/agent-docs.md`](docs/agent-docs.md) | The standard for every repository's `AGENTS.md` and `CLAUDE.md`, the organization rules they share and the guard that checks them. |
 | [`docs/quality-firmware-adoption.md`](docs/quality-firmware-adoption.md) | The plan for bringing the firmware repository onto the kit. |
 | [`quality/`](quality/) | The kit itself: the checkers every repository runs, the shared tool configs, the model CI, their tests, and the tool versions. |
-| [`hooks/`](hooks/), [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml) | The kit's pre-commit hooks, which other repositories name at a release tag, the commit-message checker among them. |
+| [`hooks/`](hooks/), [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml) | The kit's pre-commit hooks, which other repositories name at a release tag, the commit-message checker among them, and the check of whose the commits are that a change adds. |
 | [`tools/`](tools/) | The tools that look across the repositories: the ecosystem report and its declared list (`ecosystem.toml`), the switch to the run form, and the weekly timers. |
 | [`scripts/`](scripts/), [`tests/`](tests/) | The media metadata tools (`media_meta.py`, `stamp_media_meta.py`, `check_metadata.py`) and their tests. |
 | [`.github/workflows/`](.github/workflows/) | The kit's entry workflows (`quick.yml`, `check.yml`, `sonar.yml`), which every repository's CI calls, the `reusable-*.yml` jobs they call, this repository's own CI (`ci.yml`) and the weekly ecosystem report (`ecosystem.yml`). |

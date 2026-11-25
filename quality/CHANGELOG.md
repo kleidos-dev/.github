@@ -7,6 +7,14 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 3.4.0 (2026-11-25)
+
+Decision of the owner of 2026-11-25: every commit of the organization is committed by the owner with one address and signed with one key, and a contributor keeps the authorship. MINOR, by [`docs/quality.md`, "Versions"](../docs/quality.md#versions): no `main` as it stands turns red, since only commits a change adds from the rule's start are judged, and the impact preview finds in the `main` of boards, brand, cla, agents, videos, qa and meter what 3.3.0 finds. What turns red, on purpose, is the next commit somebody lands with a merge button, or commits with another address or key. It moves `v3` within the week of the last release as the second exception of ["How often `v3` moves"](../docs/quality.md#how-often-v3-moves).
+
+- The commit check judges whose the commits are that a pull request from the same repository adds, and that a push adds to the default branch ([`hooks/commit_identity.py`](../hooks/commit_identity.py), [`docs/quality.md`, "The identity of a commit"](../docs/quality.md#the-identity-of-a-commit)): the committer's address, a signature GitHub reports valid with the owner's key, and, of an author GitHub knows as the owner, that address. So the `✍️ Commits` job runs on a push too. A pull request from a fork or of Dependabot is told that the maintainer lands it. The owner, the keys, the exempt refs and the start of the rule are one file, [`hooks/identity.json`](../hooks/identity.json).
+- `tools/ecosystem.py land OWNER/NAME#N` lands one pull request by a signed fast forward of `main` ([`tools/fast_forward.py`](../tools/fast_forward.py)); a person's is taken first, with its authorship, and an update of Dependabot's is taken as one commit of the owner's. `land --merge` no longer squash-merges and no longer updates a bot's branch; `--read SHA` says what was read by a person.
+- [`docs/quality.md`, "Merging"](../docs/quality.md#merging), the organization rules ([`agents/block.md`](agents/block.md)) and [`CONTRIBUTING.md`](../CONTRIBUTING.md) say how a change lands; "Versions" says how often `v3` has moved, and when it may.
+
 ## 3.3.0 (2026-11-25)
 
 Two decisions of the owner of 2026-11-25: no e-mail address in the fields that say who a thing comes from, and where a force push is allowed. MINOR, by [`docs/quality.md`, "Versions"](../docs/quality.md#versions): a rule every repository already passes. The impact preview, run on the `main` of boards, brand, cla, agents, videos, qa and meter, finds in each what 3.2.0 finds, and nothing of the new rule. What can turn red is a later change that puts an address in such a field.
