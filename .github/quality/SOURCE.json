@@ -28,7 +28,7 @@
     {
       "path": ".github/quality/spdx_headers.py",
       "source_path": "quality/spdx_headers.py",
-      "sha256": "3a4a5007f2bc05f82936cb6bf3d82739002c0eae3ec9fc6f9ac9c8bfd8984454"
+      "sha256": "2b06494dd0e45428a76832220e9709b4107d7ecb001c366a17c956eca79f3492"
     },
     {
       "path": ".github/quality/markdownlint.jsonc",
@@ -86,7 +86,7 @@
       "id": "organization-rules",
       "path": "AGENTS.md",
       "source_path": "quality/agents/block.md",
-      "sha256": "6480d740d6f216013368d7202a07f7552f960f63ea4ad8a47e3a6bf6d6d3504a"
+      "sha256": "8afc013c77abc16196987a54af5bcefd684cc0e05c494040f7b29987cd31f113"
     },
     {
       "id": "typos",

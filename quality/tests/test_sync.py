@@ -349,7 +349,9 @@ class MarkdownBlockTest(unittest.TestCase):
     def test_an_edited_block_is_caught(self) -> None:
         self.sync()
         text = self.agents.read_text(encoding="utf-8")
-        self.agents.write_text(text.replace("never a force push", "rarely"), encoding="utf-8")
+        edited = text.replace("Never `--no-verify`", "Rarely `--no-verify`")
+        self.assertNotEqual(edited, text)
+        self.agents.write_text(edited, encoding="utf-8")
         found = problems(self.root)
         self.assertTrue(any("block organization-rules differs" in p for p in found), found)
 

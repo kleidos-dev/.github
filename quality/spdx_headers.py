@@ -13,7 +13,8 @@ syntax starts with two lines in that syntax, in this order:
 where the tags are REUSE's file-copyright and license-identifier tags, and
 <year> is the year of the file's first commit, as
 `git log --diff-filter=A --format=%ad --date=format:%Y -- <file>` gives it
-(the current year for a file not committed yet). No e-mail address. A file
+(the current year for a file not committed yet). No e-mail address, nor in
+a contributor's line (REUSE's file-contributor tag) beside them. A file
 that cannot carry a comment (images, JSON, binaries, generated data) gets
 both through a REUSE.toml annotation instead; so does a file REUSE.toml
 covers with precedence "override" (third-party text, a template whose
@@ -62,6 +63,7 @@ HOLDER = "José M. Requena Plens"
 # as a header.
 COPYRIGHT_TAG = "SPDX-" + "FileCopyrightText:"
 LICENSE_TAG = "SPDX-" + "License-Identifier:"
+CONTRIBUTOR_TAG = "SPDX-" + "FileContributor:"
 IGNORE_START = "REUSE-" + "IgnoreStart"
 IGNORE_END = "REUSE-" + "IgnoreEnd"
 HEAD_LINES = 40
@@ -481,11 +483,12 @@ def agents_copy(root: Path, rel: str) -> bool:
 class Header:
     copyright_lines: list[tuple[int, str]]  # (line index, text after the tag)
     license_lines: list[tuple[int, str]]
+    contributor_lines: list[tuple[int, str]]
 
 
 def read_header(lines: list[str]) -> Header:
-    """The copyright and license tags in a file's head, outside ignore blocks."""
-    head = Header([], [])
+    """The copyright, license and contributor tags in a file's head, outside ignore blocks."""
+    head = Header([], [], [])
     ignoring = False
     for i, line in enumerate(lines[:HEAD_LINES]):
         if IGNORE_START in line:
@@ -498,6 +501,7 @@ def read_header(lines: list[str]) -> Header:
         for tag, bucket in (
             (COPYRIGHT_TAG, head.copyright_lines),
             (LICENSE_TAG, head.license_lines),
+            (CONTRIBUTOR_TAG, head.contributor_lines),
         ):
             at = line.find(tag)
             if at != -1:
@@ -598,6 +602,11 @@ def check_text(rel: str, text: str, year: str | None, *, copy: bool = False) -> 
             problems.append(
                 f"the copyright year is {m.group(1)}, but git first added the file in {year}"
             )
+    problems.extend(
+        "a contributor's line carries an e-mail address: a name only"
+        for _i, value in head.contributor_lines
+        if EMAIL.search(unicodedata.normalize("NFKC", value))
+    )
     if head.copyright_lines and not any(HOLDER in v for _i, v in head.copyright_lines):
         problems.append(
             f"no copyright line names {HOLDER} (a third-party file is stated in REUSE.toml"
@@ -678,6 +687,8 @@ def fix_text(rel: str, text: str, year: str, license_expr: str | None) -> tuple[
             new_value = owner
         if new_value != value:
             lines[i] = lines[i].replace(value, new_value, 1)
+    for i, value in head.contributor_lines:
+        lines[i] = lines[i].replace(value, EMAIL.sub("", value).strip(), 1)
     head = read_header(lines)
     if head.license_lines and not head.copyright_lines:
         i = head.license_lines[0][0]

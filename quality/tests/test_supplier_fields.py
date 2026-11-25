@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 import tempfile
@@ -20,6 +21,7 @@ from kit_fixtures import supplier_fields as sf
 H = fx.HOLDER
 OWN = sf.ALLOWED
 MAIL = "owner@example.org"  # any address but the allowed one
+REAL = "owner@kleidos.dev"  # one whose domain is not reserved for examples
 TODAY = dt.date(2026, 11, 25)
 
 
@@ -52,7 +54,7 @@ PLANTED: tuple[tuple[str, str, str], ...] = (
     ("package.json", '{"maintainers": ["{}"]}', "maintainers"),
     ("package.json", '{"bugs": {"email": "{}"}}', "bugs.email"),
     ("package.json", '{"author": "{}", "author": "A"}', "author"),
-    ("package.json", '{"maintainers": {"{}": true}}', "maintainers.{}"),
+    ("package.json", '{"maintainers": {"{}": true}}', "maintainers.*"),
     ("composer.json", '{"support": {"email": "{}"}}', "support.email"),
     ("composer.json", '{"authors": [{"email": "{}"}]}', "authors.email"),
     (
@@ -74,6 +76,14 @@ PLANTED: tuple[tuple[str, str, str], ...] = (
     ("library.json", '{"authors": {"email": "{}"}}', "authors.email"),
     ("x/.claude-plugin/plugin.json", '{"author": {"email": "{}"}}', "author.email"),
     (".claude-plugin/marketplace.json", '{"plugins": [{"author": "{}"}]}', "plugins.author"),
+    (".claude-plugin/marketplace.json", '{"metadata": {"author": "{}"}}', "metadata.author"),
+    (".claude-plugin/plugin.json", '{"maintainers": ["{}"]}', "maintainers"),
+    ("codemeta.json", '{"@graph": [{"author": {"email": "{}"}}]}', "@graph.author.email"),
+    ("codemeta.json", '{"contactPoint": {"email": "{}"}}', "contactPoint.email"),
+    ("REUSE.toml", "[meta]\nSPDX-PackageSupplier = '{}'\n", "meta.SPDX-PackageSupplier"),
+    ("package.json", '{"homepage": "mailto:{}"}', "homepage"),
+    ("pyproject.toml", '[project.urls]\nContact = "MAILTO:{}"', "project.urls.Contact"),
+    ("idf_component.yml", "issues: mailto:{}\n", "issues"),
     ("action.yml", "author: {}\nname: x\n", "author"),
     ("x/action.yaml", "author: {}\nname: x\n", "author"),
     ("manifest.json", '{"author": {"email": "{}"}}', "author.email"),
@@ -82,30 +92,38 @@ PLANTED: tuple[tuple[str, str, str], ...] = (
         '{"metadata": {"supplier": {"contact": [{"email": "{}"}]}}}',
         "metadata.supplier.contact.email",
     ),
-    ("x.cdx.json", '{"components": [{"publisher": "{}"}]}', "components.publisher"),
+    ("x.cdx.json", '{"metadata": {"component": {"author": "{}"}}}', "metadata.component.author"),
     ("x.spdx.json", '{"packages": [{"supplier": "Person: A ({})"}]}', "packages.supplier"),
     ("x.spdx.yaml", "creationInfo: {creators: ['Person: A ({})']}\n", "creationInfo.creators"),
-    ("x.spdx", "PackageSupplier: Person: A ({})\n", ""),
-    ("bom.xml", "<bom><supplier><email>{}</email></supplier></bom>\n", ""),
+    ("x.spdx", "PackageName: x\nPackageSupplier: Person: A ({})\n", "packages.supplier"),
+    ("x.spdx", "Creator: Person: A ({})\n", "creationInfo.creators"),
+    (
+        "bom.xml",
+        "<bom><metadata><supplier><c:email>{}</c:email></supplier></metadata></bom>\n",
+        "metadata.supplier.email",
+    ),
     ("setup.cfg", "[metadata]\nauthor_email = {}\n", ""),
     ("setup.py", 'setup(author_email="{}")\n', ""),
     ("library.properties", "maintainer=A <{}>\n", ""),
     ("x.gemspec", 'spec.email = ["{}"]\n', ""),
     ("debian/control", "Maintainer: A <{}>\n", ""),
     (".reuse/dep5", "Upstream-Contact: A <{}>\n", ""),
-    ("AUTHORS", "A <{}>\n", ""),
-    ("Contributors.md", "- A <{}>\n", ""),
-    ("MAINTAINERS.txt", "A <{}>\n", ""),
-    (".github/CODEOWNERS", "* {}\n", ""),
-    (".mailmap", "A <{}>\n", ""),
+)
+
+# A file of people is one at the root and in .github/ only.
+PEOPLE: tuple[tuple[str, str], ...] = (
+    ("AUTHORS", "A <{}>\n"),
+    ("Contributors.md", "- A <{}>\n"),
+    ("MAINTAINERS.txt", "A <{}>\n"),
+    (".github/CODEOWNERS", "* {}\n"),
+    (".mailmap", "A <{}>\n"),
 )
 
 # The whole list, as it is meant to be: its files, each with every field
 # ("" for a file that is searched whole).
-PEOPLE = "AUTHORS AUTHORS.md AUTHORS.txt CONTRIBUTORS CONTRIBUTORS.md CONTRIBUTORS.txt"
 LISTED: dict[str, str] = {
-    "REUSE.toml": "SPDX-PackageSupplier SPDX-PackageOriginator annotations.SPDX-FileContributor",
-    "package.json composer.json": (
+    "REUSE.toml": "x.SPDX-PackageSupplier x.SPDX-PackageOriginator x.SPDX-FileContributor",
+    "package.json package.yaml composer.json bower.json deno.json jsr.json": (
         "author authors bugs contributors funding maintainers publisher support"
     ),
     "pyproject.toml Cargo.toml": (
@@ -113,27 +131,41 @@ LISTED: dict[str, str] = {
     ),
     "CITATION.cff": "authors contact preferred-citation references x.email",
     "codemeta.json .zenodo.json": (
-        "author contributor contributors copyrightHolder creator creators editor funder"
-        " maintainer producer provider publisher sponsor"
+        "x.author x.contactPoint x.contributor x.contributors x.copyrightHolder x.creator"
+        " x.creators x.editor x.email x.funder x.maintainer x.producer x.provider x.publisher"
+        " x.sponsor"
     ),
     "idf_component.yml idf_component.yaml library.json": "authors maintainers",
-    ".claude-plugin/x.json": "author owner plugins.author",
+    ".claude-plugin/x.json": "x.author x.authors x.contributors x.maintainer x.maintainers x.owner",
     "action.yml action.yaml": "author",
     "manifest.json": "author developer",
-    "bom.json sbom.json x.cdx.json x.spdx.json x.spdx.yaml x.spdx.yml": (
-        "x.annotator x.author x.authors x.contact x.creators x.email x.manufacture"
-        " x.manufacturer x.originator x.publisher x.reviewer x.supplier"
+    "bom.json bom.xml xsbomx.json xsbomx.xml xsbomx.yaml xsbomx.yml x.cdx.json x.cdx.xml"
+    " cyclonedx.json spdx.json x.spdx x.spdx.json x.spdx.yaml x.spdx.yml": (
+        "author authors creators manufacturer originator publisher supplier"
+        " metadata.author metadata.authors metadata.component metadata.manufacture"
+        " metadata.manufacturer metadata.publisher metadata.supplier"
+        " annotations.annotator creationInfo packages.annotations packages.originator"
+        " packages.supplier revieweds.reviewer"
     ),
-    "bom.xml sbom.xml x.cdx.xml x.spdx .reuse/dep5": "",
-    "setup.py setup.cfg library.properties x.gemspec debian/control": "",
-    f"{PEOPLE} MAINTAINERS MAINTAINERS.md MAINTAINERS.txt CODEOWNERS .mailmap": "",
+    "setup.py setup.cfg library.properties x.gemspec debian/control .reuse/dep5": "",
+    "/AUTHORS /.github/AUTHORS /AUTHORS.md /.github/AUTHORS.md /AUTHORS.txt /.github/AUTHORS.txt"
+    " /CONTRIBUTORS /.github/CONTRIBUTORS /CONTRIBUTORS.md /.github/CONTRIBUTORS.md"
+    " /CONTRIBUTORS.txt /.github/CONTRIBUTORS.txt /MAINTAINERS /.github/MAINTAINERS"
+    " /MAINTAINERS.md /.github/MAINTAINERS.md /MAINTAINERS.txt /.github/MAINTAINERS.txt"
+    " /CODEOWNERS /.github/CODEOWNERS /docs/CODEOWNERS /.mailmap": "",
 }
 
 
 def document(rel: str, field: str, value: str) -> str:
     """A file of that format with the value in that field."""
     if not field:
-        return value
+        return f'x = "{value}"\n' if rel.endswith(".py") else value
+    if rel.endswith(".xml"):
+        names = field.split(".")
+        tags = "".join(f"<{name}>" for name in names), "".join(f"</{n}>" for n in names[::-1])
+        return f"<bom>{tags[0]}{value}{tags[1]}</bom>"
+    if rel.endswith(".spdx"):
+        return f"Creator: {value}\n"
     if rel.endswith(".toml"):
         table, dot, name = field.rpartition(".")
         head = f"[[{table}]]\n" if dot else ""
@@ -177,9 +209,12 @@ class SupplierFieldsTest(unittest.TestCase):
     def planted(self, value: str) -> tuple[cq.Report, list[tuple[str, str]]]:
         """PLANTED with this value, each in a folder of its own: what is found, and the fields."""
         where = []
+        for rel, text in PEOPLE:
+            fx.write(self.root, rel, text.replace("{}", value))
+            where.append((rel, sf.WHOLE))
         for n, (rel, text, field) in enumerate(PLANTED):
             fx.write(self.root, f"{n}/{rel}", text.replace("{}", value))
-            where.append((f"{n}/{rel}", field.replace("{}", value) or sf.WHOLE))
+            where.append((f"{n}/{rel}", field or sf.WHOLE))
         report = cq.Report()
         sf.check(cq.Repo(self.root), report)
         return report, sorted(where)
@@ -187,7 +222,7 @@ class SupplierFieldsTest(unittest.TestCase):
     # ----------------------------------------------------------------- fields
 
     def test_an_address_in_every_field_is_found(self) -> None:
-        report, where = self.planted(MAIL)
+        report, where = self.planted(REAL)
         self.assertEqual(sorted(self.named(report)), where)
         self.assertEqual(report.weakenings, [])
 
@@ -207,14 +242,14 @@ class SupplierFieldsTest(unittest.TestCase):
 
     def test_every_file_and_field_of_the_list(self) -> None:
         listed = {
-            tuple(name.casefold() for name in files.split()): tuple(
+            tuple(name.casefold().removeprefix("/") for name in files.split()): tuple(
                 field.casefold().replace("_", "-") for field in fields.split()
             )
             for files, fields in LISTED.items()
         }
         self.assertEqual(
             {
-                tuple(name.replace("*", "x") for name in row.files): tuple(
+                tuple(name.replace("*", "x").removeprefix("/") for name in row.files): tuple(
                     field.replace("**", "x") for field in row.fields
                 )
                 for row in sf.METADATA
@@ -222,7 +257,11 @@ class SupplierFieldsTest(unittest.TestCase):
             listed,
         )
         where = [
-            fx.write(self.root, f"{n}/{i}/{j}/{rel}", document(rel, field, MAIL))
+            fx.write(
+                self.root,
+                rel[1:] if rel.startswith("/") else f"{n}/{i}/{j}/{rel}",
+                document(rel, field, REAL),
+            )
             for n, (files, fields) in enumerate(LISTED.items())
             for i, rel in enumerate(files.split())
             for j, field in enumerate(fields.split() or [""])
@@ -255,6 +294,9 @@ class SupplierFieldsTest(unittest.TestCase):
             ("tests/authors.py", f"AUTHOR = '{MAIL}'\n"),
             ("facts.json", f'{{"creator": {{"email": "{MAIL}"}}}}'),
             ("README.md", f"Write to {MAIL}.\n"),
+            ("docs/contributors.md", f"Write {REAL}.\n"),
+            ("site/.mailmap", f"A <{REAL}>\n"),
+            ("setup.py", f"# {REAL}\nx = lhs@rhs.shape\n"),
             ("node_modules/x/package.json", f'{{"author": "{MAIL}"}}'),
         ):
             with self.subTest(rel=rel, text=text):
@@ -292,7 +334,82 @@ class SupplierFieldsTest(unittest.TestCase):
             (f"{H} (https://kleidos.dev)", False),
             (f"{H} (https://example.org/@owner)", False),
             (f"{H} <https://example.org/@owner>", False),
-            ("@owner@example.org, on the fediverse", False),
+            ("@owner@example.org, on the fediverse", True),
+            ("mailto://owner@example.org", True),
+            ("//owner@example.org", True),
+            ("https://kleidos.dev owner@example.org", True),
+            ("ftp://x@owner@example.org", True),
+            ("https://kleidos.dev?to=owner@example.org", True),
+            ("https://kleidos.dev#owner@example.org", True),
+            ("https://kleidos.dev,owner@example.org", True),
+            ("https://kleidos.dev;owner@example.org", True),
+            ("xhttps://owner@example.org", True),
+            ("owner @ example.org", True),
+            ("owner@\\nexample.org", True),
+            ("owner@\u200bexample.org", True),
+            ("owner\u00ad@example.org", True),
+            ("owner\u200f@example.org", True),
+            ("owner@\ufe0fexample.org", True),
+            ("owner@\U000e0100example.org", True),
+            ("owner@\u034fexample.org", True),
+            ("owner@\\u0000example.org", True),
+            ("owner@\u2800example.org", True),
+            ("owner@example\u3002org", True),
+            ("owner@example\uff0eorg", True),
+            ("owner@example\uff61org", True),
+            ("owner@exa\u0301mple.org", True),
+            ("owner&#64;example.org", True),
+            ("owner&commat;example.org", True),
+            ("owner&amp;amp;#64;example.org", True),
+            ("mailto:owner%40example.org", True),
+            ("mailto:owner%252525252540example.org", True),
+            ("owner\\\\x40example.org", True),
+            ("owner\\\\u0040example.org", True),
+            ("owner\\\\u{40}example.org", True),
+            ("owner\\\\U00000040example.org", True),
+            ("(owner at example.org)", True),
+            (f"{H} (owner at mail.example.org)", True),
+            ("<owner at example.org>", True),
+            ("owner[at]example[.]org", True),
+            ("owner@example[.]org", True),
+            ("owner@example(.)org", True),
+            ("owner@example (dot) org", True),
+            ("owner(at)example(dot)org", True),
+            ("owner<at>example.org", True),
+            ("owner <at> example <dot> org", True),
+            ("owner_at_example_dot_org", True),
+            ("owner-at-example-dot-org", True),
+            ("OWNER AT mail DOT example DOT org", True),
+            ("owner at mail.example dot org", True),
+            ('\\"owner\\"@example.org', True),
+            ("o'@example.org", True),
+            ("owner!@example.org", True),
+            ("owner@[192.0.2.1]", True),
+            ("owner@[IPv6:2001:db8::1]", True),
+            ("owner@163.com", True),
+            ("owner@1.2.mail.org", True),
+            ("owner@example.org: the maintainer", True),
+            ("owner@example.org:x", True),
+            ("xgit@example.org:a/b", True),
+            ("git@example.org", True),
+            ("owner@png.example.org", True),
+            ("hibernate-core@5.4.0.Final", False),
+            ("vite@7.0.0-beta.rc", False),
+            ("django@4.2.dev0", False),
+            ("x@3.1.4.post1", False),
+            ("pkg:golang/example.org/b@v0.0.0-20210101000000-abcdefabcdef", False),
+            ("actions/checkout@v4.2.main", False),
+            ("git@github.com:a/b.git", False),
+            ("aur@aur.example.org:x.git", False),
+            ("https://user:pw@example.org/x", False),
+            ("https://user@example.org", False),
+            ("logo@2x.png", False),
+            ("logo@dark.svg", False),
+            ("look at the dot com", False),
+            ("look at a dot matrix", False),
+            ("https://example.org/@first.last", False),
+            ("@scope/name.js", False),
+            ("x @ y", False),
             ("@owner", False),
             ("Works at kleidos.dev", False),
             ("Looked at the dot", False),
@@ -305,6 +422,201 @@ class SupplierFieldsTest(unittest.TestCase):
                 text = f'{{"author": "{value}"}}'
                 self.assertEqual(bool(self.found("package.json", text)), found)
 
+    def test_an_address_that_is_not_the_one_allowed(self) -> None:
+        for value in (
+            f"first/{OWN}",
+            f"o!{OWN}",
+            f"o'{OWN}",
+            f"o={OWN}",
+            f"mailto://{OWN}",
+            f"x+{OWN}",
+            f"x\u00ad{OWN}",
+            f"{OWN}@example.org",
+            f"{OWN}!example.org",
+            f"{OWN}-x",
+            f"{OWN}\u0430",
+            OWN.replace("@", "&#64;"),
+            OWN.replace("@", " @ "),
+            OWN.replace("m", "\uff4d", 1),
+            OWN.replace("s", "\u017f"),
+            OWN.replace("a", "a\u0308", 1),
+            f"{OWN}, {OWN.replace('m', chr(0xFF4D), 1)}",
+        ):
+            with self.subTest(value=value):
+                report = self.report("package.json", json.dumps({"author": value}))
+                self.assertEqual((len(report.problems), report.weakenings), (1, []))
+
+    def test_the_one_allowed_in_whole_files(self) -> None:
+        for rel, text in (
+            ("setup.cfg", f"author_email={OWN}\n"),
+            ("setup.py", f"setup(author_email='{OWN}')\n"),
+            ("x.gemspec", f"spec.email='{OWN}'\n"),
+            ("AUTHORS", f"A <{OWN}>, {OWN}.\n"),
+        ):
+            with self.subTest(rel=rel):
+                report = self.report(rel, text)
+                self.assertEqual((report.problems, len(report.weakenings)), ([], 1))
+
+    def test_what_a_whole_file_may_hold(self) -> None:
+        for rel, text, found in (
+            ("CONTRIBUTORS.md", "git clone git@github.com:kleidos-dev/boards.git\n", False),
+            ("CONTRIBUTORS.md", "- @owner@example.social\n", False),
+            ("CONTRIBUTORS.md", "- https://example.social/@owner@example.social\n", False),
+            ("CONTRIBUTORS.md", "![a](logo@2x.png)\n", False),
+            ("CONTRIBUTORS.md", "Write a name, never `name@example.org`.\n", False),
+            ("MAINTAINERS.md", "git -c user.email=you@example.com commit\n", False),
+            ("MAINTAINERS.md", "you@mail.example.net, you@x.invalid, you@a.test.\n", False),
+            ("MAINTAINERS.md", "you@example.org.kleidos.dev\n", True),
+            ("MAINTAINERS.md", f"`{REAL}`\n", True),
+            ("MAINTAINERS", f"{MAIL}\n", True),
+            ("AUTHORS.md", "owner&#64;kleidos.dev\n", True),
+            ("setup.py", 'setup(url="git@github.com:a/b.git", x="a@2x.png")\n', False),
+            ("setup.py", 'setup(install_requires=["x @ https://u@example.org/x.whl"])\n', False),
+            ("setup.py", 'setup(author_email="owner@" "example.org")\n', True),
+            ("setup.py", 'setup(author_email="owner\\x40example.org")\n', True),
+            ("setup.py", f'setup(author_email=f"{{x}} {MAIL}")\n', True),
+            ("setup.py", f"setup(  # {MAIL}\n", True),
+            ("setup.cfg", f"# {MAIL}\n", True),
+            ("tests/fixtures/package.json", f'{{"author": "{MAIL}"}}', False),
+            ("x/__tests__/package.json", f'{{"author": "{MAIL}"}}', False),
+            ("tests/fixtures/package.json", f'{{"author": "{REAL}"}}', True),
+            ("tests.d/package.json", f'{{"author": "{MAIL}"}}', True),
+        ):
+            with self.subTest(rel=rel, text=text):
+                self.assertEqual(bool(self.found(rel, text)), found)
+
+    def test_a_bill_names_its_own_people(self) -> None:
+        component = {"name": "left-pad", "author": f"A <{MAIL}>", "url": f"mailto:{MAIL}"}
+        supplier = f"Person: A ({MAIL})"
+        root = {"SPDXID": "SPDXRef-r", "supplier": "Person: A"}
+        other = {"SPDXID": "SPDXRef-o", "supplier": supplier}
+        of = {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES"}
+        by = {"relatedSpdxElement": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBED_BY"}
+        depends = {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DEPENDS_ON"}
+        names = "PackageName: r\nSPDXID: SPDXRef-r\nPackageName: o\nSPDXID: SPDXRef-o\n"
+        tags = "SPDXID: SPDXRef-DOCUMENT\n" + names + f"PackageSupplier: {supplier}\n"
+        relation = "Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-"
+        xml = f"<bom>{{}}<components><author>{MAIL}</author></components></bom>"
+        for rel, doc, found in (
+            ("sbom.cdx.json", {"components": [component]}, []),
+            (
+                "bom.json",
+                {"metadata": {"component": component}},
+                ["metadata.component.author", "metadata.component.url"],
+            ),
+            ("x.spdx.json", {"packages": [other]}, ["packages.supplier"]),
+            ("x.spdx.json", {"packages": [root, other], "documentDescribes": ["SPDXRef-r"]}, []),
+            (
+                "x.spdx.json",
+                {"packages": [root, other], "documentDescribes": ["SPDXRef-o"]},
+                ["packages.supplier"],
+            ),
+            (
+                "spdx.json",
+                {"packages": [other], "relationships": [of | {"relatedSpdxElement": "SPDXRef-r"}]},
+                [],
+            ),
+            (
+                "spdx.json",
+                {"packages": [other], "relationships": [by | {"spdxElementId": "SPDXRef-r"}]},
+                [],
+            ),
+            (
+                "spdx.json",
+                {
+                    "packages": [other],
+                    "relationships": [depends | {"relatedSpdxElement": "SPDXRef-r"}],
+                },
+                ["packages.supplier"],
+            ),
+            ("spdx.json", {"packages": "x", "relationships": [1], "documentDescribes": [1]}, []),
+            ("x.sbom.json", {"supplier": MAIL}, ["supplier"]),
+            ("sbom-firmware.json", {"supplier": MAIL}, ["supplier"]),
+            ("sbom.yml", {"supplier": MAIL}, ["supplier"]),
+            ("cyclonedx.json", {"supplier": MAIL}, ["supplier"]),
+            ("sbom/x.json", {"supplier": MAIL}, []),
+            ("x.spdx", tags, ["packages.supplier"]),
+            ("x.spdx", f"{tags}{relation}r\n", []),
+            ("x.spdx", f"{tags}{relation}o\n", ["packages.supplier"]),
+            ("x.spdx", f"Reviewer: Person: A ({MAIL})\n", ["revieweds.reviewer"]),
+            ("x.spdx", f"Annotator: Person: A ({MAIL})\n", ["annotations.annotator"]),
+            (
+                "x.spdx",
+                f"PackageName: x\nPackageOriginator: Person: A ({MAIL})\n",
+                ["packages.originator"],
+            ),
+            ("x.spdx", f"PackageComment: ask {MAIL}\nPackageSupplier: {supplier}\n", []),
+            ("bom.xml", xml.format("<!-- x -->"), []),
+            ("x.cdx.xml", "", []),
+            (
+                "bom.xml",
+                xml.format(
+                    "<metadata><x/><authors>&#111;wner@<b/>example.org</authors></metadata>"
+                ),
+                ["metadata.authors"],
+            ),
+            (
+                "bom.xml",
+                xml.format(f"<metadata><supplier><![CDATA[{MAIL}]]></supplier></metadata>"),
+                ["metadata.supplier"],
+            ),
+            (
+                "bom.xml",
+                xml.format(f'<metadata><supplier mail="{MAIL}" x=""/><x/></metadata>'),
+                ["metadata.supplier.mail"],
+            ),
+            ("bom.xml", xml.format("<metadata>"), ["the file"]),
+            ("bom.xml", f"<!DOCTYPE bom>{xml.format('')}", ["the file"]),
+            (
+                "bom.xml",
+                xml.format(f"<metadata><author>{'a' * 70_000}{MAIL}</author></metadata>"),
+                ["metadata.author"],
+            ),
+            ("bom.xml", "<a>" * 100 + MAIL + "</a>" * 100, []),
+            ("bom.xml", "<a>" * 101 + MAIL + "</a>" * 101, ["the file"]),
+        ):
+            with self.subTest(rel=rel, doc=str(doc)[:200]):
+                text = doc if isinstance(doc, str) else json.dumps(doc)
+                self.assertEqual(self.found(rel, text), found)
+
+    def test_yaml_however_it_is_written(self) -> None:
+        coded = base64.b64encode(MAIL.encode()).decode()
+        for rel, text, found in (
+            ("CITATION.cff", f"x: &a\n  authors: [{{name: {MAIL}}}]\n<<: *a\n", ["authors.name"]),
+            (
+                "CITATION.cff",
+                f"x: &a {{authors: A}}\ny: &b\n  contact: {MAIL}\n<<: [*a, *b, 1]\n",
+                ["contact"],
+            ),
+            ("CITATION.cff", "x: 1\n<<: 1\n", []),
+            ("idf_component.yml", f"x: &a\n  maintainers: [{MAIL}]\n<<: *a\n", ["maintainers"]),
+            ("action.yml", f"x: &a {MAIL}\nauthor: *a\n", ["author"]),
+            ("action.yml", f"author: !!binary {coded}\n", ["author"]),
+            ("action.yml", "author: !!binary a\n", []),
+            ("action.yml", "author: !!binary '*'\n", []),
+            ("action.yml", f"author: {coded}\n", []),
+            ("action.yml", f"author:\n  ? [{MAIL}]\n  : x\n", ["author.?"]),
+            ("action.yml", 'author: "owner\\x40example.org"\n---\na: 1\n', ["the file"]),
+            ("package.json", '{"author": "owner\\u0040example.org",}', ["the file"]),
+            ("package.yaml", f"author: {MAIL}\n", ["author"]),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.found(rel, text), found)
+
+    def test_a_key_is_not_printed(self) -> None:
+        for key, value in ((MAIL, 1), (f"x {MAIL}", {"y": MAIL}), ("a\n::error::b", MAIL)):
+            report = self.report("package.json", json.dumps({"maintainers": {key: value}}))
+            for problem in report.problems:
+                self.assertNotIn(MAIL, problem.message)
+                self.assertNotIn("\n", problem.message)
+            self.assertTrue(report.problems)
+        self.assertEqual(
+            self.found("package.json", json.dumps({"maintainers": {MAIL: {"y": MAIL}}})),
+            ["maintainers.*", "maintainers.*.y"],
+        )
+        report = self.report("package.json", json.dumps({"maintainers": {OWN: 1}}))
+        self.assertEqual([w.what for w in report.weakenings], ["address:maintainers.*"])
+
     def test_a_long_value_is_read_once(self) -> None:
         for value in (
             "a" * 200_000,
@@ -315,10 +627,51 @@ class SupplierFieldsTest(unittest.TestCase):
             "<" * 200_000,
             "<a@" * 60_000,
             "a@b dot " * 20_000,
+            "a-" * 100_000,
+            "-at-" * 50_000,
+            "a at b." * 30_000,
+            "[at]" * 50_000,
+            "a@a_dot_" * 25_000,
+            "@" + "a_dot_" * 40_000,
+            "@a" * 100_000,
+            "git@" * 50_000,
+            "a@b:" * 50_000,
+            "a@" + "b." * 100_000,
+            "a@v" + "1." * 100_000,
+            "http://" * 30_000,
+            "mailto:" * 30_000,
+            "%25" * 70_000,
+            "&amp;" * 40_000,
+            "\u0315\u0300" * 100_000,
+            " " * 200_000,
+            "(" * 200_000,
+            "(a at " * 30_000,
+            "\\x" * 100_000,
+            "a@[" * 60_000,
+            "a@[" + "1" * 200_000,
         ):
+            for whole in (False, True):
+                start = time.monotonic()
+                sf.addresses(value, whole=whole, examples=True)
+                self.assertLess(time.monotonic() - start, 5, value[:12])
+
+    def test_aliases_are_not_unfolded(self) -> None:
+        bomb = "a0: &a0 [x,x,x,x,x,x,x,x,x,x]\n" + "".join(
+            f"a{i}: &a{i} [{','.join([f'*a{i - 1}'] * 10)}]\n" for i in range(1, 12)
+        )
+        merges = "a0: &a0 {x: 1}\n" + "".join(
+            f"a{i}: &a{i} {{<<: [{','.join([f'*a{i - 1}'] * 10)}]}}\n" for i in range(1, 12)
+        )
+        keys = "a0: &a0 [x, x]\n" + "".join(
+            f"a{i}: &a{i} {{? *a{i - 1} : *a{i - 1}}}\n" for i in range(1, 40)
+        )
+        for text in (bomb, merges, keys):
             start = time.monotonic()
-            list(sf.ADDRESS.finditer(value))
-            self.assertLess(time.monotonic() - start, 5, value[:12])
+            self.assertEqual(self.found("action.yml", text), [])
+            self.assertEqual(self.found("action.yml", f"{text}z: {MAIL}\n"), ["the file"])
+            self.assertLess(time.monotonic() - start, 5)
+        cycle = f"author: &a\n  <<: *a\n  x: {MAIL}\n"
+        self.assertEqual(self.found("action.yml", cycle), ["the file"])
 
     # ------------------------------------------------------------ the readers
 
@@ -328,6 +681,8 @@ class SupplierFieldsTest(unittest.TestCase):
             ("package.json", "[" * 100_000 + MAIL),
             ("pyproject.toml", f'x = "{MAIL}"\nx = 1\n'),
             ("CITATION.cff", f"a: 1\n---\nb: {MAIL}\n"),
+            ("setup.py", f"x = {'-' * 100_000}1  # {MAIL}\n"),
+            ("setup.py", f"x = '\0'  # {MAIL}\n"),
             ("CITATION.cff", f"\tauthors: {MAIL}\n"),
             ("action.yml", f"a: &a\n  - *a\n  - {MAIL}\n"),
         ):
@@ -344,10 +699,11 @@ class SupplierFieldsTest(unittest.TestCase):
 
     def test_a_suffix_in_capitals_and_bytes_that_are_no_text(self) -> None:
         self.assertEqual(self.found("CITATION.CFF", f"authors: {MAIL}\n"), ["authors"])
-        (self.root / "AUTHORS").write_bytes(b"A\xff " + MAIL.encode() + b"\n")
-        report = cq.Report()
-        sf.check(cq.Repo(self.root), report)
-        self.assertEqual(len(report.problems), 1)
+        for data in (b"A\xff " + MAIL.encode() + b"\n", f"A {MAIL}\n".encode("utf-16")):
+            (self.root / "AUTHORS").write_bytes(data)
+            report = cq.Report()
+            sf.check(cq.Repo(self.root), report)
+            self.assertEqual(len(report.problems), 1)
 
     def test_an_empty_file_and_a_byte_order_mark(self) -> None:
         self.assertEqual(self.found("CITATION.cff", ""), [])
@@ -368,6 +724,50 @@ class SupplierFieldsTest(unittest.TestCase):
         both = f'SPDX-FileCopyrightText = ["2020 Someone", "2026 {H}"]\n'
         body = reuse("") + f'\n[[annotations]]\npath = "vendor/**"\n{both}'
         self.assertEqual(len(self.report("REUSE.toml", body).problems), 1)
+
+    def test_reuse_toml_is_never_a_third_partys(self) -> None:
+        for body in (
+            '[[annotations]]\npath = "REUSE.toml"\nSPDX-FileCopyrightText = "2026 Kleidos"\n',
+            '[[annotations]]\npath = "REUSE.toml"\nSPDX-FileCopyrightText = "2020 Someone"\n',
+        ):
+            text = f'SPDX-PackageSupplier = "{MAIL}"\n{body}'
+            self.assertEqual(self.found("REUSE.toml", text), ["SPDX-PackageSupplier"])
+
+    def test_who_is_not_a_third_party(self) -> None:
+        fx.write(self.root, "package.json", f'{{"author": "{MAIL}"}}')
+        for path, holder, found in (
+            ('"**"', "2020 Someone", 1),
+            ('["**/*", "*/**"]', "2020 Someone", 1),
+            ('"*"', "2020 Someone", 1),
+            ('["**", "package.json"]', "2020 Someone", 0),
+            ('["**", "x/**"]', "2020 Someone", 1),
+            ('"package.json"', "2026 Kleidos", 1),
+            ('"package.json"', unicodedata.normalize("NFD", f"2026 {H}"), 1),
+            ('"package.json"', "2026 REQUENA Plens, J. M.", 1),
+            ('"package.json"', "2026 J. M. Requena", 1),
+            ('"package.json"', "", 1),
+            ('"package.json"', "2020 Someone", 0),
+        ):
+            for annotation in (
+                f'SPDX-FileCopyrightText = "{holder}"',
+                f'SPDX-FileCopyrightText = ["{holder}"]',
+            ):
+                body = f"[[annotations]]\npath = {path}\n{annotation}\n"
+                with self.subTest(body=body):
+                    self.assertEqual(len(self.report("REUSE.toml", body).problems), found)
+        # The last annotation that covers a file is the one that states it.
+        both = '[[annotations]]\npath = "{}"\nSPDX-FileCopyrightText = "{}"\n'
+        body = both.format("package.json", "2020 Someone") + both.format("**", f"2026 {H}")
+        self.assertEqual(len(self.report("REUSE.toml", body).problems), 1)
+
+    def test_a_reuse_toml_that_cannot_be_read(self) -> None:
+        for body in ("x = 1\nx = 1\n", 'annotations = "x"\n', "annotations = 1\n"):
+            fx.write(self.root, "package.json", f'{{"author": "{MAIL}"}}')
+            with self.subTest(body=body):
+                where = [p.where for p in self.report("REUSE.toml", body).problems]
+                self.assertEqual(where, ["package.json"])
+        broken = f'SPDX-PackageSupplier = "{MAIL}"\nx = 1\nx = 1\n'
+        self.assertEqual(self.found("REUSE.toml", broken), ["the file", "author"])
 
     def test_no_reuse_toml_is_nobody_elses(self) -> None:
         self.assertEqual(len(self.found("package.json", f'{{"author": "{MAIL}"}}')), 1)
