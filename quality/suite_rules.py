@@ -234,7 +234,7 @@ RUNNER = re.compile(
 # the marker (`it.concurrent.skip`, `test.describe.only`).
 TEST_NAMES = r"\b(?:describe|it|test|suite|bench)(?:\s*\??\.\s*\w+)*"
 TEST_CALL = TEST_NAMES + r"?\s*\??\.\s*"
-TEST_CALLED = re.compile(TEST_NAMES + r"\s*$")
+TEST_CALLED = re.compile(TEST_NAMES + r"\s*(?:<[^()]*>)?\s*$")
 JS_ONLY = re.compile(TEST_CALL + r"only\b|\b(?:fit|fdescribe|ftest)\s*\(")
 JS_SKIP = re.compile(
     TEST_CALL
@@ -243,7 +243,7 @@ JS_SKIP = re.compile(
 # Markers that may hold their reason: t.skip("why"), { todo: "why" }.
 JS_CALL_REASON = re.compile(r"\b(?:t|ctx|context|testContext)\s*\.\s*(?:skip|todo)\s*\(")
 JS_OPTION = re.compile(
-    r"[{,]\s*(?P<name>only|skip|todo|fails|expectFailure)\s*(?:(?P<colon>:)|(?=[,}]))"
+    r"[{,]\s*(?P<name>only|skip|todo|fails|expectFailure)\s*(?:(?P<colon>:)|(?=[,}(]))"
 )
 JS_STRING = re.compile(r"""(["'`])((?:\\.|(?!\1)[^\\\n])*+)\1""")
 # What an option may be without marking anything: off, wherever it is; and
@@ -283,7 +283,9 @@ def opening_of(code: str, at: int, opener: str) -> int:
 def in_test_call(code: str, at: int) -> bool:
     """Whether an option (the brace or the comma before it) is in a test's own call."""
     brace = at if code[at] == "{" else opening_of(code, at, "{")
-    paren = opening_of(code, brace, "(") if brace >= 0 else -1
+    if code[:brace].rstrip()[-1:] not in (",", "("):
+        return False  # a function's body, or no argument by itself
+    paren = opening_of(code, brace, "(")
     if paren < 0:
         return False
     callee = code[:paren].rstrip()
@@ -484,7 +486,7 @@ def coverage_py(rel: str, text: str) -> tuple[bool, Any]:
     sections = ["coverage:report", *(["report"] if own else [])]
     section = next((s for s in sections if ini.has_section(s)), "")
     used = own or any(s.startswith("coverage:") for s in ini.sections())
-    return used, ini.get(section, "fail_under", fallback=None) if section else None
+    return used, ini.get(section, "fail_under", fallback=None)
 
 
 Pairs = list[tuple[str, float]]
@@ -522,7 +524,7 @@ def vitest_object(js: JsText, opening: int, *, glob: bool = False) -> Pairs:
         return []
     places: dict[str, tuple[int, int]] = {}
     rest = js.code[closing + 1 :].lstrip()
-    known = glob or not rest or rest[0] in ",}"
+    known = not rest or rest[0] in ",}"
     for start, end in js_text.members(js.code, opening, closing):
         if named := JS_MEMBER.match(js.bare[start:end]):
             places[named[1] or named[3] or ""] = (start + named.end(), end)

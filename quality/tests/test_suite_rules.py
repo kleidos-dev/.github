@@ -71,6 +71,7 @@ class PythonSkipTest(unittest.TestCase):
             "@unittest.skip(*[''])\ndef f(): ...\n",
             "@unittest.skipIf(*[True, ''])\ndef f(): ...\n",
             "pytest.skip(**{'reason': ''})\n",
+            "pytest.skip(allow_module_level=flag)\n",
         ):
             with self.subTest(body):
                 self.assertEqual(len(self.found(body)), 1, body)
@@ -236,6 +237,9 @@ class JavaScriptTest(unittest.TestCase):
             "it('a', { only: false || true }, f)",
             "it('a', { only }, f)",
             "it('a', { timeout: 1, only, }, f)",
+            "it('a', { only() {} }, f)",
+            "it<Foo>('a', { only: ['x'] }, f)",
+            "it({ only: ['x'] }, f)",
             "it.each([1])('a', { only: Alone }, f)",
             "t.test('a', { only: !0 }, f)",
             "const opts = { only: !0 };",
@@ -281,7 +285,12 @@ class JavaScriptTest(unittest.TestCase):
             "f(x) / 2; g(x) / 2; // it.only",
             "f({ 'x, only': true }); g({ 'it.only': 1 })",
             "x = it['only', f]; f([it, 'only'])",
-            "const z = it ? ['only'] : 1; const q = 'it'.only;",
+            "const z = it ?['only'] : 1; const q = 'it'.only; f(a, 'it'.only)",
+            "x = '</b>'; y = '<br/>'; // it.only",
+            "const o = { only: ['a'] }; it;",
+            "it('a', () => { skip(); }); it('b', function () { only(1); });",
+            "it('a', () => ({ only: ['a'] })); it('a', b ? { only: ['a'] } : c)",
+            "[1, { only: ['a'] }]; it;",
             "x = it[`${a}only`]; x = { [`${a}only`]: true }",
             "a = `b`; it.skipped(`${c}`, /`/); // it.only",
         ):
@@ -317,6 +326,7 @@ class JavaScriptTest(unittest.TestCase):
             "test('x', { 'todo': 'later' }, f)",
             "test('x', { skip: 10 }, f)",
             "test('x', { skip }, f)",
+            "test('x', { skip() {} }, f)",
             "test('x', { skip: Reason }, f)",
             "it['skip']('x', f)",
             "const o = { skip: false || x };",
@@ -415,6 +425,12 @@ class ThresholdsTest(unittest.TestCase):
             ("pyproject.toml", "[tool.coverage.report]\nfail_under = [1]\n", []),
             ("pyproject.toml", "[tool.coverage.run]\nbranch = true\n", []),
             ("pyproject.toml", "not toml", []),
+            (
+                "pyproject.toml",
+                "[tool.coverage.run]\nbranch = true\n[report]\nfail_under = 100\n",
+                [],
+            ),
+            ("setup.cfg", "[coverage:run]\nbranch = 1\n[report]\nfail_under = 80\n", []),
             ("pyproject.toml", "[report]\nfail_under = 100\n", None),
             ("pyproject.toml", "tool = 1\n", None),
             ("pyproject.toml", "[tool]\ncoverage = 1\n", None),
@@ -447,6 +463,8 @@ class ThresholdsTest(unittest.TestCase):
             ),
             ("package.json", "{", {}),
             ("package.json", "[]", {}),
+            ("package.json", '{"scripts": 1}', {}),
+            ("package.json", '{"a": {"thresholds": {"lines": 9}}}', {}),
             ("package.json", json.dumps({"description": run, "config": {"t": run}}), {}),
             (
                 "package.json",
@@ -529,7 +547,7 @@ class ThresholdsTest(unittest.TestCase):
             "const s = 'thresholds: { lines: 100 }';",
             "const s = {}['thresholds: { lines: 100 }'];",
             "x = { mythresholds: { lines: 100 } }",
-            "x = { thresholds: LOW } // {\n// thresholds: { lines: 100 }\n`never closed",
+            "x = { a: 1 /*, thresholds: { lines: 100 } */ } `never closed",
         ):
             with self.subTest(text):
                 self.assertEqual(given({"vitest.config.ts": text}), {})
@@ -798,6 +816,7 @@ class RepositoryTest(unittest.TestCase):
             (".github/workflows/a.yml", "run: coverage report && pylint --fail-under=9\n", 0),
             ("package.json", '{"//--cov-fail-under": "its place is the configuration"}', 0),
             ("a/pyproject.toml", "a = 1  # pytest --cov-fail-under=1\n", 0),
+            ("a/pyproject.toml", 'a = "--cov-fail-\\u0075nder=1"\n', 1),
             ("package.json", '{"scripts": {"t": "pytest --cov-fail-under=1"}}', 1),
             ("a/pyproject.toml", '[tool.pytest]\naddopts = ["--cov-fail-under=1"]\n', 1),
             ("pytest.ini", "[pytest]\naddopts = --cov-fail-under=1\n", 1),
