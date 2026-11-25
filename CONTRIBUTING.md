@@ -46,7 +46,7 @@ You can help by donating a device, by donating to the project, or by testing bui
 - One concern per pull request.
 - Say what you tested and on what. If you have no hardware, say so; that is fine and it tells the reviewer what to check.
 - Update the documentation in the same change.
-- Do not bypass checks (`--no-verify`, force-pushes to shared branches).
+- Do not bypass checks (`--no-verify`). Force-push only the branch of your own pull request, with `git push --force-with-lease`: never with plain `--force`, and never any other branch.
 
 You do not need to mention or assign anyone: every pull request asks the maintainers (`@kleidos-dev/maintainers`) for a review on its own, through `CODEOWNERS`.
 

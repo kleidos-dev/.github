@@ -187,6 +187,7 @@ files = ["youtube/music-styles/keys/test-cue"]
 | Known vulnerabilities fail the build | [`reusable-osv.yml`](../.github/workflows/reusable-osv.yml) (OSV-Scanner over every manifest and lockfile, also weekly) | Advisory-only scanning was ignored. An accepted one goes in `osv-scanner.toml` with a `reason` and an `ignoreUntil` at most 90 days ahead (`check_quality.py`). |
 | Dependabot covers every manifest, each update with a cooldown | `check_quality.py` | A directory without its ecosystem never gets a security update; a week's cooldown gives a compromised or yanked release time to be noticed. |
 | Licensing: `reuse lint`, the header lines, and the owner's statement with no e-mail | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml), hooks `reuse` and `kleidos-kit`, `check_quality.py` (a `.license` sidecar is a weakening, `tool = "reuse"`) | See [Licensing headers](#licensing-headers). |
+| No e-mail address in a supplier, author or maintainer field | `check_quality.py` ([`supplier_fields.py`](../quality/supplier_fields.py)); `mail@kleidos.dev` is a weakening (`tool = "supplier"`, `what = "address:<field>"`), any other address has no waiver | Owner, 2026-11-25. See [Supplier fields](#supplier-fields). |
 | Markdown prose is never hard-wrapped | hook `kleidos-kit` and the lint job ([`quality/md_nowrap.py`](../quality/md_nowrap.py)) | Owner, 2026-11-16: one line per paragraph and per list item. |
 | Agent instruction files keep the standard: `AGENTS.md` and `CLAUDE.md` at the root, `CLAUDE.md` importing `AGENTS.md` first, `CLAUDE.local.md` ignored, the size limits, every named path and link real, every skill and subagent named, the organization rules linked | hook `kleidos-kit` and the lint job ([`quality/agent_docs.py`](../quality/agent_docs.py)) | Every agent reads `AGENTS.md`; a path that moved or a rule restated by hand misleads the next one. See [`agent-docs.md`](agent-docs.md). |
 | Markdown tables render: MD055, MD056, MD058 only | hook `markdownlint-cli2`, [`quality/markdownlint/base.jsonc`](../quality/markdownlint/base.jsonc) | Broken tables are the findings that matter; the rest of markdownlint's defaults measured as noise. |
@@ -278,6 +279,24 @@ python3 quality/spdx_headers.py --repo <repository> --write 'src/**'   # some
 ```
  A template or generator that emits files (a skill's file template, a script that writes a `REUSE.toml` annotation) writes both lines.
 
+### Supplier fields
+
+Metadata that says who a thing comes from holds a name and no e-mail address, as a copyright does (owner, 2026-11-25). The one address that may stand there is `mail@kleidos.dev`, and only where the tool that reads the field needs an address: it is a weakening, and its waiver's reason names that tool. Any other address is refused, with no waiver.
+
+```toml
+[[waiver]]
+tool = "supplier"
+what = "address:project.authors.email"   # as check_quality.py names it
+where = "pyproject.toml"
+reason = "Which tool refuses the field without an address, and how it says so"
+decided = "owner 2026-11-25"
+```
+
+- The files and their fields are one list, `METADATA` of [`supplier_fields.py`](../quality/supplier_fields.py): `REUSE.toml` (`SPDX-PackageSupplier`, `SPDX-PackageOriginator`, `SPDX-FileContributor`), `package.json` and `composer.json`, `pyproject.toml` and `Cargo.toml`, `CITATION.cff`, `codemeta.json` and `.zenodo.json`, ESP-IDF's and PlatformIO's component manifests, the plugin manifests of `.claude-plugin/`, `action.yml`, `manifest.json`, the software bills of materials (SPDX, CycloneDX), the older package formats (`setup.cfg`, `debian/control`, ...) and the lists of people (`AUTHORS`, `CODEOWNERS`, `.mailmap`, ...). A new kind of metadata is a row there.
+- A field holds everything below it, and nothing else of the file counts: a `description` or a script that names an address is not a supplier. A format with no fields in the list (`bom.xml`, `setup.py`), and a file that cannot be read as its format says, is searched whole.
+- An address is found however it is written (in capitals, in a `mailto:` link, with the marks in words). The user of a URL, a handle (`@user@host`) and a version (`name@1.2.3`) are not addresses.
+- A file `REUSE.toml` states is a third party's (an annotation of its own whose copyright does not name the owner) is not ours to correct. A document, a test's fixture of another format and the contact of a page are no metadata; the rule does not read them, nor a repository that still holds kit 2.x copies.
+
 ## Reusable workflows
 
 Every check a repository runs is a job of the kit, one workflow per concern, which the [entry workflows](#the-entry-workflows) call; a repository calls one itself, at `@v3`, only for what they do not say. Its own steps that cannot be shared stay local jobs.
@@ -308,7 +327,7 @@ A notice is a line of the [ecosystem report](ecosystem.md), not an issue: issues
 
    ```toml
    [[waiver]]
-   tool = "ruff"                # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins, typos, actionlint
+   tool = "ruff"                # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins, typos, actionlint, supplier
    what = "ignore:E501"         # the weakening, as check_quality.py names it
    where = "pyproject.toml"     # optional: the file, when the same weakening is in two
    reason = "Why the rule is wrong for this code, with the sites read"
@@ -347,6 +366,8 @@ Every pull request of a repository in the run form, the owner's and the agents' 
 1. `gh pr diff <n> --name-only`. If a path starts with `.github/`, or is `.pre-commit-config.yaml`, read that part of the diff line by line before anything else: `✅ Check` is the pull request's own workflow there and is not proof. `tools/ecosystem.py land` refuses such a pull request, whoever opened it.
 2. `✅ Check` succeeded on the head that is merged, from GitHub Actions (App 15368), and so did every other job of the run.
 3. Squash, with the head's SHA (`gh pr merge <n> --squash --match-head-commit <sha>`), so nothing pushed after the reading is merged.
+
+A force push is `git push --force-with-lease`, on the branch of one's own pull request and nowhere else (owner, 2026-11-25): a rebase or a reworded commit does not need a new pull request. Plain `--force` is never allowed; `main`, `v3` and the other kit branches, tags and anybody else's branch are never forced unless the owner orders that act.
 
 The required checks are a ruleset of their own on `main`, with an empty bypass list, so nobody merges past a red one; the rest of `main`'s rules are another, which an organization admin may bypass, and a required check there would be bypassed with it. A squash of the whole history before a repository goes public needs the first one disabled for that push, and enabled again right after.
 

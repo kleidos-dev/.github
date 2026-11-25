@@ -412,8 +412,9 @@ def render_failure(result: Result) -> str:
         "**How to fix.** For the last commit, run `git commit --amend` and edit the message."
         " For older ones, run `git rebase -i <base>`, change `pick` to `reword` on each"
         " commit listed above, and edit each message when git opens it. Then update the"
-        " branch with `git push --force-with-lease`. Force-pushing a pull request branch is"
-        " normal; only `main` is protected. This comment updates itself on the next run.",
+        " branch with `git push --force-with-lease`, which is allowed on the branch of your own"
+        " pull request and nowhere else; plain `--force` never is. This comment updates itself"
+        " on the next run.",
     ]
     return "\n".join(parts) + "\n"
 
