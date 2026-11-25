@@ -251,7 +251,7 @@ JS_STRING = re.compile(r"""(["'`])((?:\\.|(?!\1)[^\\\n])*+)\1""")
 # `only` a list, an object or a text.
 JS_OFF = re.compile(r"(?:false|undefined|null|0|!1|!true)\s*(?:[,}]|$)")
 JS_OTHER = re.compile(
-    r"(?:(?:false|undefined|null|boolean|string|number|[A-Z]\w*[a-z]\w*)(?:\s*\[\s*\])*|\d[\d._]*)"
+    r"(?:(?:false|undefined|null|boolean|string|number|[A-Z](?=\w*[a-z])\w*+)(?:\s*\[\s*\])*|\d[\d._]*)"
     r"\s*(?:[,;}]|\|(?!\|)|$)"
 )
 JS_LITERAL = re.compile(r"""[\[{"'`]""")
@@ -349,9 +349,8 @@ VITEST_ORDER = tuple(
     for name in ("vitest", "vite")
     for end in ("ts", "mts", "cts", "js", "mjs", "cjs")
 )
-VITE_IMPORT = re.compile(
-    r"""\b(?:from|import|require)\s*\(?\s*["'][^"'\n]*/vite\.config(?:\.[cm]?[jt]s)?["']"""
-)
+JS_IMPORT = re.compile(r"""\b(?:from|import|require)\b[\s(]*+(["'])([^"'\n]*+)\1""")
+VITE_FILE = re.compile(r"vite\.config(?:\.[cm]?[jt]s)?")
 NODE_FLAG = re.compile(r"--test[-_]coverage[-_](lines|branches|functions)[=\s]+(\d+(?:\.\d+)?)")
 # A command that prints what it is given, or does nothing with it.
 NO_COMMAND = re.compile(r"\s*(?:echo|printf|true|false|:)(?:\s|$)")
@@ -595,7 +594,8 @@ def vitest_thresholds(files: list[str], reader: Callable[[str], str]) -> Thresho
         for rel in found:
             sources.append((place(folder, "vitest"), rel))
             # One that imports the next (for mergeConfig) does not hide it.
-            if not VITE_IMPORT.search(JsText(reader(rel)).bare):
+            imported = JS_IMPORT.finditer(JsText(reader(rel)).bare)
+            if not any(VITE_FILE.fullmatch(m[2].rpartition("/")[2]) for m in imported):
                 break
     sources += [
         (rel, rel) for rel in files if rel.endswith(js_text.SUFFIXES) and rel not in defaults
