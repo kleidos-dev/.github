@@ -17,9 +17,10 @@
         copy again what a record names, from a checkout of its source, and
         rewrite its digests, its date and the commit it notes; for the kit's
         own record, the base configurations of this checkout
-    ecosystem.py land [--merge] [REPO ...]
-        Dependabot's pull requests that pass the guards (landing.py); without
-        --merge it only says what it would do
+    ecosystem.py land [--merge] [--read SHA] [OWNER/NAME[#N] ...]
+        land the pull requests named, or walk Dependabot's that pass the
+        guards (landing.py), by a signed fast forward of main
+        (fast_forward.py); without --merge it only says what it would do
 
 States: red (something is broken or differs from the declared list: the run
 fails), late (a copy or a bot's pull request past its limit: first in the
@@ -28,8 +29,8 @@ never red (owner, 2026-11-24).
 
 The declared list is ecosystem.toml beside this file; what is not published,
 the Apps that may write, is ~/.config/kleidos/ecosystem.local.toml. Reads
-only: git clones and GET requests through gh; only land --merge writes, and
-only merges.
+only: git clones and GET requests through gh; only land --merge writes: a
+branch and a pull request for what it takes, and main, never by force.
 
 Python 3.14 or newer, git and gh; PyYAML for preview and refresh.
 """
@@ -963,7 +964,7 @@ def run_land(args: argparse.Namespace) -> int:
     import landing
 
     declared = load(args.declared)
-    return landing.land(declared, args.repositories, merge=args.merge)
+    return landing.land(declared, args.targets, merge=args.merge, read=args.read)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -987,9 +988,21 @@ def main(argv: list[str] | None = None) -> int:
     refresh.add_argument("record", type=Path, help="the SOURCE.json")
     refresh.add_argument("--from", dest="source", type=Path, help="a checkout of the source")
     refresh.set_defaults(run=run_refresh)
-    land = verbs.add_parser("land", help="Dependabot's pull requests that pass the guards")
-    land.add_argument("--merge", action="store_true", help="merge them (else only say so)")
-    land.add_argument("repositories", nargs="*", help="slugs, instead of every one")
+    land = verbs.add_parser("land", help="pull requests, by a signed fast forward of main")
+    land.add_argument("--merge", action="store_true", help="land them (else only say so)")
+    land.add_argument(
+        "--read",
+        default="",
+        metavar="SHA",
+        help="the head whose diff was read line by line, where a green gate proves nothing",
+    )
+    land.add_argument(
+        "targets",
+        nargs="*",
+        metavar="OWNER/NAME[#N]",
+        help="a pull request, or a repository whose pull requests of Dependabot's are walked"
+        " (default: every repository)",
+    )
     land.set_defaults(run=run_land)
     args = ap.parse_args(argv)
     status: int = args.run(args)

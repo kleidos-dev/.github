@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 José M. Requena Plens
 # SPDX-License-Identifier: MIT
-"""Merge Dependabot's pull requests that pass every guard (ecosystem.py land).
+"""Land pull requests: those named, and Dependabot's that pass every guard (ecosystem.py land).
 
-It merges third-party code under the caller's own credential with nobody
-reading the diff, so what it accepts is narrow (docs/ecosystem.md, "Landing
-the bot's pull requests"):
+How a pull request lands is fast_forward.py's. What is here decides which of
+Dependabot's do with nobody reading the diff: third-party code under the
+owner's key, so what it accepts is narrow (docs/ecosystem.md, "Landing the
+bot's pull requests"):
 
   - opened by Dependabot, head in the same repository, not a draft;
   - every push to its branch made by Dependabot or by the caller;
@@ -20,30 +21,29 @@ the bot's pull requests"):
     own workflows;
   - no major version, as Dependabot's own commit says;
   - never the kit's repository, nor one on the hold list;
-  - a fresh run against today's main, all of it green, the kit's gate
-    among it.
+  - taken as a signed commit of the owner on today's main, in a pull request
+    of its own that changes no more than the bot's, everything that runs on
+    it green, the kit's gate among it.
 
-One at a time, and each is listed with what it merged.
+One at a time, and each is listed with what landed. A pull request that is
+named by its number lands by fast_forward.py's rules.
 
-Python 3.14 or newer, gh.
+Python 3.14 or newer, gh, git.
 """
 
 from __future__ import annotations
 
-import json
 import re
-import subprocess
-import time
-from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-if TYPE_CHECKING:
-    from ecosystem import Declared
+import fast_forward
+from fast_forward import BOT, GATE, REFUSED, at_home, kind, open_refusal
 
-BOT = "dependabot[bot]"
-GATE, ACTIONS_APP = "✅ Check", 15368  # the job every repository requires; GitHub Actions
+if TYPE_CHECKING:
+    from ecosystem import Declared, Repository
+
 # What may differ between a line and its old one: the group "version" is masked.
 VERSION = r"\d[0-9A-Za-z.+!_-]*"
 # A version of a package: pip's operators only, right after the package's name
@@ -104,34 +104,6 @@ KEYED = re.compile(r'^\s*"(?P<key>[^"]+)":\s*"')
 UPDATE_LINE = re.compile(
     r"^\s+update-type: version-update:semver-(major|minor|patch)\s*$", re.MULTILINE
 )
-PASSED = ("success", "skipped", "neutral")
-POLL_SECONDS = 20
-WAIT_SECONDS = 3600
-
-
-class ApiError(Exception):
-    """A request GitHub refused."""
-
-
-class Api:
-    """GitHub's REST API through gh."""
-
-    def get(self, path: str) -> Any:
-        """One GET."""
-        return self._run("GET", path, {})
-
-    def put(self, path: str, fields: dict[str, str]) -> Any:
-        """One PUT."""
-        return self._run("PUT", path, fields)
-
-    def _run(self, method: str, path: str, fields: dict[str, str]) -> Any:
-        cmd = ["gh", "api", "--method", method, path]
-        for name, value in fields.items():
-            cmd += ["-f", f"{name}={value}"]
-        done = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if done.returncode != 0:
-            raise ApiError(f"{method} {path}: {done.stderr.strip()[:200]}")
-        return json.loads(done.stdout) if done.stdout.strip() else {}
 
 
 def masked(line: str, rules: tuple[re.Pattern[str], ...]) -> str:
@@ -251,6 +223,11 @@ def update_refusal(commits: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def updated(commits: list[dict[str, Any]]) -> frozenset[str]:
+    """The packages Dependabot's commits say they update."""
+    return frozenset(n for c in commits for n in NAMED.findall(c["commit"]["message"]))
+
+
 def push_refusal(pushes: list[dict[str, Any]], head: str, viewer: str) -> str | None:
     """Why the record of the pushes to a branch is not Dependabot's and the caller's, or None."""
     if len(pushes) >= 100:
@@ -270,75 +247,45 @@ def refusal(
     files: list[dict[str, Any]],
     pushes: list[dict[str, Any]],
     viewer: str,
+    read: bool = False,
 ) -> str | None:
-    """Why a pull request is not landed, or None: the first guard it fails."""
+    """Why a pull request is not landed, or None: the first guard it fails. One that a person
+    read whole is held to who wrote it, not to what it changes."""
     if pull["user"]["login"] != BOT or pull["user"]["type"] != "Bot":
         return f"opened by {pull['user']['login']}"
-    if pull["draft"]:
-        return "a draft"
-    head = pull["head"]["repo"]
-    if head is None or head["full_name"] != pull["base"]["repo"]["full_name"]:
+    if not at_home(pull):
         return "its branch is not in this repository"
-    if pull["base"]["ref"] != pull["base"]["repo"]["default_branch"]:
-        return f"against {pull['base']['ref']}, not the default branch"
     if len(commits) >= 100 or len(files) >= 100:
         return "too large to read whole"
     reasons = [push_refusal(pushes, pull["head"]["sha"], viewer)]
-    names = frozenset(n for c in commits for n in NAMED.findall(c["commit"]["message"]))
     reasons += [commit_refusal(c, viewer) for c in commits]
-    reasons += [file_refusal(f, names) for f in files]
+    if not read:
+        names = updated(commits)
+        reasons += [file_refusal(f, names) for f in files]
     if not commits or not files:
         reasons.append("it changes nothing")
-    reasons.append(update_refusal([c for c in commits if len(c.get("parents") or ()) == 1]))
+    if not read:
+        own = [c for c in commits if len(c.get("parents") or ()) == 1]
+        reasons.append(update_refusal(own))
     return next((r for r in reasons if r), None)
 
 
-def check_state(workflows: list[dict[str, Any]], checks: list[dict[str, Any]]) -> str:
-    """ "pending", "green", or what failed, of everything that ran on a commit.
-
-    The workflow runs are asked, not only the check runs: between two stages
-    of a workflow every check run there is has finished.
-    """
-    own = [w for w in workflows if w["event"] == "pull_request"]
-    if not own or any(r["status"] != "completed" for r in [*workflows, *checks]):
-        return "pending"
-    failed = sorted({r["name"] for r in [*workflows, *checks] if r["conclusion"] not in PASSED})
-    if failed:
-        return f"failing: {', '.join(failed[:3])}"
-    gates = [
-        c for c in checks if c["name"] == GATE and (c.get("app") or {}).get("id") == ACTIONS_APP
-    ]
-    if not gates or any(c["conclusion"] != "success" for c in gates):
-        return f"no {GATE} of GitHub Actions succeeded on it"
-    return "green"
-
-
-class Lander:
-    """The walk over the repositories, with what it needs of the outside."""
-
-    def __init__(
-        self,
-        api: Api,
-        merge: bool,
-        sleep: Callable[[float], object] = time.sleep,
-        say: Callable[[str], object] = print,
-    ) -> None:
-        self.api, self.merge, self.sleep, self.say = api, merge, sleep, say
-        self.viewer = str(api.get("user")["login"])
+class Lander(fast_forward.Lander):
+    """The walk over the repositories."""
 
     def pulls(self, slug: str) -> list[dict[str, Any]]:
         """The open pull requests, whole, the oldest first."""
         listed = self.api.get(f"repos/{slug}/pulls?state=open&per_page=100&direction=asc")
-        return [self.api.get(f"repos/{slug}/pulls/{p['number']}") for p in listed]
+        return [self.pull(slug, p["number"]) for p in listed]
 
-    def judge(self, slug: str, pull: dict[str, Any]) -> str | None:
-        """The guards that need no fresh run."""
+    def judge(self, slug: str, pull: dict[str, Any], read: bool = False) -> str | None:
+        """The guards of a pull request of Dependabot's; with read, who wrote it alone."""
         base = f"repos/{slug}/pulls/{pull['number']}"
         commits = self.api.get(f"{base}/commits?per_page=100")
         files = self.api.get(f"{base}/files?per_page=100")
         branch = quote(f"refs/heads/{pull['head']['ref']}", safe="")
         pushes = self.api.get(f"repos/{slug}/activity?ref={branch}&per_page=100")
-        why = refusal(pull, commits, files, pushes, self.viewer)
+        why = refusal(pull, commits, files, pushes, self.viewer, read)
         if why:
             return why
         for commit in commits:
@@ -349,79 +296,95 @@ class Lander:
                     return f"commit {commit['sha'][:7]} merges what is not on {main}"
         return None
 
-    def fresh(self, slug: str, number: int) -> tuple[str, str]:
-        """Update a branch to today's main and wait for its run: (head, its check state)."""
-        before = self.api.get(f"repos/{slug}/pulls/{number}")
-        main = self.api.get(f"repos/{slug}/commits/{before['base']['ref']}")["sha"]
-        compared = self.api.get(f"repos/{slug}/compare/{main}...{before['head']['sha']}")
-        head = before["head"]["sha"]
-        waited = 0
-        if compared["behind_by"]:
-            self.api.put(f"repos/{slug}/pulls/{number}/update-branch", {"expected_head_sha": head})
-            while head == before["head"]["sha"] and waited < WAIT_SECONDS:
-                self.sleep(POLL_SECONDS)
-                waited += POLL_SECONDS
-                head = self.api.get(f"repos/{slug}/pulls/{number}")["head"]["sha"]
-        state = "pending"
-        while waited < WAIT_SECONDS:
-            runs = self.api.get(f"repos/{slug}/actions/runs?head_sha={head}&per_page=100")
-            checks = self.api.get(f"repos/{slug}/commits/{head}/check-runs?per_page=100")
-            state = check_state(runs["workflow_runs"], checks["check_runs"])
-            if state != "pending":
-                break
-            self.sleep(POLL_SECONDS)
-            waited += POLL_SECONDS
-        return head, state
+    def bot(self, slug: str, pull: dict[str, Any], read: str = "") -> bool:
+        """Land an update of Dependabot's, or say why not; whether it landed.
 
-    def land(self, slug: str, pull: dict[str, Any]) -> bool:
-        """Land one pull request, or say why not; whether it was merged."""
-        label = f"{slug}#{pull['number']} {pull['title'][:70]}"
-        why = self.judge(slug, pull)
+        One whose diff a person read whole (read is its head) is only taken:
+        its own pull request is landed by name, as any other.
+        """
+        label = self.label(slug, pull)
+        whole = read == pull["head"]["sha"]
+        why = open_refusal(pull, slug, self.identity) or self.judge(slug, pull, whole)
         if why:
-            self.say(f"left: {label}: {why}")
+            return self.left(label, why)
+        taken = self.take(slug, pull)
+        if taken is None or whole:
             return False
-        if not self.merge:
-            self.say(f"would land: {label}")
-            return False
-        head, state = self.fresh(slug, pull["number"])
-        if state != "green":
-            self.say(f"left: {label}: {state}")
-            return False
-        now = self.api.get(f"repos/{slug}/pulls/{pull['number']}")
-        why = self.judge(slug, now) if now["head"]["sha"] == head else "its branch moved meanwhile"
-        if why:
-            self.say(f"left: {label}: {why}")
-            return False
-        self.api.put(
-            f"repos/{slug}/pulls/{pull['number']}/merge", {"merge_method": "squash", "sha": head}
-        )
-        self.say(f"landed: {label}: {pull['html_url']}")
+        names = updated(self.pages(f"repos/{slug}/pulls/{pull['number']}/commits"))
+        for changed in self.pages(f"repos/{slug}/pulls/{taken['number']}/files"):
+            why = file_refusal(changed, names)
+            if why:
+                return self.left(self.label(slug, taken), why)
+        return self.own(slug, taken)
+
+    def land(self, slug: str, number: int, kit: bool, read: str) -> bool:
+        """Land the pull request that was named; whether it landed or was taken."""
+        pull = self.pull(slug, number)
+        what = kind(pull, self.identity.login)
+        if what == "own":
+            return self.own(slug, pull, read)
+        if what == "person":
+            return self.person(slug, pull, read)
+        if what == "bot" and not kit:
+            return self.bot(slug, pull, read)
+        who = "the kit's releases are made by hand" if kit else pull["user"]["login"]
+        return self.left(self.label(slug, pull), f"opened by a bot: {who}")
+
+
+def land(
+    declared: Declared,
+    only: list[str],
+    merge: bool,
+    lander: Lander | None = None,
+    read: str = "",
+) -> int:
+    """Land what is named (OWNER/NAME#N), or walk Dependabot's pull requests of the declared
+    repositories (or of those named); 0 unless something named did not land or was refused."""
+    lander = lander or Lander(fast_forward.Api(), fast_forward.Git(), merge)
+    known = {repo.slug: repo for repo in declared.repositories}
+    for one in only:
+        slug, mark, number = one.partition("#")
+        if slug not in known or (mark and not number.isdecimal()):
+            lander.say(f"unknown: {one}")
+            return 2
+    results = [by_name(declared, one, lander, read) for one in only if "#" in one]
+    chosen = [r for r in declared.repositories if not only or r.slug in only]
+    results += [walk(declared, repo, lander) for repo in chosen]
+    return 0 if all(results) else 1
+
+
+def by_name(declared: Declared, one: str, lander: Lander, read: str) -> bool:
+    """Land one pull request, OWNER/NAME#N; whether that was not refused."""
+    slug, _mark, number = one.partition("#")
+    if any(repo.hold for repo in declared.repositories if repo.slug == slug):
+        lander.say(f"skipped: {one}: on hold")
+        return False
+    try:
+        done = lander.land(slug, int(number), slug == declared.kit, read)
+    except REFUSED as exc:
+        lander.say(f"stopped: {one}: {exc}")
+        return False
+    return done or not lander.merge
+
+
+def walk(declared: Declared, repo: Repository, lander: Lander) -> bool:
+    """Walk Dependabot's pull requests of one repository; whether GitHub refused nothing."""
+    why = (
+        "the kit's releases are made by hand"
+        if repo.slug == declared.kit
+        else "on hold"
+        if repo.hold
+        else f"it moves into {repo.folds_into}"
+        if repo.folds_into
+        else ""
+    )
+    if why:
+        lander.say(f"skipped: {repo.slug}: {why}")
         return True
-
-
-def land(declared: Declared, only: list[str], merge: bool, lander: Lander | None = None) -> int:
-    """Walk the declared repositories; 0 unless GitHub refused something."""
-    lander = lander or Lander(Api(), merge)
-    status = 0
-    for repo in declared.repositories:
-        if only and repo.slug not in only:
-            continue
-        why = (
-            "the kit's releases are made by hand"
-            if repo.slug == declared.kit
-            else "on hold"
-            if repo.hold
-            else f"it moves into {repo.folds_into}"
-            if repo.folds_into
-            else ""
-        )
-        if why:
-            lander.say(f"skipped: {repo.slug}: {why}")
-            continue
-        try:
-            for pull in lander.pulls(repo.slug):
-                lander.land(repo.slug, pull)
-        except ApiError as exc:
-            lander.say(f"stopped: {repo.slug}: {exc}")
-            status = 1
-    return status
+    try:
+        for pull in lander.pulls(repo.slug):
+            lander.bot(repo.slug, pull)
+    except REFUSED as exc:
+        lander.say(f"stopped: {repo.slug}: {exc}")
+        return False
+    return True
