@@ -46,7 +46,7 @@ The model is [`quality/templates/run/ci.yml`](../quality/templates/run/ci.yml).
 
 | Workflow | Jobs | Inputs | The caller grants |
 | --- | --- | --- | --- |
-| [`quick.yml`](../.github/workflows/quick.yml) | Lint (every policy check, every hook, zizmor online), licensing, the secrets scan, on a pull request the commit messages, and where `deny-hooks` names some, the repository's own hooks that read the deny-list, in a job of their own | `skip`, `deny-hooks`; the secret `deny` | `contents: read` |
+| [`quick.yml`](../.github/workflows/quick.yml) | Lint (every policy check, every hook, zizmor online), licensing, the secrets scan, the commit check (the messages of a pull request's commits, and whether what it or a push to `main` adds as the owner's is the owner's), and where `deny-hooks` names some, the repository's own hooks that read the deny-list, in a job of their own | `skip`, `deny-hooks`; the secret `deny` | `contents: read` |
 | [`check.yml`](../.github/workflows/check.yml) | The tests, mypy, ESLint and `tsc`, OSV-Scanner | `python` (what pip installs) or `install` (a command), `tests`, `coverage-report`, `coverage-artifact`, `timeout-minutes`, `types`, `types-install`, `python-version-file`, `node-directory`, `node-projects`, `node-version` | `contents: read` |
 | [`sonar.yml`](../.github/workflows/sonar.yml) | The SonarQube Cloud analysis (public repositories) | `coverage-artifact` | `contents: read`, `id-token: write` |
 
@@ -196,10 +196,41 @@ files = ["youtube/music-styles/keys/test-cue"]
 | Python repositories name their Python | `check_quality.py` (`.python-version`) | The kit's mypy and test workflows read it; without it the first CI run fails in setup-python. |
 | Every pin at the latest stable release | Dependabot in each repository, the report's ages, and here [`quality/latest_releases.py`](../quality/latest_releases.py); an image by digest with its tag, a hook with its tag, are problems | Owner, 2026-11-23. See [Pins at the latest release](#pins-at-the-latest-release). |
 | Commit messages | [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml), the `kleidos-commit-msg` hook | 72 columns, imperative, no AI attribution: [The commit-message gate](#the-commit-message-gate). |
+| A commit that says it is the owner's, by author or by committer, has the owner's address and the owner's key; nobody else's is judged | [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml) ([`commit_identity.py`](../hooks/commit_identity.py)), no waiver: the exemptions are the kit's own list | Owner, 2026-11-25: the owner's commits are told from anybody else's, and a contributor's stay the contributor's. See [The identity of a commit](#the-identity-of-a-commit). |
 
 ### The commit-message gate
 
 The kit owns the checker, [`hooks/check_commit_msg.py`](../hooks/check_commit_msg.py) (until 3.0.0 `kleidos-dev/agents` did, and every repository held a copy). The hook runs it on the message git is about to commit; `quick.yml` runs it on a pull request's commits, with the kit that is called, and in this repository with the base branch's, so a change to it does not judge its own pull request; the result is a table in the job summary and one comment on the pull request. Its rules are in its docstring. A pull request opened by Dependabot or Renovate is not checked.
+
+### The identity of a commit
+
+Owner, 2026-11-25. A commit that says it is the owner's is the owner's: one address, and one PGP key, which is public. **It applies to the owner alone.** Nobody else is asked for that address, that committer or that key, wherever the branch is: a contributor's commit, with the contributor's author, committer and key, or with no signature, is not judged here and never fails here. [`hooks/identity.json`](../hooks/identity.json) holds who the owner is: the login, the address, the fingerprints of the keys, the exempt refs, each with its reason, and the moment the rule starts. It is the organization's, and the same for every repository that calls this kit; a fork of the kit for another owner is that file with another content.
+
+[`hooks/commit_identity.py`](../hooks/commit_identity.py), in the same job as the messages and so part of `✅ Check`, asks GitHub about each commit a pull request adds and each commit a push adds to the default branch. A commit's author, or its committer, is the owner when GitHub gives the owner's login for it, or when it holds the owner's address, whoever wrote it there.
+
+| The commit | What is judged |
+| --- | --- |
+| (a) Its author is the owner | Author address, committer and signature are the owner's: a merge button, the web editor, another machine, and somebody who writes the owner's address, are refused |
+| (b) Its author is somebody else, its committer the owner, who landed it | Committer address and signature are the owner's; the author is untouched |
+| (c) Neither is the owner | Nothing: the log counts it |
+| (d) GitHub knows no account of its author or of its committer | Nothing; on a pull request the owner opened from a branch of the repository, a warning, since it may be the owner's other machine. Never a failure |
+| (e) A bot's (Dependabot, the CLA's) | Nothing |
+
+| Rule | Refused |
+| --- | --- |
+| `identity-author` | An author who is the owner, with another address |
+| `identity-committer` | A committer of one of these commits with any address but the owner's |
+| `identity-signature` | On one of these commits: no signature; one GitHub does not report valid; one GitHub made itself; one made with a key whose id, as GitHub gives it, is not the owner's |
+| `identity-unknown` | Nothing: it is the warning of (d) |
+
+- **That a commit of `main` is signed by somebody is another rule, and GitHub's**: the required signatures of each `main`'s ruleset refuse an unsigned push, whoever made the commit, and say nothing of who. This check says nothing of whether a contributor's commit is signed.
+- **The owner's other addresses are private**, so none is listed anywhere: the owner with another address is told by the login GitHub gives. What is printed names a login, never an address.
+- **Only what is added is judged**, never history, nor what `main` already holds. A push that came before `since` is not judged, by GitHub's own record of when it came (a committer date is the committer's to write), so a run started again finds in an old push what it found then. A push that wrote `main` anew is judged whole.
+- **No code of a pull request runs beside the token**, which can only read: the checker is the kit's that runs, and in this repository the base branch's. So a fork's pull request is judged like any other, and what it can fail on is a commit that says it is the owner's.
+- **The exempt refs** are the list in `identity.json` and no other: the branch of `kleidos-dev/cla` the CLA bot writes, whose commits are the evidence of who signed, and, while work that still squash-merges ends there, the `main` of `kleidos-dev/meter`.
+- **What it does not see**: the owner's name with somebody else's address, since a name is nobody's; the owner with an address of no GitHub account, but for the warning; a push whose run was cancelled by the next one (the pull request it came from was judged); and whatever a pull request's own change of `.github/` makes of the job ([The gate](#the-gate)). GitHub does not enforce the e-mail patterns a ruleset may hold on this plan (tried, 2026-11-25), so this is held here.
+
+To repair a branch of the owner's: the owner's `user.email` and `user.signingkey` in git, `git rebase --force-rebase --gpg-sign origin/main`, and `git push --force-with-lease`. A contributor whose branch holds a commit that says it is the owner's drops that commit, or sets their own name and address on what they wrote.
 
 ### Pins at the latest release
 
@@ -214,7 +245,7 @@ Owner, 2026-11-23: every pinned version is the latest stable release, and whatev
 
 Owner, 2026-11-24: being behind is never red. So in a repository that runs the kit:
 
-- Dependabot moves third-party actions, hook revisions and packages, in grouped weekly pull requests with a seven-day cooldown (the kit's own release is exempt), and `tools/ecosystem.py land` merges the ones that pass its guards.
+- Dependabot moves third-party actions, hook revisions and packages, in grouped weekly pull requests with a seven-day cooldown (the kit's own release is exempt), and `tools/ecosystem.py land` lands the ones that pass its guards, each as a signed commit of the owner's.
 - The check notes a Python, an action, a hook or an image that is below the newest release this kit knows and has no `below-latest:` reason; the note fails nothing.
 - What a pin must *say* stays a problem: a third-party `uses:` is a full commit SHA with its version in a comment; a hook of the canonical list is a commit with `# frozen: vX.Y.Z` or a tag; a container image the kit knows is pinned by digest with its tag in a comment, `image: kicad/kicad@sha256:3f4a0178…3714ddc34 # 10.0.8`, and the newest tag with another digest is refused (Dependabot's `docker` ecosystem reads no workflow's `container:`).
 
@@ -261,7 +292,7 @@ SPDX-License-Identifier: <the repository's license for the file>
 
 <!-- REUSE-IgnoreEnd -->
 
-- `<year>` is the year of the file's first commit, as `git log --diff-filter=A --format=%ad --date=format:%Y -- <file>` gives it (read in UTC), and the current year for a file not committed yet. The check also accepts the year before: the public repositories merge by squash, so a file added in a pull request written in December and merged in January lands on `main` with a January commit, and its header, written in December, must not turn `main` red. A pull request that crosses the new year needs nothing else; the writer always sets the first-commit year.
+- `<year>` is the year of the file's first commit, as `git log --diff-filter=A --format=%ad --date=format:%Y -- <file>` gives it (read in UTC), and the current year for a file not committed yet. The check also accepts the year before: a file added in a pull request written in December can come to `main` in January with a commit made then (a commit taken as the owner's keeps its author's date, but one of Dependabot's is made anew, and until 3.4.0 the public repositories merged by squash), and its header, written in December, must not turn `main` red. A pull request that crosses the new year needs nothing else; the writer always sets the first-commit year.
 - At least one copyright line names José M. Requena Plens. A third-party file is stated in `REUSE.toml` with `precedence = "override"` instead.
 - **Year and name only** (owner, 2026-11-24): no e-mail address, in a file, in `REUSE.toml` or in a license text; a `SPDX-FileContributor` line beside the two holds a name only as well. The owner's line of a `LICENSE` or of a text under `LICENSES/` is `Copyright (c) <year> José M. Requena Plens`, with `All rights reserved.` after it where that is the license; a third party's line is never touched. A statement anywhere in the tree that puts an e-mail beside the owner's name is found too, a `mailto:` link included. A header may add in parentheses which part it covers, `(Spanish translation)`. In a repository that still holds kit 2.x copies the license texts are a note until it switches.
 - The license stays the one each repository already declares (MIT, GPL-3.0-or-later, ...).
@@ -316,7 +347,7 @@ Every check a repository runs is a job of the kit, one workflow per concern, whi
 | [`reusable-osv.yml`](../.github/workflows/reusable-osv.yml) | OSV-Scanner, failing on any known vulnerability | | `contents: read` |
 | [`reusable-secrets.yml`](../.github/workflows/reusable-secrets.yml) | gitleaks over the history and the tree with both configs, and the MAC plant test | | `contents: read` |
 | [`reusable-sonarcloud.yml`](../.github/workflows/reusable-sonarcloud.yml) | The secretless SonarCloud analysis, moved unchanged from the public repositories: OIDC token exchange (`SonarSource/sonarqube-auth-action`), scan (`SonarSource/sonarqube-scan-action`), and a wait until SonarCloud accepted the analysis; a pull request with no OIDC token (a fork, Dependabot) ends green with a notice | `coverage-artifact` (`coverage`; empty for none) | `contents: read`, `id-token: write` |
-| [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml) | The commit-message gate | | `contents: read` |
+| [`reusable-commit-check.yml`](../.github/workflows/reusable-commit-check.yml) | The commit-message gate, on a pull request, and the identity of the owner's commits that a pull request or a push adds | | `contents: read` |
 | [`reusable-commit-check-comment.yml`](../.github/workflows/reusable-commit-check-comment.yml) | The one commit-check comment, from a `workflow_run` caller that follows the gate workflow | | `actions: read`, `pull-requests: write` |
 | [`reusable-quality-drift.yml`](../.github/workflows/reusable-quality-drift.yml) | Kit 2.x only: the weekly drift notice, which always answers "not behind" now; it stays while a 2.x caller remains | | `contents: read` |
 
@@ -348,16 +379,27 @@ A notice is a line of the [ecosystem report](ecosystem.md), not an issue: issues
 ## Versions
 
 - [`quality/VERSION`](../quality/VERSION) is the kit's semver, with an entry per release in [`quality/CHANGELOG.md`](../quality/CHANGELOG.md). MAJOR: anything that can turn a green repository red (a rule on, a stricter setting, a tool bump with new findings, a new conformance rule some repository fails). MINOR: a new opt-in profile or tool, or a rule every repository already passes. PATCH: docs, or a checker fix that cannot add findings.
-- **The branch `v<major>`** is the kit's name. A MINOR or PATCH release moves it, fast forward, to its commit on `main`, and every repository runs it at its next run; it moves at most once a week, security fixes apart. A MAJOR opens the next branch, and each repository moves its line in the pull request that carries its fixes; the old branch keeps working, frozen. No tag may ever be named like a branch: GitHub resolves the tag first, so the tag ruleset exists before the branch, and the report turns red on one.
+- **The branch `v<major>`** is the kit's name. A MINOR or PATCH release moves it, fast forward, to its commit on `main`, and every repository runs it at its next run ([How often it moves](#how-often-v3-moves)). A MAJOR opens the next branch, and each repository moves its line in the pull request that carries its fixes; the old branch keeps working, frozen. No tag may ever be named like a branch: GitHub resolves the tag first, so the tag ruleset exists before the branch, and the report turns red on one.
 - **The tag `v<VERSION>`** is signed and is the hooks' `rev`. No workflow is called at it ([The entry workflows](#the-entry-workflows)). Releases before 3.0.0 are the tags `quality-v<VERSION>`.
 - Tool versions are set here only: [`quality/requirements-tools.in`](../quality/requirements-tools.in) compiled with hashes into `requirements-tools.txt` (the command is in its header), the actions the workflows pin, and `tools.lock`; `check_quality.py`'s `LATEST_PYTHON`, `LATEST_ACTIONS` and `LATEST_HOOKS` repeat the Python, action and canonical hook versions, and a kit test keeps them equal; `LATEST_IMAGES` names the container images repositories run. Dependabot bumps the first two and the hook revisions here; a repository's own hook revisions are moved by its own Dependabot.
-- A Dependabot pull request here is a kit release like any other. Before it merges it needs a signed commit on its branch with the new `quality/VERSION` (MINOR for a tool bump that finds nothing new in the impact preview, MAJOR if it finds more) and its `quality/CHANGELOG.md` entry (the `🏷️ Kit release and its tag` job fails until then; a pip bump of `requirements-tools.txt` also needs its header put back on top, as the file says), then the tag after the merge. Dependabot's pre-commit updater reads crate-ci/typos' sub-crate tags (`varcon-core-v5.0.7`) as typos versions, so `dependabot.yml` ignores typos `>= 2` (closed PR #10).
+- A Dependabot pull request here is a kit release like any other, and `land` leaves it to a person: its change goes into a branch of the maintainer's (`git merge --squash` of its head, then a signed commit), with the new `quality/VERSION` (MINOR for a tool bump that finds nothing new in the impact preview, MAJOR if it finds more) and its `quality/CHANGELOG.md` entry (the `🏷️ Kit release and its tag` job fails until then; a pip bump of `requirements-tools.txt` also needs its header put back on top, as the file says), then the tag once it has landed. Dependabot's pre-commit updater reads crate-ci/typos' sub-crate tags (`varcon-core-v5.0.7`) as typos versions, so `dependabot.yml` ignores typos `>= 2` (closed PR #10).
+
+### How often `v3` moves
+
+The rule is at most once a week. `v3` runs in every repository at once, so a release is proved by the repositories' own runs, and a week between two of them is what lets a bad one be seen, and told from the one before, before the next hides it; it also keeps the CI no further than a week ahead of the hooks, which Dependabot moves weekly.
+
+It has not been kept yet: 3.0.0 made the branch on 2026-11-24, and 3.1.0, 3.1.1, 3.1.2, 3.2.0 and 3.3.0 moved it five times on that day and the next. Two exceptions say when that is right:
+
+- **A security fix** moves it at once. 3.1.0 and 3.1.1 were that.
+- **A decision of the owner that has to hold everywhere from a date**, while the organization is being built: the repositories are few, nobody outside depends on them, and each release re-ran every one's CI. 3.2.0, 3.3.0 and 3.4.0 are that. It is not a habit to keep: once the firmware is public and somebody else's work meets the gate, only the first exception is left.
+
+A release that moves the branch within the week says in its changelog which of the two it is. In either case the impact preview over every repository comes first (`tools/ecosystem.py preview --all`), and the CI of every repository is run again right after the move: a repository that is not pushed to would show a red days later, as nobody's.
 
 ## Changing the kit
 
 1. One pull request here: the change, `quality/VERSION`, `quality/CHANGELOG.md`, the new digest in `quality/config-digests.json` when a base configuration changed (its old ones stay: a repository may hold them), and `python quality/sync.py --write .`, so this repository records it (its `SOURCE.json` records commit `self` and is compared with the working tree).
 2. CI runs the entry workflows on this repository, by `./` path, so the pull request runs its own version of them; the kit's tests; the release check (`sync.py --release-check --online`: a change to what repositories run, without a new `quality/VERSION` newer than the newest tag and its `CHANGELOG.md` entry, fails; so does a release tag that is lightweight, carries no signature or is one GitHub does not verify, and any tag named like a branch, `v3` or `main`); and an impact preview, `tools/ecosystem.py preview`, which applies the changed kit to throwaway clones of the public repositories and writes their counts to the job summary. Before a release, `tools/ecosystem.py preview --all` does the same locally with the private ones.
-3. Merge ([Merging](#merging)), then release from what is on the remote, never from a local `main`, in the one line that also moves the branch: `git fetch origin && git tag -s vX.Y.Z -m 'Quality kit X.Y.Z' origin/main && git push origin vX.Y.Z refs/remotes/origin/main:refs/heads/vX`, then `gh release create vX.Y.Z --verify-tag --notes-file <the changelog entry>`. Until the tag exists and the branch is at its commit, the release job of that push to `main` is red; re-run it once both are pushed.
+3. Land it ([Merging](#merging)), then release from what is on the remote, never from a local `main`, in the one line that also moves the branch: `git fetch origin && git tag -s vX.Y.Z -m 'Quality kit X.Y.Z' origin/main && git push origin vX.Y.Z refs/remotes/origin/main:refs/heads/vX`, then `gh release create vX.Y.Z --verify-tag --notes-file <the changelog entry>`. Until the tag exists and the branch is at its commit, the release job of that push to `main` is red; re-run it once both are pushed.
 
 A bad release is red everywhere at once. The repair is a revert on `main`, a new PATCH and the same line again; then each repository that went red needs **Re-run all jobs**, since "Re-run failed jobs" keeps the workflow files the first attempt read.
 
@@ -365,15 +407,30 @@ A bad release is red everywhere at once. The repair is a revert on `main`, a new
 
 ## Merging
 
+A pull request lands by a fast forward of `main` to its own head: the commits that were reviewed and checked are the ones that land, with the signatures they have. Nobody presses a merge button and nobody runs `gh pr merge` (owner, 2026-11-25): what they make of the owner's work is committed and signed by GitHub, which [the identity of a commit](#the-identity-of-a-commit) refuses, and what they make of a contributor's would lose the contributor's own commits. GitHub marks a pull request whose head reached `main` as merged.
+
 Every pull request of a repository in the run form, the owner's and the agents' alike:
 
-1. `gh pr diff <n> --name-only`. If a path starts with `.github/`, or is `.pre-commit-config.yaml`, read that part of the diff line by line before anything else: `✅ Check` is the pull request's own workflow there and is not proof. `tools/ecosystem.py land` refuses such a pull request, whoever opened it.
-2. `✅ Check` succeeded on the head that is merged, from GitHub Actions (App 15368), and so did every other job of the run.
-3. Squash, with the head's SHA (`gh pr merge <n> --squash --match-head-commit <sha>`), so nothing pushed after the reading is merged.
+1. `gh pr diff <n> --name-only`. If a path starts with `.github/`, or is `.pre-commit-config.yaml`, read that part of the diff line by line before anything else: `✅ Check` is the pull request's own workflow there and is not proof.
+2. Rebase the branch on `main` locally and push it: `git rebase --gpg-sign origin/main`, `git push --force-with-lease`. The required checks are attached to the head commit, so they run again on this one, and they are the ones that count.
+3. `python tools/ecosystem.py land kleidos-dev/<repository>#<n>` says whether it would land and why not; with `--merge` it waits for the checks, lands it and confirms it. Where step 1 found something, `--read <head>` says that it was read, at that head and no other.
+
+What the tool does can be done by hand: every commit signed and verified, every check green on that exact head, `✅ Check` of GitHub Actions (App 15368) among them, `main` still where the branch starts, `git push origin <head>:main` with no force, and the pull request then says merged. It is how a repository lands whose jobs GitHub does not start (private minutes): the same gates, run locally, are pasted in the pull request.
+
+What [`tools/ecosystem.py land`](ecosystem.md#landing-a-pull-request) refuses is tested: a draft, an owner's branch that is not on top of `main`, a commit that says it is the owner's and is not, one nobody signed, a merge commit, a part of the diff that has to be read and was not, a check that is red, missing or still running after an hour, a head or a `main` that moved meanwhile.
+
+**A contributor's work** lands with the contributor as its author, and the maintainer runs the same command on it once the contributor has signed the CLA and the pull request is green:
+
+- **As it is**, when every commit is signed and GitHub verifies it, and the branch is on top of `main`: the contributor's own commits are pushed to `main`, with the contributor's author, committer and signature, whoever's key it is, and GitHub shows the pull request as merged.
+- **Rebased by the maintainer**, when a commit is not signed or `main` has moved: the commits go on today's `main` one by one, with their author and message as they are, on a branch `land/pr-<n>` with a pull request of its own, which lands as above. Only there are the committer and the signature the owner's, because the owner makes those commits. The contributor's pull request is then closed with the commit it landed as, since GitHub shows as merged only a pull request whose own commits reach `main`.
+
+Nobody has to sign to contribute, and somebody who wants the signature kept rebases on `main` and signs. A merge commit, a message that breaks the rules, a commit that says it is the owner's, or a conflict with `main` goes back to the contributor. Nothing of a pull request runs on the maintainer's machine, and nobody else's commits are ever made the owner's.
+
+**An update of Dependabot's** lands as one commit of the owner's, since a bot has no authorship to keep, the same way; `land` on its own walks those that pass [its guards](ecosystem.md#landing-the-bots-pull-requests). One the guards leave to a person (an action, a hook, a major version) is taken by name, with `--read <head>` once its diff was read whole.
 
 A force push is `git push --force-with-lease` on the branch of one's own pull request; anything else (plain `--force`, `main`, `v3` and the other kit branches, a tag, anybody else's branch) only when the owner orders that act (owner, 2026-11-25). A rebase or a reworded commit so needs no new pull request.
 
-The required checks are a ruleset of their own on `main`, with an empty bypass list, so nobody merges past a red one; the rest of `main`'s rules are another, which an organization admin may bypass, and a required check there would be bypassed with it. A squash of the whole history before a repository goes public needs the first one disabled for that push, and enabled again right after.
+The required checks are a ruleset of their own on `main`, with an empty bypass list, so nobody lands past a red one; the rest of `main`'s rules are another, which an organization admin may bypass, and a required check there would be bypassed with it. That bypass is what lets the owner push to a `main` that moves by pull request only. The signature is to be required with an empty bypass list too: GitHub then refuses the buttons that cannot sign, where squash and merge commits are off, and takes a push of commits somebody signed (tried, 2026-11-25). That is the one rule every commit of `main` meets, a contributor's too; whose the owner's are is [another](#the-identity-of-a-commit). A squash of the whole history before a repository goes public needs the first one disabled for that push, and enabled again right after.
 
 ## Proof from another repository
 

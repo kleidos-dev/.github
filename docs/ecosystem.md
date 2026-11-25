@@ -16,6 +16,7 @@ One report says what is behind, what is broken and what nobody declared across t
 - [The local report](#the-local-report)
 - [Previewing a kit change](#previewing-a-kit-change)
 - [Refreshing a copy](#refreshing-a-copy)
+- [Landing a pull request](#landing-a-pull-request)
 - [Landing the bot's pull requests](#landing-the-bots-pull-requests)
 
 ## The two halves
@@ -89,16 +90,36 @@ python ../.github/tools/ecosystem.py refresh .github/quality/SOURCE.json   # the
 
 It copies the bytes, rewrites the digests, the date and the commit it notes, and refuses a frozen copy and a generator's output, which are made again instead, a path under `.git/` or through a symbolic link, and a record or a file under `.github/` or at `.pre-commit-config.yaml`: workflows, actions, Dependabot's settings and the hook list are what GitHub and the hooks run, with the repository's token, and they change by a person's own edit. A path is compared as a file system that folds case and Unicode compatibility forms reads it (APFS opens `.github/workflowſ/` as `.github/workflows/`), and by what the file system resolves it to. The consumer pulls; no script writes into another repository's checkout.
 
+## Landing a pull request
+
+`python tools/ecosystem.py land OWNER/NAME#N` says what it would do with one pull request, and `--merge` does it, the way [`quality.md`, "Merging"](quality.md#merging) states: never a merge button, a push of signed commits, and never a forced one. It runs with the caller's own `gh` and git, whose identity has to be the owner's, in a clone of its own.
+
+| The pull request | What happens |
+| --- | --- |
+| The owner's, from a branch of the repository | Judged (on top of `main`; every commit signed and verified, and the owner's where it says it is, by [`hooks/commit_identity.py`](../hooks/commit_identity.py); no merge commit; what has to be read was), waited for until nothing that runs on its head is left, judged again, pushed to `main` as it is, and confirmed: GitHub says it is merged |
+| A person's, from a fork or a branch here, signed and on top of `main` | Judged (its checks green on its head, the CLA among them where it is required; its messages within the rules; no merge commit; no commit that says it is the owner's and is not), judged again, pushed to `main` as it is, with its author, committer and signature, and confirmed |
+| A person's, not signed or behind `main` | Judged the same, then taken: each commit on today's `main` with its author, committed and signed by the owner, on `land/pr-N` with a pull request of its own |
+| Dependabot's | The guards below, then taken as one commit of the owner's, and landed |
+
+- `--read SHA` says that the part of the diff a green gate proves nothing about (`.github/`, `.pre-commit-config.yaml`) was read line by line at that head. Of an update of Dependabot's it says the whole diff was read: the update is taken, whatever it changes, and its own pull request lands by name.
+- The push is a plain one, so GitHub refuses it if `main` moved in the last second.
+- A pull request that was taken stays open when its own does not land; the branch `land/pr-N` is never written twice.
+- A person's pull request whose checks are not green yet is left, not waited for.
+- A branch that is exempt from the identity of its commits, and a repository on `hold`, are never landed on; this repository's own pull requests land by name, and its bot's by hand.
+- What it cannot do: a repository whose jobs GitHub does not start, which lands by hand.
+
+[`tools/fast_forward.py`](../tools/fast_forward.py) is the code of it.
+
 ## Landing the bot's pull requests
 
-`python tools/ecosystem.py land` says which of Dependabot's pull requests it would merge, and `--merge` merges them, one at a time. It merges third-party code under the caller's credential with nobody reading the diff, so it holds no standing credential, runs only by hand, and every guard must hold:
+`python tools/ecosystem.py land` says which of Dependabot's pull requests it would land, and `--merge` lands them, one at a time. It puts third-party code under the owner's key with nobody reading the diff, so it holds no standing credential, runs only by hand, and every guard must hold:
 
-- opened by Dependabot from a branch of the same repository; every push to that branch Dependabot's or the caller's, on GitHub's own record of them; every commit authored by Dependabot and signed by GitHub, but for the merges of `main` this command's own update made;
+- opened by Dependabot from a branch of the same repository; every push to that branch Dependabot's or the caller's, on GitHub's own record of them; every commit authored by Dependabot and signed by GitHub, but for merges of `main` by the caller;
 - nothing under `.github/`, whoever changed it: a pull request brings its own workflows, so `✅ Check` proves nothing there ([`quality.md`, "Merging"](quality.md#merging));
 - only `requirements*.txt` and `.in`, `pyproject.toml`, `package.json` and `package-lock.json` changed, read line by line, every block of every hunk: each new line is its old one but for the version, a range, the checksum, or the version in an address of `registry.npmjs.org`. A version is masked only where it is a package's, after the package's name and one of pip's operators, and in each further bound a comma adds to that requirement, so a number after a bare `=` or after a quote is compared whole (Poetry's `python = "<4,>=3.12"` among them). In `package.json`, a changed line that names a version names a package one of Dependabot's commits says it updates (the name read without the quotes Dependabot puts around a scoped one, `"@types/node"`), so no engine, whatever its name (`vscode`, `deno`), and not the project's own `version`. A package that was not there, another license, host, option or script is left to a person, and so is the hook list (Dependabot's commits for it do not say what each update is, and it read a sub-crate's tag as a typos release once);
 - no floor and no index moves: a changed line naming a coverage threshold (`fail_under`, `--cov-fail-under`), the oldest Python (`requires-python`, `python_requires`, Poetry's `python`) or uv (`required-version`), a package index or source (`--index-url`, `-i`, `--extra-index-url`, `--find-links`, `--trusted-host`, `-c`, a `[[tool.uv.index]]`-like table), or, in `package.json`, an engine (`node`, `npm`, `pnpm`, `yarn`, `bun`), `engines`, `registry` or `packageManager`, is left to a person (a lock's engines of its dependencies move with their versions);
 - no major version, as each of Dependabot's commits states each update;
 - never in this repository (a bump here is a kit release, by hand), nor in one on hold;
-- its branch updated to today's `main`, a run on that, everything that ran on it green, and the gate, `✅ Check` of GitHub Actions, among it (a repository that has not switched has none, so nothing lands there).
+- taken as a signed commit of the owner's on today's `main`, in a pull request of its own that changes no more than the bot's by the same reading, everything that runs on that green, and the gate, `✅ Check` of GitHub Actions, among it (a repository that has not switched has none, so nothing lands there).
 
-[`tools/landing.py`](../tools/landing.py) is the code of it.
+[`tools/landing.py`](../tools/landing.py) is the code of the guards.

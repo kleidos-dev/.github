@@ -46,6 +46,7 @@ You can help by donating a device, by donating to the project, or by testing bui
 - One concern per pull request.
 - Say what you tested and on what. If you have no hardware, say so; that is fine and it tells the reviewer what to check.
 - Update the documentation in the same change.
+- Your commits are yours: your name, your address and, if you sign, your key. They do not have to be signed. Once your pull request is accepted, the maintainer lands it without a merge button. If your commits are signed, verified by GitHub and on top of `main`, they land exactly as they are, and GitHub shows your pull request as merged. Otherwise the maintainer rebases them: they keep you as their author and count as yours, with the maintainer as committer and the maintainer's signature, because the maintainer makes those commits, and GitHub shows your pull request as closed, with the commits it landed as. So please no merge commits: rebase when `main` has moved. The only commit refused for whose it is, is one that says it is the maintainer's.
 - Do not bypass checks (`--no-verify`). A force push is `git push --force-with-lease` on the branch of your own pull request; anything else (plain `--force`, any other branch, a tag) only when the owner orders that act.
 
 You do not need to mention or assign anyone: every pull request asks the maintainers (`@kleidos-dev/maintainers`) for a review on its own, through `CODEOWNERS`.
