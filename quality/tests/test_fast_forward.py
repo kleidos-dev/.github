@@ -115,8 +115,7 @@ class Hub(fast_forward.Api):
         return self.git("rev-parse", "refs/heads/main")
 
     def range(self, number: int) -> list[str]:
-        head = self.pulls[number]["head"]["sha"]
-        return self.git("rev-list", "--reverse", head, "^refs/heads/main").split()
+        return [commit["sha"] for commit in self.commits(self.pulls[number]["head"]["sha"])]
 
     # the API
     def get(self, path: str) -> Any:
@@ -128,14 +127,16 @@ class Hub(fast_forward.Api):
             merged = self.git("merge-base", pull["head"]["sha"], "refs/heads/main")
             done = merged == pull["head"]["sha"] and not self.never_merged
             return {**json.loads(json.dumps(pull)), "merged": done}
-        if found := re.fullmatch(rf"{base}/pulls/(\d+)/(commits|files)\?per_page=100&page=1", path):
-            return self.commits(int(found[1])) if found[2] == "commits" else self.files(found[1])
+        if found := re.fullmatch(rf"{base}/pulls/(\d+)/files\?per_page=100&page=1", path):
+            return self.files(found[1])
         if path == f"{base}/commits/main":
             return {"sha": self.main()}
-        if found := re.fullmatch(rf"{base}/compare/([0-9a-f]+)\.\.\.([0-9a-f]+)", path):
+        compare = rf"{base}/compare/([0-9a-f]+)\.\.\.([0-9a-f]+)\?per_page=100&page=1"
+        if found := re.fullmatch(compare, path):
             ahead = self.git("rev-list", "--count", f"{found[1]}..{found[2]}")
             behind = self.git("rev-list", "--count", f"{found[2]}..{found[1]}")
-            return {"ahead_by": int(ahead), "behind_by": int(behind)}
+            commits = self.commits(found[2])
+            return {"ahead_by": int(ahead), "behind_by": int(behind), "commits": commits}
         if re.fullmatch(rf"{base}/actions/runs\?head_sha=[0-9a-f]+&per_page=100", path):
             return {"workflow_runs": self.runs, "total_count": self.more.get("runs", 1)}
         if re.fullmatch(rf"{base}/commits/[0-9a-f]+/check-runs\?per_page=100", path):
@@ -144,9 +145,9 @@ class Hub(fast_forward.Api):
             return self.status
         raise AssertionError(f"not asked for: {path}")
 
-    def commits(self, number: int) -> list[dict[str, Any]]:
+    def commits(self, head: str) -> list[dict[str, Any]]:
         out = []
-        for sha in self.range(number):
+        for sha in self.git("rev-list", "--reverse", head, "^refs/heads/main").split():
             email, parents, message = self.git("show", "-s", "--format=%ae%x00%P%x00%B", sha).split(
                 "\0"
             )
@@ -201,6 +202,7 @@ class LocalGit(fast_forward.Git):
     def __init__(self, hub: Hub) -> None:
         self.hub = hub
         self.email = EMAIL
+        self.folder = hub.root
         self.ran: list[tuple[str, ...]] = []
         self.before: dict[str, Any] = {}
         self.log = hub.root / "keys"
@@ -209,19 +211,25 @@ class LocalGit(fast_forward.Git):
 
     def clone(self, slug: str, folder: Path) -> None:
         assert slug == SLUG, slug
+        self.folder = folder
+        self.hook("clone")
         self._run(["git", "clone", "-q", str(self.hub.bare), str(folder)])
         for name, value in (
             ("user.name", "The owner"),
             ("user.email", self.email),
             ("gpg.program", str(self.gpg)),
+            ("core.quotePath", "false"),  # as the caller's own git may be set
         ):
             self._run(["git", "-C", str(folder), "config", name, value])
 
     def run(self, folder: Path, *args: str) -> str:
         self.ran.append(args)
-        if args[0] in self.before:
-            self.before.pop(args[0])()
+        self.hook(args[2] if args[0] == "-c" else args[0])
         return super().run(folder, *args)
+
+    def hook(self, name: str) -> None:
+        if name in self.before:
+            self.before.pop(name)()
 
     def pushes(self) -> list[tuple[str, ...]]:
         return [args for args in self.ran if args[0] == "push"]
@@ -336,7 +344,7 @@ class OwnTest(HubCase):
         self.left("its commits are not the ones that would land")
 
     def test_the_commits_are_the_ones_that_land(self) -> None:
-        listed = self.hub.commits(7)
+        listed = self.hub.commits(self.head)
         for found in (listed[:1], listed[1:], [], listed[::-1], [*listed, listed[0]]):
             with (
                 self.subTest(found=len(found)),
@@ -396,10 +404,112 @@ class OwnTest(HubCase):
     def test_a_file_that_left_github_is_read_too(self) -> None:
         moved = [{"filename": "ci.yml", "previous_filename": ".github/workflows/ci.yml"}]
         with mock.patch.object(self.hub, "files", return_value=moved):
+            self.left(".github/workflows/ci.yml: a green", merge=False)
+        self.said.clear()
+        with mock.patch.object(self.hub, "files", return_value=moved):
             self.left(".github/workflows/ci.yml: a green")
+        self.said.clear()
         same = [{"filename": "a", "previous_filename": None}, {"filename": "x/.github/y"}]
+        same += [{"filename": ".githubx"}, {"filename": ".pre-commit-config.yaml.bak"}]
         with mock.patch.object(self.hub, "files", return_value=same):
             self.assertTrue(self.land())
+
+    def test_what_lands_is_read_whatever_the_list_of_files_says(self) -> None:
+        """GitHub lists the files of what a pull request is at that instant; what is pushed is
+        asked of git, in the clone it is pushed from."""
+        for rel in (
+            ".github/workflows/x.yml",
+            ".github/ñ \n.yml",
+            ".github",
+            ".pre-commit-config.yaml",
+        ):
+            head = self.hub.branch("topic", "1\n", rel=rel)
+            self.hub.open(7, head)
+            with (
+                self.subTest(rel=rel),
+                mock.patch.object(self.hub, "files", return_value=[{"filename": "a.txt"}]),
+            ):
+                for read in ("", "f" * 40):
+                    self.said.clear()
+                    self.left(
+                        f"proves nothing about it; read that part of the diff line by line,"
+                        f" then land it with --read {head}",
+                        read=read,
+                    )
+        # Nothing of it is looked for anywhere else.
+        for rel in ("x/.github/y", ".githubx", "github/z", ".pre-commit-config.yaml.bak"):
+            head = self.hub.branch("topic", "1\n", rel=rel)
+            self.hub.open(7, head)
+            self.assertTrue(self.land())
+            self.assertEqual(self.hub.main(), head)
+
+    def test_a_path_that_is_no_text_is_read_too(self) -> None:
+        self.hub.branch("topic")
+        blob = fx.git(self.hub.work, "rev-parse", "HEAD:a.txt").strip()
+        fx.git(
+            self.hub.work, "update-index", "--add", "--cacheinfo", f"100644,{blob},.github/\udcff"
+        )
+        tree = fx.git(self.hub.work, "write-tree").strip()
+        with mock.patch.dict(fx.GIT_ENV, {**self.hub.env, "GIT_AUTHOR_EMAIL": EMAIL}):
+            head = fx.git(
+                self.hub.work, "commit-tree", tree, "-p", self.hub.first, "-m", "Add it"
+            ).strip()
+        fx.git(self.hub.work, "read-tree", "HEAD")
+        fx.git(self.hub.work, "push", "-q", "-f", "origin", f"{head}:refs/heads/topic")
+        self.hub.open(7, head)
+        self.left('".github/\\377": a green')
+
+    def test_a_file_moved_out_of_github_is_read_too(self) -> None:
+        self.hub.git("update-ref", "refs/heads/main", self.hub.branch("o", "1\n", rel=".github/x"))
+        self.hub.branch("topic")
+        fx.git(self.hub.work, "mv", ".github/x", "x")
+        head = self.hub.commit("Move x")
+        fx.git(self.hub.work, "push", "-q", "-f", "origin", "HEAD:refs/heads/topic")
+        self.hub.open(7, head)
+        with mock.patch.object(self.hub, "files", return_value=[]):
+            self.left(".github/x: a green")
+            self.said.clear()
+            self.assertTrue(self.land(read=head))
+
+    def test_what_main_changed_there_is_not_the_pull_requests(self) -> None:
+        """A main that moved is told by the push that git refuses, not by what moved in it."""
+        other = self.hub.branch("other", "9\n", rel=".github/x")
+        self.git.before["fetch"] = lambda: self.git.run(
+            self.git.folder, "update-ref", "refs/remotes/origin/main", self.fetched(other)
+        )
+        self.git.before["push"] = lambda: self.hub.git("update-ref", "refs/heads/main", other)
+        with self.assertRaisesRegex(fast_forward.GitError, "rejected|fetch first"):
+            self.land()
+        self.assertEqual((self.hub.main(), self.said), (other, []))
+
+    def fetched(self, sha: str) -> str:
+        fx.git(self.git.folder, "fetch", "-q", "origin", sha)
+        return sha
+
+    def test_the_checks_are_asked_again_before_the_push(self) -> None:
+        """One that turned red, or runs again, after they were all green."""
+        for change, needle in (
+            ({"runs": [{**CI, "conclusion": "failure"}]}, "failing: CI"),
+            ({"checks": [{**GATE, "conclusion": "failure"}]}, f"failing: {fast_forward.GATE}"),
+            ({"runs": [{**CI, "status": "queued", "conclusion": None}]}, "pending"),
+            ({"status": {"total_count": 1, "state": "failure"}}, "failing: a commit status"),
+        ):
+            for when in ("fetch", "diff"):
+                with self.subTest(needle=needle, when=when):
+                    self.said.clear()
+                    self.hub.runs, self.hub.checks = [dict(CI)], [dict(GATE)]
+                    self.hub.status = {"total_count": 0, "state": "pending"}
+                    self.git.before[when] = lambda change=change: vars(self.hub).update(change)
+                    self.left(needle)
+                    self.assertEqual((self.git.before, self.slept), ({}, []))
+
+    def test_a_signature_of_the_owners_github_has_not_decided_on_stops_it(self) -> None:
+        for state in commit_identity.UNDECIDED:
+            self.slept.clear()
+            self.hub.nodes = {self.head: {"signature": {"isValid": False, "state": state}}}
+            with self.assertRaisesRegex(commit_identity.Unreadable, "of the owner's"):
+                self.land()
+            self.assertEqual((self.said, self.slept, self.git.pushes()), ([], [10.0, 10.0], []))
 
     def test_red_checks_leave_it(self) -> None:
         self.hub.runs = [{**CI, "conclusion": "failure"}]
@@ -631,6 +741,79 @@ class PersonAsItIsTest(PersonCase):
                 self.assertEqual((self.hub.posts, self.git.pushes()), ([], []))
                 self.hub.git("update-ref", "refs/heads/main", self.hub.first)
 
+    def test_one_github_has_not_decided_on_is_left(self) -> None:
+        """Not landed as it is, and not made the owner's either."""
+        first = self.hub.range(7)[0]
+        for state in commit_identity.UNDECIDED:
+            for of in (first, self.head):
+                self.said.clear()
+                made = {"isValid": False, "state": state, "wasSignedByGitHub": False}
+                self.hub.nodes = {of: {"signature": made}}
+                needle = f"commit {of[:7]}: GitHub has not decided on its signature"
+                self.left(f"{needle} ({state.lower()}); land it again later")
+        self.assertEqual(self.slept, [])
+
+
+class OtherHeadTest(PersonCase):
+    """A pull request whose head is another one whenever something but itself is asked for, and
+    the judged one when it is: nothing of the first is judged in place of the second."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sound = self.head
+        self.asked: list[str] = []
+
+    def flipped(self, head: str, take: bool, read: str = "") -> None:
+        pull = self.hub.open(7, head, user=PERSON, head={**self.there, "sha": head})
+        real, before = self.hub.get, self.hub.main()
+        self.hub.unsigned = {THEIRS} if take else set()
+
+        def get(path: str) -> Any:
+            self.asked.append(path)
+            at = head if path.endswith("/pulls/7") else self.sound
+            pull["head"]["sha"] = at
+            return real(path)
+
+        self.said.clear()
+        with mock.patch.object(self.hub, "get", get):
+            self.assertFalse(self.land(read=read))
+        self.assertIn(f"left: {SLUG}#7 Title of 7: ", self.said[-1])
+        self.assertEqual((self.hub.posts, self.git.pushes()), ([], []))
+        self.assertEqual(self.hub.main(), before)
+
+    def test_a_part_nobody_read(self) -> None:
+        """A workflow that would run on main, or on a branch of the repository itself."""
+        for rel in (".github/workflows/x.yml", ".pre-commit-config.yaml"):
+            head = self.theirs("1\n", rel=rel)
+            for take in (False, True):
+                with self.subTest(rel=rel, take=take):
+                    self.flipped(head, take)
+                    self.assertIn(f"{rel}: a green ✅ Check proves nothing", self.said[-1])
+                    self.flipped(head, take, self.sound)
+        self.said.clear()
+        self.hub.open(7, head, user=PERSON, head={**self.there, "sha": head})
+        self.assertTrue(self.land(read=head))
+        self.assertIn("taken:", self.said[-1])
+
+    def test_a_commit_that_says_it_is_the_owners(self) -> None:
+        head = self.hub.branch("theirs", "1\n", "2\n", email=EMAIL)
+        for take in (False, True):
+            self.flipped(head, take)
+            self.assertIn("the owner's commit is not committed as", self.said[-1])
+
+    def test_a_message_that_breaks_the_rules(self) -> None:
+        self.hub.branch("theirs", email=THEIRS)
+        head = self.hub.commit("Added x", THEIRS, "1\n")
+        fx.git(self.hub.work, "push", "-q", "-f", "origin", "HEAD:refs/heads/theirs")
+        for take in (False, True):
+            self.flipped(head, take)
+            self.assertIn("the subject starts with 'Added'", self.said[-1])
+
+    def test_a_list_that_is_the_pull_requests_is_never_what_its_commits_are(self) -> None:
+        self.flipped(self.theirs("1\n", rel=".github/x"), False)
+        self.assertFalse([path for path in self.asked if path.endswith("/commits")])
+        self.assertFalse([path for path in self.asked if "/7/commits" in path])
+
 
 class PersonTest(PersonCase):
     """Not signed, or behind main: the owner makes the commits again, with their author."""
@@ -680,7 +863,7 @@ class PersonTest(PersonCase):
                     self.assertNotIn("example.invalid", self.said[0])
 
     def test_only_the_commits_that_were_judged_are_taken(self) -> None:
-        listed = self.hub.commits(7)
+        listed = self.hub.commits(self.head)
         for found in (listed[:1], listed[1:], []):
             with mock.patch.object(self.hub, "commits", return_value=found):
                 self.said.clear()
@@ -767,7 +950,7 @@ class PersonTest(PersonCase):
             self.left(f"commit {self.head[:7]} is a merge")
 
     def test_a_message_that_breaks_the_rules_is_not_taken(self) -> None:
-        first, last = self.hub.commits(7)
+        first, last = self.hub.commits(self.head)
         for message, taken in (("Added x", False), ("Add " + "x" * 60, True)):
             for signed in (set(), {THEIRS}):
                 said = {**first, "commit": {"message": message}}
@@ -787,6 +970,7 @@ class PersonTest(PersonCase):
         with mock.patch.object(self.hub, "files", return_value=files):
             self.left(f"--read {self.head}")
             self.assertTrue(self.land(read=self.head))
+            self.assertIn("taken:", self.said[-1])
 
     def test_its_checks_are_green(self) -> None:
         for runs, needle in (
@@ -862,6 +1046,20 @@ class UpdateTest(HubCase):
         self.assertEqual(" ".join(lines[3:]), f"Pull request #7 of Dependabot: {title}")
         self.assertTrue(all(len(line) <= 72 for line in lines))
         self.assertEqual(self.hub.posts[0][1]["title"], "Take Dependabot's update of #7")
+
+    def test_a_part_nobody_read_is_not_taken(self) -> None:
+        self.head = self.hub.branch("dependabot/x", "1\n", rel=".github/workflows/x.yml")
+        pull = self.hub.open(7, self.head, "dependabot/x", user=BOT, title="Bump x")
+        self.assertIsNone(self.lander().take(SLUG, pull))
+        self.assertIsNone(self.lander().take(SLUG, pull, "f" * 40))
+        self.assertIn(".github/workflows/x.yml: a green", self.said[-1])
+        self.assertEqual((self.hub.posts, self.git.pushes()), ([], []))
+        self.assertIsNotNone(self.lander().take(SLUG, pull, self.head))
+
+    def test_what_main_changed_there_is_not_the_updates(self) -> None:
+        main = self.hub.branch("o", "1\n", rel=".github/x")
+        self.hub.git("update-ref", "refs/heads/main", main)
+        self.assertEqual(len(self.take("Bump x")), 4)
 
     def test_one_that_does_not_apply_is_not_taken(self) -> None:
         self.hub.git("update-ref", "refs/heads/main", self.hub.branch("o", "x\n"))
@@ -966,6 +1164,16 @@ class PagesTest(unittest.TestCase):
             self.pages(*[100] * fast_forward.MAX_PAGES)
         sizes = [100] * (fast_forward.MAX_PAGES - 1) + [99]
         self.assertEqual(len(self.pages(*sizes)[0]), sum(sizes))
+
+    def test_a_list_inside_an_answer(self) -> None:
+        answers = [{"of": [1] * 100, "n": [0]}, {"of": [2], "n": [0]}]
+
+        class Paged(fast_forward.Api):
+            def get(self, path: str) -> Any:
+                return {"login": "x"} if path == "user" else answers.pop(0)
+
+        lander = fast_forward.Lander(Paged(), fast_forward.Git(), False)
+        self.assertEqual(lander.pages("p", "of"), [1] * 100 + [2])
 
 
 class OutsideTest(unittest.TestCase):

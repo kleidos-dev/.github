@@ -10,6 +10,10 @@ verified it, each commit that is the owner's is the owner's (docs/quality.md,
 "The identity of a commit"), every check on that very commit is green, main
 has not moved, and GitHub then marks the pull request merged.
 
+What is judged is what is pushed: the commits are asked for by their SHAs, not
+as what the pull request holds at that instant, the files by git, in the clone
+they are pushed from, and the checks of that commit once more right there.
+
   own     a branch of the repository, opened by the owner: judged, waited
           for, pushed to main and confirmed
   person  a pull request of somebody else (a fork's, or a branch here). On
@@ -56,7 +60,7 @@ PAGE = 100
 MAX_PAGES = 30  # GitHub lists no more than 3,000 files of a pull request
 BRANCH = re.compile(r"land/pr-(\d+)")
 # What a green gate proves nothing about, since the pull request brings its own.
-OWN_GATE = (".github/", ".pre-commit-config.yaml")
+OWN_GATE = (".github", ".pre-commit-config.yaml")
 
 
 class ApiError(Exception):
@@ -146,10 +150,14 @@ def open_refusal(pull: dict[str, Any], slug: str, identity: Identity) -> str | N
     return None
 
 
-def read_refusal(files: list[dict[str, Any]], head: str, read: str) -> str | None:
-    """Why the part a green gate proves nothing about still has to be read, or None."""
+def listed_names(files: list[dict[str, Any]]) -> list[str]:
+    """The paths of files GitHub lists that a green gate proves nothing about."""
     names = {str(f.get(key) or "") for f in files for key in ("filename", "previous_filename")}
-    found = sorted(name for name in names if name.startswith(OWN_GATE))
+    return sorted(name for name in names if name.split("/")[0] in OWN_GATE)
+
+
+def read_refusal(found: list[str], head: str, read: str) -> str | None:
+    """Why the part a green gate proves nothing about still has to be read, or None."""
     if found and read != head:
         return (
             f"{found[0]}: a green {GATE} proves nothing about it; read that part of the diff"
@@ -210,11 +218,12 @@ class Lander:
         found: dict[str, Any] = self.api.get(f"repos/{slug}/pulls/{number}")
         return found
 
-    def pages(self, path: str) -> list[dict[str, Any]]:
-        """Every entry of a list GitHub gives by pages."""
+    def pages(self, path: str, key: str = "") -> list[dict[str, Any]]:
+        """Every entry of a list GitHub gives by pages, or of the one its answers hold at key."""
         out: list[dict[str, Any]] = []
         for page in range(1, MAX_PAGES + 1):
             got = self.api.get(f"{path}?per_page={PAGE}&page={page}")
+            got = got[key] if key else got
             out += got
             if len(got) < PAGE:
                 return out
@@ -286,8 +295,13 @@ class Lander:
                 return f"commit {one.sha[:7]} is a merge"
             for problem in commit_identity.judge(one, self.identity):
                 return f"commit {one.sha[:7]}: {problem.text}"
+            if one.state in commit_identity.UNDECIDED:
+                return (
+                    f"commit {one.sha[:7]}: GitHub has not decided on its signature"
+                    f" ({one.state.lower()}); land it again later"
+                )
         files = self.pages(f"repos/{slug}/pulls/{pull['number']}/files")
-        return read_refusal(files, head, read)
+        return read_refusal(listed_names(files), head, read)
 
     def remake_reason(self, slug: str, pull: dict[str, Any]) -> str | None:
         """Why the commits of a pull request have to be made again to land, or None: they land as
@@ -300,23 +314,27 @@ class Lander:
         return None
 
     def commits(self, slug: str, pull: dict[str, Any]) -> list[tuple[dict[str, Any], Fact]]:
-        """The commits a pull request lists, each with what GitHub says of whose it is."""
-        listed = self.pages(f"repos/{slug}/pulls/{pull['number']}/commits")
+        """The commits that would land, each with what GitHub says of whose it is."""
+        listed = self.pages(self.comparison(slug, pull), "commits")
         shas = [commit["sha"] for commit in listed]
-        facts = commit_identity.facts(self.api.ask, slug, shas, self.sleep)
+        facts = commit_identity.facts(self.api.ask, slug, shas, self.identity, self.sleep)
         return list(zip(listed, facts, strict=True))
 
+    def comparison(self, slug: str, pull: dict[str, Any]) -> str:
+        """Where GitHub compares a pull request's head with today's main, by the SHAs of both: the
+        pull request's own lists are those of whatever its head is at that instant."""
+        return f"repos/{slug}/compare/{self.main(slug, pull)}...{pull['head']['sha']}"
+
     def compared(self, slug: str, pull: dict[str, Any]) -> dict[str, Any]:
-        """How far a pull request's head is from today's main."""
-        head = pull["head"]["sha"]
-        found: dict[str, Any] = self.api.get(
-            f"repos/{slug}/compare/{self.main(slug, pull)}...{head}"
-        )
+        """How far a pull request's head is from today's main, with the first commits and files
+        of what it adds."""
+        path = self.comparison(slug, pull)
+        found: dict[str, Any] = self.api.get(f"{path}?per_page={PAGE}&page=1")
         return found
 
     def own(self, slug: str, pull: dict[str, Any], read: str = "") -> bool:
         """Land the owner's pull request, or say why not; whether it landed."""
-        return self.forward(slug, pull, lambda now: self.own_refusal(slug, now, read))
+        return self.forward(slug, pull, read, lambda now: self.own_refusal(slug, now, read))
 
     def person(self, slug: str, pull: dict[str, Any], read: str = "") -> bool:
         """Land a person's pull request as it is, or take it, or say why not; whether it did."""
@@ -331,15 +349,20 @@ class Lander:
         why = self.remake_reason(slug, pull)
         if why:
             self.say(f"to be rebased: {label}: {why}")
-            return self.take(slug, pull) is not None
+            return self.take(slug, pull, read) is not None
         return self.forward(
             slug,
             pull,
+            read,
             lambda now: self.person_refusal(slug, now, read) or self.remake_reason(slug, now),
         )
 
     def forward(
-        self, slug: str, pull: dict[str, Any], refusal: Callable[[dict[str, Any]], str | None]
+        self,
+        slug: str,
+        pull: dict[str, Any],
+        read: str,
+        refusal: Callable[[dict[str, Any]], str | None],
     ) -> bool:
         """Push a pull request's head to main once it is green, or say why not; whether it
         landed."""
@@ -358,9 +381,9 @@ class Lander:
             return self.left(label, state)
         now = self.pull(slug, pull["number"])
         why = "its branch moved meanwhile" if now["head"]["sha"] != head else refusal(now)
+        why = why or self.push(slug, pull, read)
         if why:
             return self.left(label, why)
-        self.push(slug, pull)
         self.confirm(slug, pull)
         self.say(f"landed: {label}: {pull['html_url']}")
         taken = BRANCH.fullmatch(pull["head"]["ref"])
@@ -371,16 +394,32 @@ class Lander:
             )
         return True
 
-    def push(self, slug: str, pull: dict[str, Any]) -> None:
+    def push(self, slug: str, pull: dict[str, Any], read: str) -> str | None:
         """Move main to a pull request's head, as a plain push, which the server refuses unless
-        it is a fast forward."""
+        it is a fast forward; or why not: the last look is at the clone, and at the checks."""
         head = pull["head"]["sha"]
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp) / "clone"
             self.git.clone(slug, folder)
             self.fetch(folder, pull)
+            why = self.unread(folder, pull, head, read)
+            if why:
+                return why
+            state = self.state(slug, head)
+            if state != "green":
+                return state
             main = f"refs/heads/{pull['base']['ref']}"
             self.git.run(folder, "push", "-q", "origin", f"{head}:{main}")
+        return None
+
+    def unread(self, folder: Path, pull: dict[str, Any], rev: str, read: str) -> str | None:
+        """read_refusal of what a clone is about to push, as its own git tells it."""
+        changed = self.git.run(
+            folder,
+            *("-c", "core.quotePath=true", "diff", "--name-only"),
+            *(f"origin/{pull['base']['ref']}...{rev}", "--", *OWN_GATE),
+        )
+        return read_refusal(changed.splitlines(), pull["head"]["sha"], read)
 
     def fetch(self, folder: Path, pull: dict[str, Any]) -> None:
         """Bring the head of a pull request, a fork's too, into a clone."""
@@ -397,9 +436,10 @@ class Lander:
         raise ApiError(f"{self.label(slug, pull)}: pushed, and GitHub does not say it is merged")
 
     # what is made again
-    def take(self, slug: str, pull: dict[str, Any]) -> dict[str, Any] | None:
+    def take(self, slug: str, pull: dict[str, Any], read: str = "") -> dict[str, Any] | None:
         """Put a pull request's commits on today's main as the owner's, with a pull request of
-        their own; None in a dry run."""
+        their own; None in a dry run, or where a part nobody read would run with the
+        repository's own token."""
         label, number = self.label(slug, pull), pull["number"]
         if not self.merge:
             self.say(f"would take: {label}")
@@ -409,6 +449,10 @@ class Lander:
             folder = Path(tmp) / "clone"
             self.git.clone(slug, folder)
             self.copy(folder, pull, branch)
+            why = self.unread(folder, pull, "HEAD", read)
+            if why:
+                self.left(label, why)
+                return None
             self.git.run(folder, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
         bot = login == BOT
         title = update_message(pull).splitlines()[0] if bot else pull["title"]

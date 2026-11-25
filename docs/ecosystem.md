@@ -96,12 +96,13 @@ It copies the bytes, rewrites the digests, the date and the commit it notes, and
 
 | The pull request | What happens |
 | --- | --- |
-| The owner's, from a branch of the repository | Judged (on top of `main`; every commit signed and verified, and the owner's where it says it is, by [`hooks/commit_identity.py`](../hooks/commit_identity.py); no merge commit; what has to be read was), waited for until nothing that runs on its head is left, judged again, pushed to `main` as it is, and confirmed: GitHub says it is merged |
-| A person's, from a fork or a branch here, signed and on top of `main` | Judged (its checks green on its head, the CLA among them where it is required; its messages within the rules; no merge commit; no commit that says it is the owner's and is not), judged again, pushed to `main` as it is, with its author, committer and signature, and confirmed |
+| The owner's, from a branch of the repository | Judged (on top of `main`; every commit signed and verified, and the owner's where it says it is, by [`hooks/commit_identity.py`](../hooks/commit_identity.py); no merge commit; what has to be read was), waited for until nothing that runs on its head is left, judged again, its checks with it, pushed to `main` as it is, and confirmed: GitHub says it is merged |
+| A person's, from a fork or a branch here, signed and on top of `main` | Judged (its checks green on its head, the CLA among them where it is required; its messages within the rules; no merge commit; no commit that says it is the owner's and is not; no signature GitHub has not decided on), judged again, its checks with it, pushed to `main` as it is, with its author, committer and signature, and confirmed |
 | A person's, not signed or behind `main` | Judged the same, then taken: each commit on today's `main` with its author, committed and signed by the owner, on `land/pr-N` with a pull request of its own |
 | Dependabot's | The guards below, then taken as one commit of the owner's, and landed |
 
 - `--read SHA` says that the part of the diff a green gate proves nothing about (`.github/`, `.pre-commit-config.yaml`) was read line by line at that head. Of an update of Dependabot's it says the whole diff was read: the update is taken, whatever it changes, and its own pull request lands by name.
+- The files are read twice: as GitHub lists them, and, right before a push, as git tells them in the clone it is made from, of the very commit that is pushed. The same before a branch `land/pr-N` is pushed, where a workflow nobody read would run as the repository's own.
 - The push is a plain one, so GitHub refuses it if `main` moved in the last second.
 - A pull request that was taken stays open when its own does not land; the branch `land/pr-N` is never written twice.
 - A person's pull request whose checks are not green yet is left, not waited for.

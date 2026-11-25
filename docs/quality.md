@@ -213,7 +213,7 @@ Owner, 2026-11-25. A commit that says it is the owner's is the owner's: one addr
 | (a) Its author is the owner | Author address, committer and signature are the owner's: a merge button, the web editor, another machine, and somebody who writes the owner's address, are refused |
 | (b) Its author is somebody else, its committer the owner, who landed it | Committer address and signature are the owner's; the author is untouched |
 | (c) Neither is the owner | Nothing: the log counts it |
-| (d) GitHub knows no account of its author or of its committer | Nothing; on a pull request the owner opened from a branch of the repository, a warning, since it may be the owner's other machine. Never a failure |
+| (d) GitHub knows no account of its author or of its committer | Nothing; on a pull request the owner opened from a branch of the repository, a warning where neither is the owner, since it may be the owner's other machine. Never a failure, and never of what the owner landed, (b), whose author is not the owner's to change |
 | (e) A bot's (Dependabot, the CLA's) | Nothing |
 
 | Rule | Refused |
@@ -225,8 +225,9 @@ Owner, 2026-11-25. A commit that says it is the owner's is the owner's: one addr
 
 - **That a commit of `main` is signed by somebody is another rule, and GitHub's**: the required signatures of each `main`'s ruleset refuse an unsigned push, whoever made the commit, and say nothing of who. This check says nothing of whether a contributor's commit is signed.
 - **The owner's other addresses are private**, so none is listed anywhere: the owner with another address is told by the login GitHub gives. What is printed names a login, never an address.
-- **Only what is added is judged**, never history, nor what `main` already holds. A push that came before `since` is not judged, by GitHub's own record of when it came (a committer date is the committer's to write), so a run started again finds in an old push what it found then. A push that wrote `main` anew is judged whole.
-- **No code of a pull request runs beside the token**, which can only read: the checker is the kit's that runs, and in this repository the base branch's. So a fork's pull request is judged like any other, and what it can fail on is a commit that says it is the owner's.
+- **Nothing of a contributor's commit turns the job red.** Where GitHub has not decided on a signature, or could not verify it, the job waits for the owner's and for nobody else's: three times, and then it fails rather than pass a commit that may be forged. What GitHub does not answer at all is asked three times too, since whose a commit is cannot be told without it; an outage longer than that fails the job of anybody, and running it again is all there is to do.
+- **Only what is added is judged**, never history, nor what the default branch already holds. A pull request against another branch is judged as far as the default one goes, since no push judged that branch, and turning the pull request to `main` starts no run: so a commit of the owner's that does not comply is refused there too, whoever opened it. A push that came before `since` is not judged, by GitHub's own record of when it came (a committer date is the committer's to write), so a run started again finds in an old push what it found then. A push that wrote `main` anew is judged whole.
+- **No code of a pull request runs beside the token**, which can only read: the checker is the kit's that runs, and in this repository the base branch's. So a fork's pull request is judged like any other, and what it can be refused for is a commit that says it is the owner's.
 - **The exempt refs** are the list in `identity.json` and no other: the branch of `kleidos-dev/cla` the CLA bot writes, whose commits are the evidence of who signed, and, while work that still squash-merges ends there, the `main` of `kleidos-dev/meter`.
 - **What it does not see**: the owner's name with somebody else's address, since a name is nobody's; the owner with an address of no GitHub account, but for the warning; a push whose run was cancelled by the next one (the pull request it came from was judged); and whatever a pull request's own change of `.github/` makes of the job ([The gate](#the-gate)). GitHub does not enforce the e-mail patterns a ruleset may hold on this plan (tried, 2026-11-25), so this is held here.
 
@@ -417,7 +418,9 @@ Every pull request of a repository in the run form, the owner's and the agents' 
 
 What the tool does can be done by hand: every commit signed and verified, every check green on that exact head, `✅ Check` of GitHub Actions (App 15368) among them, `main` still where the branch starts, `git push origin <head>:main` with no force, and the pull request then says merged. It is how a repository lands whose jobs GitHub does not start (private minutes): the same gates, run locally, are pasted in the pull request.
 
-What [`tools/ecosystem.py land`](ecosystem.md#landing-a-pull-request) refuses is tested: a draft, an owner's branch that is not on top of `main`, a commit that says it is the owner's and is not, one nobody signed, a merge commit, a part of the diff that has to be read and was not, a check that is red, missing or still running after an hour, a head or a `main` that moved meanwhile.
+What [`tools/ecosystem.py land`](ecosystem.md#landing-a-pull-request) refuses is tested: a draft, an owner's branch that is not on top of `main`, a commit that says it is the owner's and is not, one nobody signed, a merge commit, a part of the diff that has to be read and was not, a check that is red, missing or still running after an hour, a head or a `main` that moved meanwhile, a signature GitHub has not decided on.
+
+What it judges is what it pushes: the commits are asked for by the SHAs of `main` and of the head, not as the pull request's own list, which is of whatever its head is at that instant; whether `.github/` or the hook list changed is asked of git, in the clone the push is made from; and the checks of the head are asked once more right before the push, after everything else.
 
 **A contributor's work** lands with the contributor as its author, and the maintainer runs the same command on it once the contributor has signed the CLA and the pull request is green:
 

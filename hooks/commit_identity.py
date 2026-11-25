@@ -23,14 +23,19 @@ Nobody else's commit is judged: neither a contributor's, with whatever
 author, committer, key or none, nor a bot's. That what reaches main is signed
 by somebody is GitHub's to hold (a ruleset), not this check's.
 
-A commit of a pull request the owner opened from this repository, with an
-address GitHub knows no account of, is warned about and never failed: it may
-be the owner's other machine. The owner's other addresses are private, so
-none is listed, and no address but the public one is ever printed.
+Nothing of theirs fails the job either: a signature GitHub has not decided on
+is waited for where the commit is the owner's, and only there.
 
-What is not looked at: history (only what the change adds), a ref that
-identity.json exempts, and a push made before its "since" (a run started again
-judges what was pushed then).
+A commit of a pull request the owner opened from this repository that is not
+the owner's and has an address GitHub knows no account of is warned about and
+never failed: it may be the owner's other machine. The owner's other addresses
+are private, so none is listed, and no address but the public one is ever
+printed.
+
+What a pull request adds is what the default branch does not hold, whatever
+branch it is against. What is not looked at: history (only what the change
+adds), a ref that identity.json exempts, and a push made before its "since" (a
+run started again judges what was pushed then).
 
 Usage: commit_identity.py, in a GitHub Actions job, in a checkout with the
 whole history. It reads GITHUB_EVENT_NAME, GITHUB_EVENT_PATH,
@@ -38,7 +43,7 @@ GITHUB_REPOSITORY, GITHUB_TOKEN (contents: read), GITHUB_API_URL and
 GITHUB_STEP_SUMMARY. It runs nothing of the pull request.
 
 Exit status: 0 nothing to refuse, 1 a commit is refused, 2 git, the event,
-identity.json or GitHub could not be read.
+identity.json or GitHub, asked three times, could not be read.
 
 Python 3.9 or newer, standard library only, as check_commit_msg.py beside it.
 """
@@ -46,6 +51,7 @@ Python 3.9 or newer, standard library only, as check_commit_msg.py beside it.
 from __future__ import annotations
 
 import datetime as dt
+import http.client
 import json
 import os
 import re
@@ -79,7 +85,9 @@ UNKNOWN = (
 BATCH = 50
 TRIES, PAUSE_SECONDS = 3, 10.0
 # States in which GitHub has not verified a signature yet, or could not.
-UNDECIDED = frozenset({"GPGVERIFY_ERROR", "GPGVERIFY_UNAVAILABLE"})
+UNDECIDED = frozenset({"GPGVERIFY_ERROR", "GPGVERIFY_UNAVAILABLE", "OCSP_ERROR", "OCSP_PENDING"})
+# What the default branch holds, in the job's checkout of every branch.
+REMOTE = "refs/remotes/origin/"
 FIELDS = (
     "oid parents{totalCount} author{email user{login}} committer{email user{login}}"
     " signature{isValid state wasSignedByGitHub ... on GpgSignature{keyId}}"
@@ -274,25 +282,48 @@ def batch(ask: Ask, slug: str, shas: list[str]) -> list[Fact]:
     return out
 
 
-def facts(
-    ask: Ask, slug: str, shas: list[str], sleep: Callable[[float], object] = time.sleep
+def decided(ask: Ask, slug: str, shas: list[str], identity: Identity) -> list[Fact]:
+    """What GitHub says of a batch, with each signature of the owner's decided. Nobody else's is
+    judged here, so nobody waits for it."""
+    found = batch(ask, slug, shas)
+    if any(one.state in UNDECIDED and of_owner(one, identity) for one in found):
+        raise Unreadable("GitHub could not verify a signature of the owner's; run the job again")
+    return found
+
+
+def asked(
+    ask: Ask,
+    slug: str,
+    shas: list[str],
+    identity: Identity,
+    sleep: Callable[[float], object],
+    tries: int = TRIES,
 ) -> list[Fact]:
-    """What GitHub says of each commit, asked again while a signature is undecided."""
+    """What GitHub says of a batch, asked so many times at most."""
+    try:
+        return decided(ask, slug, shas, identity)
+    except Unreadable:
+        if tries <= 1:
+            raise
+    sleep(PAUSE_SECONDS)
+    return asked(ask, slug, shas, identity, sleep, tries - 1)
+
+
+def facts(
+    ask: Ask,
+    slug: str,
+    shas: list[str],
+    identity: Identity,
+    sleep: Callable[[float], object] = time.sleep,
+) -> list[Fact]:
+    """What GitHub says of each commit, asked again where it did not answer or has not decided on
+    the owner's signature."""
     for sha in shas:
         if not SHA.fullmatch(sha):
             raise Unreadable(f"{sha[:12]!r} is no commit")
     out: list[Fact] = []
     for start in range(0, len(shas), BATCH):
-        part = shas[start : start + BATCH]
-        found = batch(ask, slug, part)
-        for _again in range(TRIES - 1):
-            if not any(one.state in UNDECIDED for one in found):
-                break
-            sleep(PAUSE_SECONDS)
-            found = batch(ask, slug, part)
-        if any(one.state in UNDECIDED for one in found):
-            raise Unreadable("GitHub could not verify a signature; run the job again")
-        out += found
+        out += asked(ask, slug, shas[start : start + BATCH], identity, sleep)
     return out
 
 
@@ -351,9 +382,12 @@ def pull_scope(event: dict[str, Any], repository: str, identity: Identity) -> Sc
         return Scope(note=f"{ref} is exempt: {exempt.reason}")
     home = (pull["head"].get("repo") or {}).get("full_name")
     own = home == repository and pull["user"]["login"] == identity.login
-    # What the base has by now is judged by the push that brought it there.
-    known = (pull["base"]["sha"], f"refs/remotes/origin/{ref[11:]}")
-    return Scope(pull["head"]["sha"], known, own=own)
+    # What the default branch has by now is judged by the push that brought it there; what
+    # another branch has was judged by none, and the pull request can be turned to the default
+    # one without a new run.
+    base, default = pull["base"], pull["base"]["repo"]["default_branch"]
+    before = (base["sha"],) if base["ref"] == default else ()
+    return Scope(pull["head"]["sha"], (*before, f"{REMOTE}{default}"), own=own)
 
 
 def push_scope(event: dict[str, Any], repository: str, identity: Identity) -> Scope:
@@ -391,9 +425,9 @@ def added(what: Scope, cwd: str | None = None) -> list[str]:
     A commit that is not in the clone excludes nothing: a main written anew
     is judged whole, and so is a new one, whose push names no commit before.
     """
-    for name in (what.head, what.known[0]):
-        if not SHA.fullmatch(str(name)):
-            raise Unreadable("the event names no commit")
+    named_commits = (what.head, *(n for n in what.known if not str(n).startswith(REMOTE)))
+    if not all(SHA.fullmatch(str(name)) for name in named_commits):
+        raise Unreadable("the event names no commit")
     known = []
     for name in what.known:
         try:
@@ -418,18 +452,19 @@ def report(total: int, owners: int, problems: list[Problem], warnings: list[Prob
     if problems or warnings:
         rows = "\n".join(f"| `{p.sha[:7]}` | `{p.rule}` | {p.text} |" for p in problems + warnings)
         out += f"\n| Commit | Rule | What |\n| --- | --- | --- |\n{rows}\n"
-        out += f"\n{HINT} The rules: {RULES_HINT}.\n"
+        hint = f"{HINT} " if problems else ""
+        out += f"\n{hint}The rules: {RULES_HINT}.\n"
     return out
 
 
-def warned(found: list[Fact], problems: list[Problem]) -> list[Problem]:
-    """What to say of the commits of the owner's own branch that are refused for nothing and hold
-    an address GitHub knows no account of."""
-    refused = {p.sha for p in problems}
+def warned(found: list[Fact], identity: Identity) -> list[Problem]:
+    """What to say of the commits of the owner's own branch that hold an address GitHub knows no
+    account of and are not the owner's: one that is by its committer has an author the owner
+    does not change."""
     out = []
     for one in found:
         field_of = unknown(one)
-        if field_of and one.sha not in refused:
+        if field_of and not of_owner(one, identity):
             out.append(Problem(one.sha, WARNING, UNKNOWN.format(field_of)))
     return out
 
@@ -448,7 +483,7 @@ def github_ask(api: check_commit_msg.Api) -> Ask:
     def ask(query: str, variables: dict[str, Any]) -> Any:
         try:
             got = api.request("POST", "/graphql", {"query": query, "variables": variables}) or {}
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             raise Unreadable(f"GitHub: {exc}") from exc
         if got.get("errors"):
             raise Unreadable(f"GitHub: {str(got['errors'][0].get('message'))[:200]}")
@@ -477,10 +512,10 @@ def run(cwd: str | None = None) -> int:
         raise Unreadable("GITHUB_TOKEN is empty")
     url = os.environ.get("GITHUB_API_URL", "https://api.github.com")
     api = check_commit_msg.GitHub(token, url)
-    added_facts = facts(github_ask(api), repository, shas)
+    added_facts = facts(github_ask(api), repository, shas, identity)
     owners = [one for one in added_facts if of_owner(one, identity)]
     problems = [p for one in owners for p in judge(one, identity)]
-    warnings = warned(added_facts, problems) if what.own else []
+    warnings = warned(added_facts, identity) if what.own else []
     for level, found in (("error", problems), ("warning", warnings)):
         for p in found:
             print(f"::{level} title=Identity of a commit::{p.sha[:12]}: {p.rule}: {p.text}")

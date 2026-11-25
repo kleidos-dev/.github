@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import datetime as dt
+import http.client
 import io
 import json
 import os
@@ -333,6 +334,24 @@ class JudgeTest(unittest.TestCase):
             with self.subTest(change=change):
                 self.assertEqual(ci.unknown(ci.fact(node(**change))), wanted)
 
+    def test_d_whom_it_warns_about(self) -> None:
+        """Nobody whose commit is the owner's by author or by committer: that one is judged, and
+        what the owner landed has an author who is not the owner's to change."""
+        nobody = who(OTHER, None)
+        cases: tuple[tuple[dict[str, Any], int], ...] = (
+            ({"author": nobody, "committer": nobody}, 1),
+            ({"author": nobody, "committer": who(OTHER, "somebody")}, 1),
+            ({"author": nobody}, 0),
+            ({"author": nobody, "committer": who(OTHER, "jmrplens")}, 0),
+            ({"committer": nobody}, 0),
+            ({"author": who(OTHER, "jmrplens"), "committer": nobody}, 0),
+            ({"author": who(OTHER, "somebody"), "committer": who(OTHER, "somebody")}, 0),
+        )
+        for change, wanted in cases:
+            with self.subTest(change=change):
+                one = ci.fact(node(**change))
+                self.assertEqual(len(ci.warned([one], IDENTITY)), wanted)
+
     # (e) a bot
     def test_e_a_bots_commit_is_not_judged(self) -> None:
         for bot in ("dependabot[bot]", "github-actions[bot]", "release[bot]"):
@@ -367,7 +386,8 @@ class JudgeTest(unittest.TestCase):
     def test_no_address_is_ever_said(self) -> None:
         one = ci.fact(node(author=who(OTHER, "jmrplens"), committer=who(OTHER, None)))
         problems = ci.judge(one, IDENTITY)
-        warnings = ci.warned([ci.fact(node(author=who(OTHER, None)))], [])
+        nobody = who(OTHER, None)
+        warnings = ci.warned([ci.fact(node(author=nobody, committer=nobody))], IDENTITY)
         self.assertEqual((len(problems), len(warnings)), (2, 1))
         said = [repr(one), repr(problems), repr(warnings), ci.report(2, 1, problems, warnings)]
         self.assertNotIn(OTHER, "\n".join(said))
@@ -383,7 +403,7 @@ class FactsTest(unittest.TestCase):
         self.slept: list[float] = []
 
     def facts(self, hub: FakeGitHub, *shas: str) -> list[ci.Fact]:
-        return ci.facts(hub, REPO, list(shas), self.slept.append)
+        return ci.facts(hub, REPO, list(shas), IDENTITY, self.slept.append)
 
     def test_what_is_asked_and_in_which_order(self) -> None:
         hub = FakeGitHub(node(A), node(B, parents={"totalCount": 2}))
@@ -424,7 +444,7 @@ class FactsTest(unittest.TestCase):
                 self.subTest(answer=answer),
                 self.assertRaisesRegex(ci.Unreadable, f"no commit {A[:12]} of {REPO}"),
             ):
-                ci.facts(ask, REPO, [A])
+                ci.facts(ask, REPO, [A], IDENTITY, self.slept.append)
 
     def test_what_is_no_commit_is_never_asked(self) -> None:
         hub = FakeGitHub()
@@ -434,9 +454,18 @@ class FactsTest(unittest.TestCase):
                 self.facts(hub, A, text)
         self.assertEqual(hub.asked, [])
 
-    def test_an_undecided_signature_is_asked_again(self) -> None:
-        for state in ("GPGVERIFY_ERROR", "GPGVERIFY_UNAVAILABLE"):
-            undecided = node(**signature(isValid=False, state=state))
+    def undecided(self, sha: str = A, state: str = "GPGVERIFY_ERROR", **more: Any) -> Any:
+        return node(sha, **signature(isValid=False, state=state), **more)
+
+    def test_what_github_has_not_decided(self) -> None:
+        self.assertEqual(
+            ci.UNDECIDED,
+            {"GPGVERIFY_ERROR", "GPGVERIFY_UNAVAILABLE", "OCSP_ERROR", "OCSP_PENDING"},
+        )
+
+    def test_an_undecided_signature_of_the_owners_is_asked_again(self) -> None:
+        for state in ci.UNDECIDED:
+            undecided = self.undecided(state=state)
             hub = FakeGitHub(undecided)
             hub.then = [undecided, node()]
             self.slept.clear()
@@ -444,11 +473,58 @@ class FactsTest(unittest.TestCase):
             self.assertTrue(one.valid)
             self.assertEqual((len(hub.asked), self.slept), (3, [ci.PAUSE_SECONDS] * 2))
 
-    def test_one_that_stays_undecided_is_no_pass(self) -> None:
-        hub = FakeGitHub(node(B), node(**signature(isValid=False, state="GPGVERIFY_ERROR")))
-        with self.assertRaisesRegex(ci.Unreadable, "run the job again"):
-            self.facts(hub, A, B)
-        self.assertEqual((len(hub.asked), self.slept), (3, [10.0, 10.0]))
+    def test_one_of_the_owners_that_stays_undecided_is_no_pass(self) -> None:
+        theirs = who(OTHER, "somebody")
+        cases: tuple[dict[str, Any], ...] = ({}, {"author": theirs}, {"committer": theirs})
+        for of in cases:
+            hub = FakeGitHub(node(B), self.undecided(**of))
+            self.slept.clear()
+            with self.subTest(of=of), self.assertRaisesRegex(ci.Unreadable, "run the job again"):
+                self.facts(hub, A, B)
+            self.assertEqual((len(hub.asked), self.slept), (3, [10.0, 10.0]))
+
+    def test_an_undecided_signature_of_anybody_else_is_waited_for_by_nobody(self) -> None:
+        for login in ("somebody", "dependabot[bot]", None):
+            theirs = who(OTHER, login)
+            for state in ci.UNDECIDED:
+                hub = FakeGitHub(
+                    node(B), self.undecided(state=state, author=theirs, committer=theirs)
+                )
+                with self.subTest(login=login, state=state):
+                    one, owners = self.facts(hub, A, B)
+                    self.assertEqual((one.state, one.valid, owners.valid), (state, False, True))
+                    self.assertEqual((len(hub.asked), self.slept), (1, []))
+
+    def test_what_github_did_not_answer_is_asked_again(self) -> None:
+        hub, failures = FakeGitHub(node()), 2
+
+        def ask(query: str, variables: dict[str, Any]) -> Any:
+            nonlocal failures
+            failures -= 1
+            if failures >= 0:
+                raise ci.Unreadable("GitHub: down")
+            return hub(query, variables)
+
+        (one,) = ci.facts(ask, REPO, [A], IDENTITY, self.slept.append)
+        self.assertEqual((one.sha, len(hub.asked), self.slept), (A, 1, [10.0, 10.0]))
+        failures = 3
+        with self.assertRaisesRegex(ci.Unreadable, "GitHub: down"):
+            ci.facts(ask, REPO, [A], IDENTITY, self.slept.append)
+        self.assertEqual((failures, self.slept), (0, [10.0] * 4))
+
+    def test_a_batch_is_asked_again_alone(self) -> None:
+        shas = [f"{n:040x}" for n in range(ci.BATCH + 1)]
+        hub = FakeGitHub(*(node(sha) for sha in shas[:-1]), self.undecided(shas[-1]))
+        hub.then = [node(shas[-1])] * 3
+        self.assertEqual([f.sha for f in self.facts(hub, *shas)], shas)
+        hub = FakeGitHub(*(node(sha) for sha in shas[:-1]), self.undecided(shas[-1]))
+        with self.assertRaises(ci.Unreadable):
+            self.facts(hub, *shas)
+        self.assertEqual([q.count("object(oid") for q, _v in hub.asked], [ci.BATCH, 1, 1, 1])
+
+
+def base(ref: str, sha: str = B, default: str = "main") -> dict[str, Any]:
+    return {"sha": sha, "ref": ref, "repo": {"full_name": REPO, "default_branch": default}}
 
 
 def pull_event(**more: Any) -> dict[str, Any]:
@@ -456,7 +532,7 @@ def pull_event(**more: Any) -> dict[str, Any]:
         "pull_request": {
             "user": {"login": "jmrplens", "type": "User"},
             "head": {"sha": A, "repo": {"full_name": REPO}},
-            "base": {"sha": B, "ref": "main"},
+            "base": base("main"),
             **more,
         }
     }
@@ -485,8 +561,17 @@ class ScopeTest(unittest.TestCase):
             self.scope("pull_request", pull_event()),
             ci.Scope(A, (B, "refs/remotes/origin/main"), own=True),
         )
-        event = pull_event(base={"sha": B, "ref": "a/b"})
+        event = pull_event(base=base("a/b", default="a/b"))
         self.assertEqual(self.scope("pull_request", event).known, (B, "refs/remotes/origin/a/b"))
+
+    def test_what_is_known_is_what_the_default_branch_holds(self) -> None:
+        """A commit on another branch was judged by no push: a pull request against that branch
+        adds it as far as the default branch goes, where the pull request may be turned to."""
+        event = pull_event(base=base("x"))
+        self.assertEqual(
+            self.scope("pull_request", event),
+            ci.Scope(A, ("refs/remotes/origin/main",), own=True),
+        )
 
     def test_every_pull_request_is_looked_at_wherever_its_branch_is(self) -> None:
         here, fork = {"full_name": REPO}, {"full_name": "x/boards"}
@@ -524,9 +609,7 @@ class ScopeTest(unittest.TestCase):
         self.assertIn(reason, self.scope("push", push_event(), meter).note)
         event = pull_event(head={"sha": A, "repo": {"full_name": meter}})
         self.assertIn(reason, self.scope("pull_request", event, meter).note)
-        event = pull_event(
-            head={"sha": A, "repo": {"full_name": meter}}, base={"sha": B, "ref": "v2"}
-        )
+        event = pull_event(head={"sha": A, "repo": {"full_name": meter}}, base=base("v2"))
         self.assertEqual(self.scope("pull_request", event, meter).head, A)
 
     def test_a_deleted_branch_adds_nothing(self) -> None:
@@ -557,6 +640,7 @@ class ScopeTest(unittest.TestCase):
             ("pull_request", {}),
             ("pull_request", {"pull_request": None}),
             ("pull_request", pull_event(base=None)),
+            ("pull_request", pull_event(base={"sha": B, "ref": "main"})),
             ("pull_request", pull_event(user=None)),
             ("pull_request", pull_event(head=None)),
             ("pull_request", pull_event(head={"sha": A, "repo": "x"})),
@@ -593,6 +677,8 @@ class AddedTest(unittest.TestCase):
         ref = "refs/remotes/origin/main"
         self.assertEqual(self.added(self.shas[3], self.shas[0], ref), self.shas[3:])
         self.assertEqual(self.added(self.shas[3], self.shas[0], ref + "x"), self.shas[1:])
+        self.assertEqual(self.added(self.shas[3], ref), self.shas[3:])
+        self.assertEqual(self.added(self.shas[3], ref + "x"), self.shas)
 
     def test_a_main_written_anew_or_new_is_judged_whole(self) -> None:
         for before in (ZERO, "e" * 40):
@@ -604,6 +690,12 @@ class AddedTest(unittest.TestCase):
                 self.added(head, before)
         with self.assertRaisesRegex(ci.Unreadable, "names no commit"):
             ci.added(ci.Scope(self.shas[1], (None,)), str(self.root))  # type: ignore[arg-type]  # what a broken event holds
+        for name in ("refs/heads/main", "origin/main", "--refs/remotes/origin/main"):
+            with self.assertRaisesRegex(ci.Unreadable, "names no commit"):
+                self.added(self.shas[3], name)
+        fx.git(self.root, "update-ref", "refs/remotes/origin/main", self.shas[0])
+        with self.assertRaisesRegex(ci.Unreadable, "names no commit"):
+            self.added("refs/remotes/origin/main", self.shas[0])
 
     def test_where_it_is_run_is_the_repository(self) -> None:
         with mock.patch.object(ccm, "git", return_value="") as git:
@@ -656,6 +748,7 @@ class RunTest(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, given, clear=True),
             mock.patch.object(ccm.GitHub, "request", lambda _s, *args: self.request(*args)),
+            mock.patch.object(ci, "PAUSE_SECONDS", 0),
             contextlib.chdir(self.root),
             contextlib.redirect_stdout(out),
         ):
@@ -669,7 +762,7 @@ class RunTest(unittest.TestCase):
         return pull_event(
             user={"login": user, "type": "User"},
             head={"sha": self.shas[2], "repo": {"full_name": repo}},
-            base={"sha": self.shas[0], "ref": "main"},
+            base=base("main", self.shas[0]),
         )
 
     def test_the_owners_commits_pass(self) -> None:
@@ -734,6 +827,10 @@ class RunTest(unittest.TestCase):
         self.assertIn(f"| `{self.shas[1][:7]}` | `identity-unknown` | GitHub knows", summary)
         self.assertIn("the owner's 1 pass", summary)
         self.assertNotIn(OTHER, said + summary)
+        # What to do is in the row: how to repair a refused commit is no advice for it.
+        self.assertNotIn("git rebase", summary)
+        self.assertNotIn("--reset-author", summary)
+        self.assertIn(f"The rules: {ci.RULES_HINT}.", summary)
         # Each has its row, what is refused first.
         self.hub.nodes[self.shas[2]] = node(self.shas[2], signature=None)
         _status, _said, summary = self.run_it("pull_request", self.pull())
@@ -757,6 +854,38 @@ class RunTest(unittest.TestCase):
         self.hub.nodes[self.shas[1]] = node(self.shas[1], committer=nobody)
         status, said, _summary = self.run_it("pull_request", self.pull())
         self.assertEqual((status, "::warning" in said), (1, False))
+
+    def test_the_author_of_what_the_owner_landed_is_not_warned_about(self) -> None:
+        """land/pr-N, of somebody whose address GitHub knows no account of."""
+        for sha in self.shas[1:]:
+            self.hub.nodes[sha] = node(sha, author=who(OTHER, None))
+        status, said, summary = self.run_it("pull_request", self.pull())
+        self.assertEqual((status, "::" in said, "|" in summary), (0, False, False))
+        self.assertIn("2 commit(s) added, 2 of the owner's, 0 problem(s)", said)
+
+    def test_a_contributors_undecided_signature_fails_nothing(self) -> None:
+        theirs = who(OTHER, "somebody")
+        undecided = signature(isValid=False, state="GPGVERIFY_ERROR")
+        for sha in self.shas[1:]:
+            self.hub.nodes[sha] = node(sha, author=theirs, committer=theirs, **undecided)
+        for name, event in (
+            ("pull_request", self.pull("somebody", "x/boards")),
+            ("pull_request", self.pull("somebody")),
+            ("pull_request", self.pull()),
+            ("push", self.push()),
+        ):
+            status, said, _summary = self.run_it(name, event)
+            self.assertEqual((status, "::error" in said), (0, False), said)
+        self.assertEqual(len(self.requests), 4)
+        # Beside a sound one of the owner's, and beside one of the owner's GitHub has not decided.
+        self.hub.nodes[self.shas[2]] = node(self.shas[2])
+        status, said, _summary = self.run_it("pull_request", self.pull("somebody"))
+        self.assertIn("2 commit(s) added, 1 of the owner's, 0 problem(s)", said)
+        self.assertEqual(status, 0)
+        self.hub.nodes[self.shas[2]] = node(self.shas[2], **undecided)
+        status, said, _summary = self.run_it("pull_request", self.pull("somebody"))
+        self.assertEqual(status, 2)
+        self.assertIn("could not verify a signature of the owner's; run the job again", said)
 
     def test_history_is_not_judged(self) -> None:
         self.hub.nodes[self.shas[0]] = node(self.shas[0], signature=None)
@@ -790,6 +919,8 @@ class RunTest(unittest.TestCase):
         for answer, needle in (
             (urllib.error.URLError("down"), "GitHub: <urlopen error down>"),
             (ValueError("no JSON"), "GitHub: no JSON"),
+            (TimeoutError("timed out"), "GitHub: timed out"),
+            (http.client.IncompleteRead(b""), "GitHub: IncompleteRead"),
             ({"errors": [{"message": "rate limited"}]}, "GitHub: rate limited"),
             ({"errors": [{"message": "x" * 300}]}, f"GitHub: {'x' * 200}\n"),
             ({"errors": [{}]}, "GitHub: None"),
@@ -798,8 +929,9 @@ class RunTest(unittest.TestCase):
         ):
             with self.subTest(needle=needle):
                 self.answer = answer
+                self.requests.clear()
                 status, said, _summary = self.run_it("push", self.push())
-                self.assertEqual(status, 2)
+                self.assertEqual((status, len(self.requests)), (2, ci.TRIES))
                 self.assertIn(needle, said)
 
     def test_without_a_summary_it_still_says(self) -> None:

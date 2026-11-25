@@ -13,7 +13,7 @@ from unittest import mock
 from kit_fixtures import ecosystem, fast_forward, landing
 
 SLUG = "kleidos-dev/boards"
-HEAD, MAIN = "a" * 40, "c" * 40
+HEAD, MAIN, TAKEN = "a" * 40, "c" * 40, "d" * 40
 OWNER = "someone"
 BRANCH = "dependabot/pip/x-1.3.0"
 MESSAGE = (
@@ -561,12 +561,14 @@ class FakeApi(fast_forward.Api):
             return [{"number": 7}]
         if path == f"{base}/pulls/7":
             return copy.deepcopy(self.pull)
-        if path.startswith(f"{base}/pulls/7/commits?per_page=100"):
-            return copy.deepcopy(self.commits)
-        if path.startswith(f"{base}/pulls/7/files?per_page=100"):
-            return copy.deepcopy(self.files)
-        if path == f"{base}/pulls/101/files?per_page=100&page=1":
-            return copy.deepcopy(self.taken_files)
+        if path == f"{base}/commits/main":
+            return {"sha": MAIN}
+        for head, commits, files in (
+            (HEAD, self.commits, self.files),
+            (TAKEN, [commit()], self.taken_files),
+        ):
+            if path == f"{base}/compare/{MAIN}...{head}?per_page=100&page=1":
+                return copy.deepcopy({"commits": commits, "files": files})
         if path == f"{base}/activity?ref=refs%2Fheads%2Fdependabot%2Fpip%2Fx-1.3.0&per_page=100":
             return self.pushes
         if path == f"{base}/compare/main...{MAIN}":
@@ -583,9 +585,11 @@ class StubLander(landing.Lander):
         super().__init__(api, fast_forward.Git(), merge, say=said.append)
         self.did: list[tuple[str, int, str]] = []
 
-    def take(self, slug: str, pull: dict[str, Any]) -> dict[str, Any] | None:
+    def take(self, slug: str, pull: dict[str, Any], read: str = "") -> dict[str, Any] | None:
         self.did.append(("take", pull["number"], slug))
-        return {**pull, "number": 101, "title": "Taken"} if self.merge else None
+        self.read = read
+        head = {**pull["head"], "sha": TAKEN}
+        return {**pull, "number": 101, "title": "Taken", "head": head} if self.merge else None
 
     def own(self, slug: str, pull: dict[str, Any], read: str = "") -> bool:
         self.did.append(("own", pull["number"], read))
@@ -658,6 +662,13 @@ class LanderTest(unittest.TestCase):
             self.assertEqual(self.stub.did, [("take", 7, SLUG)])
             self.assertRegex(self.said[0], f"^left: {SLUG}#101 Taken: ")
             self.assertIn(needle, self.said[0])
+        self.api.taken_files = [changed()] * 100
+        self.said.clear()
+        self.land()
+        self.assertEqual(self.said, [f"left: {SLUG}#101 Taken: too large to read whole"])
+        self.api.taken_files = [changed()] * 99
+        self.land()
+        self.assertEqual(self.stub.did[-1], ("own", 101, ""))
         self.api.taken_files = [changed("package.json", '@@\n-  "x": "1.0.0"\n+  "x": "2.0.0"')]
         self.land()
         self.assertEqual(self.stub.did[-1], ("own", 101, ""))
@@ -668,7 +679,7 @@ class LanderTest(unittest.TestCase):
             self.assertEqual(self.land(f"{SLUG}#7", read=read), 1)
             self.assertEqual(self.stub.did, [])
         self.land(f"{SLUG}#7", read=HEAD)
-        self.assertEqual(self.stub.did, [("take", 7, SLUG)])
+        self.assertEqual((self.stub.did, self.stub.read), ([("take", 7, SLUG)], HEAD))
         self.api.commits = [commit(author={"login": "app[bot]"})]
         self.land(f"{SLUG}#7", read=HEAD)
         self.assertEqual(len(self.stub.did), 1)

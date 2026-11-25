@@ -39,11 +39,12 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import fast_forward
-from fast_forward import BOT, GATE, REFUSED, at_home, kind, open_refusal
+from fast_forward import BOT, GATE, PAGE, REFUSED, at_home, kind, open_refusal
 
 if TYPE_CHECKING:
     from ecosystem import Declared, Repository
 
+LARGE = "too large to read whole"
 # What may differ between a line and its old one: the group "version" is masked.
 VERSION = r"\d[0-9A-Za-z.+!_-]*"
 # A version of a package: pip's operators only, right after the package's name
@@ -255,8 +256,8 @@ def refusal(
         return f"opened by {pull['user']['login']}"
     if not at_home(pull):
         return "its branch is not in this repository"
-    if len(commits) >= 100 or len(files) >= 100:
-        return "too large to read whole"
+    if len(commits) >= PAGE or len(files) >= PAGE:
+        return LARGE
     reasons = [push_refusal(pushes, pull["head"]["sha"], viewer)]
     reasons += [commit_refusal(c, viewer) for c in commits]
     if not read:
@@ -280,9 +281,8 @@ class Lander(fast_forward.Lander):
 
     def judge(self, slug: str, pull: dict[str, Any], read: bool = False) -> str | None:
         """The guards of a pull request of Dependabot's; with read, who wrote it alone."""
-        base = f"repos/{slug}/pulls/{pull['number']}"
-        commits = self.api.get(f"{base}/commits?per_page=100")
-        files = self.api.get(f"{base}/files?per_page=100")
+        found = self.compared(slug, pull)
+        commits, files = found["commits"], found["files"]
         branch = quote(f"refs/heads/{pull['head']['ref']}", safe="")
         pushes = self.api.get(f"repos/{slug}/activity?ref={branch}&per_page=100")
         why = refusal(pull, commits, files, pushes, self.viewer, read)
@@ -307,14 +307,15 @@ class Lander(fast_forward.Lander):
         why = open_refusal(pull, slug, self.identity) or self.judge(slug, pull, whole)
         if why:
             return self.left(label, why)
-        taken = self.take(slug, pull)
+        names = updated(self.compared(slug, pull)["commits"])
+        taken = self.take(slug, pull, read)
         if taken is None or whole:
             return False
-        names = updated(self.pages(f"repos/{slug}/pulls/{pull['number']}/commits"))
-        for changed in self.pages(f"repos/{slug}/pulls/{taken['number']}/files"):
-            why = file_refusal(changed, names)
-            if why:
-                return self.left(self.label(slug, taken), why)
+        files = self.compared(slug, taken)["files"]
+        reasons = [LARGE] if len(files) >= PAGE else [file_refusal(f, names) for f in files]
+        why = next((r for r in reasons if r), None)
+        if why:
+            return self.left(self.label(slug, taken), why)
         return self.own(slug, taken)
 
     def land(self, slug: str, number: int, kit: bool, read: str) -> bool:
