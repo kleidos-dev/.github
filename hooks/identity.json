@@ -1,11 +1,12 @@
 {
   "schema": "kleidos.commit-identity/1",
+  "organization": "kleidos-dev",
   "owner": {
     "login": "jmrplens",
     "email": "jmrplens@kleidos.dev",
     "keys": ["0A993B268654DBBA52B7E8D3FCF653391E2C91FC"]
   },
-  "since": "2026-11-26T00:00:00Z",
+  "since": "2026-11-26T03:00:00Z",
   "exempt": [
     {
       "repository": "kleidos-dev/cla",

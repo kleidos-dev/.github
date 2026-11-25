@@ -205,6 +205,7 @@ class LocalGit(fast_forward.Git):
         self.folder = hub.root
         self.ran: list[tuple[str, ...]] = []
         self.before: dict[str, Any] = {}
+        self.tags = False  # whether the clones bring the tags, against what is asked
         self.log = hub.root / "keys"
         self.gpg = fx.write(hub.root, "gpg", GPG.format(log=self.log))
         self.gpg.chmod(0o755)
@@ -213,7 +214,8 @@ class LocalGit(fast_forward.Git):
         assert slug == SLUG, slug
         self.folder = folder
         self.hook("clone")
-        self._run(["git", "clone", "-q", str(self.hub.bare), str(folder)])
+        flags = [f for f in self.CLONE if f != "--no-tags"] if self.tags else self.CLONE
+        self._run(["git", "clone", *flags, str(self.hub.bare), str(folder)])
         for name, value in (
             ("user.name", "The owner"),
             ("user.email", self.email),
@@ -442,6 +444,29 @@ class OwnTest(HubCase):
             self.hub.open(7, head)
             self.assertTrue(self.land())
             self.assertEqual(self.hub.main(), head)
+
+    def test_a_tag_with_the_name_of_main_changes_nothing(self) -> None:
+        """git reads "origin/main" as a tag of that name before it reads it as the clone's main,
+        and a tag at the head would make what the head adds nothing."""
+        head = self.hub.branch("topic", "1\n", rel=".github/workflows/x.yml")
+        self.hub.open(7, head)
+        listed = mock.patch.object(self.hub, "files", return_value=[{"filename": "a.txt"}])
+        for tag in ("origin/main", "main", "heads/main", "remotes/origin/main", "FETCH_HEAD"):
+            self.hub.git("update-ref", f"refs/tags/{tag}", head)
+        for tags in (False, True):
+            self.git.tags = tags
+            self.said.clear()
+            with self.subTest(tags=tags), listed:
+                self.left(".github/workflows/x.yml: a green ✅ Check proves nothing")
+        self.assertTrue(self.land(read=head))
+        self.assertEqual(self.hub.main(), head)
+
+    def test_a_tag_with_the_name_of_the_head_is_not_what_is_pushed(self) -> None:
+        """git pushes a ref of that name before it reads a commit's SHA, so no tag is there."""
+        other = self.hub.branch("other", "x\n", "y\n", rel=".github/workflows/x.yml")
+        self.hub.git("update-ref", f"refs/tags/{self.head}", other)
+        self.assertTrue(self.land())
+        self.assertEqual(self.hub.main(), self.head)
 
     def test_a_path_that_is_no_text_is_read_too(self) -> None:
         self.hub.branch("topic")
@@ -903,6 +928,23 @@ class PersonTest(PersonCase):
         self.assertEqual(len(signed), 2)
         self.assertTrue(all(FINGERPRINT in line for line in signed), signed)
 
+    def test_a_tag_with_the_name_of_main_changes_nothing(self) -> None:
+        """Neither what it is made on, nor whether it is made at all."""
+        self.main_moves()
+        for tag in ("origin/main", "main", "heads/main", "land/pr-7", "HEAD"):
+            self.hub.git("update-ref", f"refs/tags/{tag}", self.hub.first)
+        self.hub.git("update-ref", "refs/tags/origin/main", self.head)
+        for number, tags in enumerate((True, False), 101):
+            with self.subTest(tags=tags):
+                self.git.tags = tags
+                self.assertTrue(self.land())
+                self.assertEqual(
+                    self.hub.git("rev-parse", "refs/heads/land/pr-7~2"), self.hub.main()
+                )
+                self.assertIn("taken:", self.said[-1])
+                self.assertIn(f"/{number}", self.said[-1])
+                self.hub.git("update-ref", "-d", "refs/heads/land/pr-7")
+
     def test_what_was_taken_lands_as_any_other(self) -> None:
         self.land()
         self.assertTrue(self.land(101))
@@ -1221,7 +1263,9 @@ class OutsideTest(unittest.TestCase):
             self.ran(lambda: git.run(Path("/c"), "push", "origin"), " out\n"),
             ("out", ["git", "-C", "/c", "push", "origin"]),
         )
-        clone = ["gh", "repo", "clone", SLUG, "/c", "--", "-q", "--filter=blob:none"]
+        clone = [
+            *("gh", "repo", "clone", SLUG, "/c", "--", "-q", "--no-tags", "--filter=blob:none")
+        ]
         self.assertEqual(self.ran(lambda: git.clone(SLUG, Path("/c"))), (None, clone))
         with self.assertRaisesRegex(fast_forward.GitError, "^git -C /c push origin: refused$"):
             self.ran(lambda: git.run(Path("/c"), "push", "origin", "x"), "", 1, "refused\n")

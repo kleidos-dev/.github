@@ -15,7 +15,8 @@
 # The identity of the commits a pull request, or a push to the default
 # branch, adds: only those that say they are the owner's, by author or by
 # committer, are judged, as GitHub reports them, wherever the branch is.
-# Nobody else's is. The step has the job's read token and runs the kit's own
+# Nobody else's is, and nothing is in a fork or a copy of one of the
+# organization's repositories. The step has the job's read token and runs the kit's own
 # code, never the pull request's.
 name: Commit check
 

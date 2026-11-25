@@ -19,6 +19,11 @@ beside this file). What it holds of each (rule id):
                       the owner's keys; one GitHub made for a commit of its
                       web pages or of a merge button is none
 
+It is judged in the organization's repositories and nowhere else: a fork or a
+copy of one runs the same workflows over what it has of the owner's, which
+nobody there can repair. A pull request from a fork is of the repository it is
+opened in.
+
 Nobody else's commit is judged: neither a contributor's, with whatever
 author, committer, key or none, nor a bot's. That what reaches main is signed
 by somebody is GitHub's to hold (a ruleset), not this check's.
@@ -92,6 +97,7 @@ FIELDS = (
     "oid parents{totalCount} author{email user{login}} committer{email user{login}}"
     " signature{isValid state wasSignedByGitHub ... on GpgSignature{keyId}}"
 )
+SLUG = re.compile(r"[\w.-]+/[\w.-]+")
 SHA = re.compile(r"[0-9a-f]{40}")
 KEY = re.compile(r"[0-9A-F]{40}")
 LOGIN = re.compile(r"[A-Za-z0-9-]{1,40}(?:\[bot\])?")
@@ -116,13 +122,20 @@ class Exempt:
 
 @dataclass(frozen=True)
 class Identity:
-    """Who the owner is, and where nothing is judged (identity.json)."""
+    """Who the owner is, of which organization, and what of it is not judged (identity.json)."""
 
+    organization: str
     login: str
     email: str
     keys: tuple[str, ...]
     since: dt.datetime
     exempt: tuple[Exempt, ...]
+
+    def covers(self, repository: str) -> bool:
+        """Whether a repository is the organization's: a fork of one, or a copy, is not."""
+        if not SLUG.fullmatch(repository):
+            raise Unreadable(f"{repository!r} is no repository")
+        return repository.partition("/")[0].casefold() == self.organization.casefold()
 
     def exemption(self, repository: str, ref: str) -> Exempt | None:
         """The entry that exempts a ref, or None."""
@@ -208,7 +221,7 @@ def load(path: Path = IDENTITY) -> Identity:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise Unreadable(f"identity.json: {exc}") from exc
-    top = table_of(data, "it", frozenset({"schema", "owner", "since", "exempt"}))
+    top = table_of(data, "it", frozenset({"schema", "organization", "owner", "since", "exempt"}))
     text_of(top, "schema", re.escape(SCHEMA))
     owner = table_of(top["owner"], "owner", frozenset({"login", "email", "keys"}))
     keys = owner["keys"]
@@ -221,12 +234,13 @@ def load(path: Path = IDENTITY) -> Identity:
         one = table_of(entry, "an exemption", frozenset({"repository", "ref", "reason"}))
         exempt.append(
             Exempt(
-                text_of(one, "repository", r"[\w.-]+/[\w.-]+"),
+                text_of(one, "repository", SLUG.pattern),
                 text_of(one, "ref", r"refs/heads/\S+"),
                 text_of(one, "reason", r".+ .+"),
             )
         )
     return Identity(
+        text_of(top, "organization", r"[A-Za-z0-9-]+"),
         text_of(owner, "login", LOGIN.pattern),
         text_of(owner, "email", EMAIL.pattern),
         tuple(keys),
@@ -409,6 +423,8 @@ def push_scope(event: dict[str, Any], repository: str, identity: Identity) -> Sc
 
 def scope(name: str, event: dict[str, Any], repository: str, identity: Identity) -> Scope:
     """What of an event is judged."""
+    if not identity.covers(repository):
+        return Scope(note=f"{repository} is not a repository of {identity.organization}")
     try:
         if name == "pull_request":
             return pull_scope(event, repository, identity)

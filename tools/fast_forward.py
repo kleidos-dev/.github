@@ -105,9 +105,15 @@ class Api:
 class Git:
     """The git of a landing, in a clone of its own that holds no work tree of anybody's."""
 
+    # No tags: git reads "origin/main" as a tag of that name before it reads it as the clone's
+    # main, and a push reads even a SHA as a tag's name first. Where a name is used here, it is
+    # the whole one.
+    CLONE = ("-q", "--no-tags")
+
     def clone(self, slug: str, folder: Path) -> None:
         """A fresh clone, of every branch and the commits whole."""
-        self._run(["gh", "repo", "clone", slug, str(folder), "--", "-q", "--filter=blob:none"])
+        flags = (*self.CLONE, "--filter=blob:none")
+        self._run(["gh", "repo", "clone", slug, str(folder), "--", *flags])
 
     def run(self, folder: Path, *args: str) -> str:
         """One git command in the clone."""
@@ -134,6 +140,11 @@ def at_home(pull: dict[str, Any]) -> bool:
     """Whether its branch is in the repository it is for."""
     head = pull["head"]["repo"]
     return head is not None and head["full_name"] == pull["base"]["repo"]["full_name"]
+
+
+def here(pull: dict[str, Any]) -> str:
+    """The branch it is against, as a clone has it, by its whole name."""
+    return f"{commit_identity.REMOTE}{pull['base']['ref']}"
 
 
 def open_refusal(pull: dict[str, Any], slug: str, identity: Identity) -> str | None:
@@ -417,7 +428,7 @@ class Lander:
         changed = self.git.run(
             folder,
             *("-c", "core.quotePath=true", "diff", "--name-only"),
-            *(f"origin/{pull['base']['ref']}...{rev}", "--", *OWN_GATE),
+            *(f"{here(pull)}...{rev}", "--", *OWN_GATE),
         )
         return read_refusal(changed.splitlines(), pull["head"]["sha"], read)
 
@@ -453,7 +464,8 @@ class Lander:
             if why:
                 self.left(label, why)
                 return None
-            self.git.run(folder, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+            mine = f"refs/heads/{branch}"
+            self.git.run(folder, "push", "-q", "origin", f"{mine}:{mine}")
         bot = login == BOT
         title = update_message(pull).splitlines()[0] if bot else pull["title"]
         who = "Dependabot" if bot else f"`{login}`, whose commits keep their authorship"
@@ -480,7 +492,7 @@ class Lander:
                 raise GitError(f"git's {who.lower()} here is not {self.identity.email}")
         if git.run(folder, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"):
             raise GitError(f"{branch} exists: land its pull request, or delete it first")
-        main = f"origin/{pull['base']['ref']}"
+        main = here(pull)
         self.fetch(folder, pull)
         git.run(folder, "checkout", "-q", "-b", branch, main)
         sign = f"--gpg-sign={self.identity.keys[0]}"

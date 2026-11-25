@@ -89,6 +89,8 @@ class IdentityFileTest(unittest.TestCase):
 
     def test_the_organizations(self) -> None:
         self.assertEqual((IDENTITY.login, IDENTITY.email), ("jmrplens", EMAIL))
+        self.assertEqual(IDENTITY.organization, REPO.partition("/")[0])
+        self.assertTrue(all(IDENTITY.covers(e.repository) for e in IDENTITY.exempt))
         self.assertEqual((IDENTITY.keys, IDENTITY.key_ids()), ((FINGERPRINT,), frozenset({KEY_ID})))
         self.assertEqual(
             [(e.repository, e.ref) for e in IDENTITY.exempt],
@@ -103,8 +105,10 @@ class IdentityFileTest(unittest.TestCase):
         data = copy.deepcopy(SOUND)
         data["owner"] = {"login": "o", "email": "o@x.invalid", "keys": ["B" * 40, "C" * 40]}
         data["since"], data["exempt"] = "2030-01-02T03:04:05Z", []
+        data["organization"] = "o-x"
         found = self.load(data)
         self.assertEqual((found.login, found.email), ("o", "o@x.invalid"))
+        self.assertEqual((found.covers("o-x/boards"), found.covers(REPO)), (True, False))
         self.assertEqual(found.key_ids(), frozenset({"B" * 16, "C" * 16}))
         self.assertEqual(found.since, dt.datetime(2030, 1, 2, 3, 4, 5, tzinfo=dt.UTC))
         self.assertEqual(found.exempt, ())
@@ -113,7 +117,10 @@ class IdentityFileTest(unittest.TestCase):
         entry = SOUND["exempt"][0]
         for change, needle in (
             ({"schema": "kleidos.commit-identity/2"}, "schema"),
-            ({"more": 1}, "^identity.json: it does not hold exempt, owner, schema, since$"),
+            ({"more": 1}, "it does not hold exempt, organization, owner, schema, since$"),
+            ({"organization": ""}, "organization is not"),
+            ({"organization": "kleidos-dev/"}, "organization is not"),
+            ({"organization": ["kleidos-dev"]}, "organization is not"),
             ({"owner": []}, "owner does not hold"),
             ({"owner": ["login", "email", "keys"]}, "owner does not hold"),
             ({"owner": {"login": "a", "email": "a@b"}}, "owner does not hold email, keys, login"),
@@ -158,6 +165,25 @@ class IdentityFileTest(unittest.TestCase):
             ("x/cla", ref),
         ):
             self.assertIsNone(IDENTITY.exemption(repository, other))
+
+    def test_the_repositories_it_covers_are_the_organizations(self) -> None:
+        for repository, covered in (
+            (REPO, True),
+            ("Kleidos-Dev/boards", True),
+            ("kleidos-dev/.github", True),
+            ("somebody/boards", False),
+            ("kleidos-dev2/boards", False),
+            ("kleidos/boards", False),
+            ("x/kleidos-dev", False),
+            ("jmrplens/boards", False),
+        ):
+            self.assertIs(IDENTITY.covers(repository), covered, repository)
+        for text in ("", "kleidos-dev", "kleidos-dev/", "/boards", "kleidos-dev/boards/x", "a b/c"):
+            with (
+                self.subTest(text=text),
+                self.assertRaisesRegex(ci.Unreadable, "is no repository$"),
+            ):
+                IDENTITY.covers(text)
 
 
 class JudgeTest(unittest.TestCase):
@@ -612,6 +638,37 @@ class ScopeTest(unittest.TestCase):
         event = pull_event(head={"sha": A, "repo": {"full_name": meter}}, base=base("v2"))
         self.assertEqual(self.scope("pull_request", event, meter).head, A)
 
+    def test_a_fork_and_a_copy_are_not_the_organizations(self) -> None:
+        """The workflows run there too, over the owner's commits of before the rule, which nobody
+        there can repair: synced late, or in a pull request against a main that is behind."""
+        for repository in ("somebody/boards", "jmrplens/boards"):
+            here = {"full_name": repository}
+            theirs = {**base("main"), "repo": {**here, "default_branch": "main", "fork": True}}
+            for name, event in (
+                ("push", push_event(repository={**push_event()["repository"], **here})),
+                ("push", push_event(before=ZERO)),
+                ("pull_request", pull_event(head={"sha": A, "repo": here}, base=theirs)),
+                ("pull_request", pull_event(user={"login": "somebody"}, base=theirs)),
+                ("push", {}),
+            ):
+                with self.subTest(repository=repository, name=name):
+                    found = self.scope(name, event, repository)
+                    note = f"{repository} is not a repository of kleidos-dev"
+                    self.assertEqual(found, ci.Scope(note=note))
+
+    def test_a_pull_request_from_a_fork_is_judged_where_it_is_opened(self) -> None:
+        event = pull_event(
+            user={"login": "somebody", "type": "User"},
+            head={"sha": A, "repo": {"full_name": "somebody/boards", "fork": True}},
+        )
+        found = self.scope("pull_request", event)
+        self.assertEqual(found, ci.Scope(A, (B, "refs/remotes/origin/main")))
+
+    def test_a_repository_with_no_name_is_no_pass(self) -> None:
+        for name, event in (("push", push_event()), ("pull_request", pull_event())):
+            with self.subTest(name=name), self.assertRaisesRegex(ci.Unreadable, "no repository"):
+                self.scope(name, event, "")
+
     def test_a_deleted_branch_adds_nothing(self) -> None:
         found = self.scope("push", push_event(deleted=True, after=ZERO))
         self.assertEqual(found, ci.Scope(note="refs/heads/main was deleted"))
@@ -891,6 +948,30 @@ class RunTest(unittest.TestCase):
         self.hub.nodes[self.shas[0]] = node(self.shas[0], signature=None)
         self.assertEqual(self.run_it("push", self.push())[0], 0)
 
+    def test_a_fork_is_not_judged_by_what_it_has_of_the_owners(self) -> None:
+        """Five merge-button commits of the owner's turned a contributor's own fork red."""
+        github = {
+            "committer": who("noreply@github.com", None),
+            **signature(wasSignedByGitHub=True, keyId="B5690EEEBB952194"),
+        }
+        for sha in self.shas:
+            self.hub.nodes[sha] = node(sha, **github)
+        fork, notes = "somebody/boards", 0
+        for name, event in (
+            ("push", self.push()),
+            ("pull_request", self.pull("somebody", fork)),
+            ("pull_request", self.pull("jmrplens", fork)),
+        ):
+            status, said, summary = self.run_it(name, event, GITHUB_REPOSITORY=fork)
+            note = f"not judged: {fork} is not a repository of kleidos-dev"
+            notes += f"::notice title=Identity of the commits::{note}" in said
+            self.assertEqual((status, self.requests), (0, []), said)
+            self.assertIn(f"N{note[1:]}.", summary)
+        self.assertEqual(notes, 3)
+        # The same commits, in the organization's own repository.
+        self.assertEqual(self.run_it("push", self.push())[0], 1)
+        self.assertEqual(self.run_it("pull_request", self.pull("somebody", fork))[0], 1)
+
     def test_where_nothing_is_judged_it_says_so_and_asks_nothing(self) -> None:
         status, said, summary = self.run_it("push", self.push(ref="refs/heads/x"), GITHUB_TOKEN="-")
         self.assertEqual((status, self.requests), (0, []))
@@ -908,6 +989,8 @@ class RunTest(unittest.TestCase):
             ({"GITHUB_EVENT_PATH": "/nowhere"}, "the event"),
             ({"GITHUB_EVENT_PATH": str(self.root / "a.txt")}, "the push event is not as"),
             ({"GITHUB_API_URL": "http://api.github.com"}, "is not https"),
+            ({"GITHUB_REPOSITORY": "-"}, "'' is no repository"),
+            ({"GITHUB_REPOSITORY": "boards"}, "'boards' is no repository"),
         ):
             with self.subTest(needle=needle):
                 status, said, _summary = self.run_it("push", self.push(), **change)
