@@ -20,7 +20,7 @@
 # change and in no other.
 #
 # [[lowered]]
-# threshold = "pyproject.toml fail_under"   # as the tests check names it
-# to = 99                                   # its new value, or "gone"
+# threshold = "coverage fail_under"   # as the tests check names it
+# to = 99                             # its new value, "gone" or "unreadable"
 # reason = "Why, with the code it was lost on"
-# decided = "owner 2026-11-25"              # or "agent, reviewed in PR #<n>"
+# decided = "owner 2026-11-25"        # or "agent, reviewed in PR #<n>"

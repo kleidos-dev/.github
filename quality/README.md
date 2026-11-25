@@ -15,7 +15,7 @@ The shared rules and analysis-tool configuration of every Kleidos repository. Re
 | [`spdx_headers.py`](spdx_headers.py) | The licensing header rule and the owner's statement: check, and `--write` to add or repair the lines. |
 | [`md_nowrap.py`](md_nowrap.py) | Markdown prose is never hard-wrapped. |
 | [`agent_docs.py`](agent_docs.py) | The agent-docs guard: `AGENTS.md` and `CLAUDE.md` keep [`docs/agent-docs.md`](../docs/agent-docs.md). |
-| [`suite_rules.py`](suite_rules.py) | The tests check: no test runs alone, a skip says why, no coverage threshold falls unsaid ([`docs/testing.md`](../docs/testing.md)). |
+| [`suite_rules.py`](suite_rules.py), with [`js_text.py`](js_text.py), what is code in a JavaScript or TypeScript file | The tests check: no test runs alone, a skip says why, no coverage threshold falls unsaid ([`docs/testing.md`](../docs/testing.md)). |
 | [`mypy_groups.py`](mypy_groups.py) | The mypy runner: one run per group of folders a repository declares, or one bare `mypy`. |
 | [`templates/run/`](templates/run/) | The model CI of a repository, its gate job included, and the comment caller. |
 | [`config-digests.json`](config-digests.json) | The released bytes of each base configuration. |

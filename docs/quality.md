@@ -236,14 +236,14 @@ clang-format is not in the kit yet: meter and the firmware use different styles.
 
 Owner, 2026-11-24. Every repository aims at the maximum of tests: 100 % of line, branch, condition (MC/DC) and mutation is the target, with good practice for each language, and every exclusion is listed with its reason where the tool reads it. A change brings its tests; a guard brings the planted defect that proves it fires. The share a file has reached is held, so it only rises.
 
-The long standard, language by language, is [`testing.md`](testing.md), from a pilot in `kleidos-dev/cla`. It also says which of its rules the kit holds in every repository (the `tests` check of [`policy.py`](../quality/policy.py), below), which each repository holds by itself, and which nothing holds yet.
+The long standard, language by language, is [`testing.md`](testing.md), from a pilot in `kleidos-dev/cla`. It also says which of its rules the kit holds in every repository that calls it (the `tests` check of [`policy.py`](../quality/policy.py), below), which each repository holds by itself, and which nothing holds yet.
 
 | Rule | Enforced by | Why |
 | --- | --- | --- |
 | No test is marked to run alone (`it.only` and the like) | [`suite_rules.py`](../quality/suite_rules.py), no waiver | Every other test of its file stops running, and the suite passes. |
-| A test that is skipped, left to do or expected to fail says why, in the marker or in a comment `skip: <why>` on its line or right above | `suite_rules.py`, no waiver: the reason is written where the skip is | A skip with no reason is nobody's decision. |
+| A test that is skipped, left to do or expected to fail says why, in the marker or in a comment `skip: <why>` on its line or in the comment right above | `suite_rules.py`, no waiver: the reason is written where the skip is | A skip with no reason is nobody's decision. |
 | coverage.py's threshold is in its configuration, never on a command line | `suite_rules.py`, no waiver | The command line wins over the place a person looks. |
-| A coverage threshold the tools read never falls or goes, against the base of the change, unless the change adds its `[[lowered]]` entry to `.github/quality/waivers.toml` ([`testing.md`, "What the kit holds"](testing.md#what-the-kit-holds)) | `suite_rules.py`, in the lint job against the pull request's base or what `main` was before the push, in the hook against where the branch left `origin/main` | The number is the pull request's own text. |
+| A coverage threshold the tools would use never falls or goes, against the base of the change, unless the change adds its `[[lowered]]` entry to `.github/quality/waivers.toml` ([`testing.md`, "What the kit holds"](testing.md#what-the-kit-holds)) | `suite_rules.py`, in the lint job against the pull request's base or what `main` was before the push, in the hook against where the branch left `origin/main` | The number is the pull request's own text. |
 
 The kit's own code is the first to meet it. [`quality/tests/workflow_contract.yaml`](../quality/tests/workflow_contract.yaml) states every job and step of every workflow with its reason, and the tests run each script with its tools replaced, so no line of a workflow changes without saying why. The `check` job measures line and branch coverage of every root ([`.coveragerc`](../.coveragerc), whose exclusions carry their reasons) and [`quality/coverage_floor.py`](../quality/coverage_floor.py) holds each file to the share it has reached: a file that is not listed is held to 100 %.
 

@@ -29,6 +29,7 @@ import coverage_floor  # noqa: E402  found through the path set above
 import deny_hooks  # noqa: E402  found through the path set above
 import ecosystem  # noqa: E402  found through the path set above
 import fetch_tool  # noqa: E402  found through the path set above
+import js_text  # noqa: E402  found through the path set above
 import kit_preview  # noqa: E402  found through the path set above
 import kit_switch  # noqa: E402  found through the path set above
 import landing  # noqa: E402  found through the path set above
@@ -67,6 +68,7 @@ __all__ = [
     "kit_preview",
     "kit_switch",
     "landing",
+    "js_text",
     "latest_releases",
     "launch",
     "md_header",
