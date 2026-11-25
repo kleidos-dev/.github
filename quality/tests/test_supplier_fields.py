@@ -362,7 +362,7 @@ class SupplierFieldsTest(unittest.TestCase):
             ("owner&commat;example.org", True),
             ("owner&amp;amp;amp;amp;amp;amp;#64;example.org", True),
             ("mailto:owner%40example.org", True),
-            ("mailto:owner%252525252540example.org", True),
+            (f"mailto:owner%{'25' * 20}40example.org", True),
             ("owner\\\\x40example.org", True),
             ("owner\\\\u0040example.org", True),
             ("owner\\\\u{40}example.org", True),
@@ -394,6 +394,11 @@ class SupplierFieldsTest(unittest.TestCase):
             ("owner@example.org:x", True),
             ("xgit@example.org:a/b", True),
             ("git@example.org", True),
+            ("git@example.org: hello", True),
+            ("owner@x.png.org", True),
+            ("owner@x.svg-y.org", True),
+            ("[at] kleidos.dev", False),
+            ("x at y dot z", False),
             ("owner@png.example.org", True),
             ("hibernate-core@5.4.0.Final", False),
             ("vite@7.0.0-beta.rc", False),
@@ -454,6 +459,7 @@ class SupplierFieldsTest(unittest.TestCase):
             ("setup.py", f"setup(author_email='{OWN}')\n"),
             ("x.gemspec", f"spec.email='{OWN}'\n"),
             ("AUTHORS", f"A <{OWN}>, {OWN}.\n"),
+            ("bom.xml", "<bom><author>mail@<b/>kleidos.dev</author></bom>"),
         ):
             with self.subTest(rel=rel):
                 report = self.report(rel, text)
@@ -471,6 +477,7 @@ class SupplierFieldsTest(unittest.TestCase):
             ("MAINTAINERS.md", "you@example.org.kleidos.dev\n", True),
             ("MAINTAINERS.md", f"`{REAL}`\n", True),
             ("MAINTAINERS", f"{MAIL}\n", True),
+            ("MAINTAINERS", f"{MAIL}@example.social\n", True),
             ("AUTHORS.md", "owner&#64;kleidos.dev\n", True),
             ("setup.py", 'setup(url="git@github.com:a/b.git", x="a@2x.png")\n', False),
             ("setup.py", 'setup(install_requires=["x @ https://u@example.org/x.whl"])\n', False),
@@ -484,6 +491,7 @@ class SupplierFieldsTest(unittest.TestCase):
                 (f"x/{folder}/y/package.json", f'{{"author": "{MAIL}"}}', False)
                 for folder in sorted({"Tests", *sf.EXAMPLES})
             ),
+            ("tests/package.json", f'{{"author": "{MAIL}"}}', False),
             ("CONTRIBUTORS.MD", f"{MAIL}\n", False),
             ("AUTHORS", "a@b\n.c\n", False),
             ("AUTHORS", "a@b\r.c\n", False),
@@ -532,6 +540,11 @@ class SupplierFieldsTest(unittest.TestCase):
             ),
             (
                 "spdx.json",
+                {"packages": [other], "relationships": [by | {"spdxElementId": "SPDXRef-o"}]},
+                ["packages.supplier"],
+            ),
+            (
+                "spdx.json",
                 {
                     "packages": [other],
                     "relationships": [depends | {"relatedSpdxElement": "SPDXRef-r"}],
@@ -546,6 +559,7 @@ class SupplierFieldsTest(unittest.TestCase):
             ("sbom/x.json", {"supplier": MAIL}, []),
             ("x.spdx", tags, ["packages.supplier"]),
             ("x.spdx", f"{tags}{relation}r\n", []),
+            ("x.spdx", f"{tags}Relationship: x\n# {MAIL}\n", ["packages.supplier"]),
             ("x.spdx", f"{tags}{relation}o\n", ["packages.supplier"]),
             ("x.spdx", f"Reviewer: Person: A ({MAIL})\n", ["revieweds.reviewer"]),
             ("x.spdx", f"Annotator: Person: A ({MAIL})\n", ["annotations.annotator"]),
@@ -604,11 +618,11 @@ class SupplierFieldsTest(unittest.TestCase):
             ("action.yml", f"author: !!binary {coded}\n", ["author"]),
             (
                 "action.yml",
-                f"author: !!binary {base64.b64encode(MAIL.encode() + b' \\xff').decode()}\n",
+                f"author: !!binary {base64.b64encode(MAIL.encode() + b' \xff').decode()}\n",
                 ["author"],
             ),
             ("action.yml", f"author:\n  <<: {MAIL}\n", ["author.<<"]),
-            ("action.yml", "author: !!binary a\n", []),
+            ("action.yml", f"author: !!binary a\nx: {MAIL}\n", []),
             ("action.yml", "author: !!binary '*'\n", []),
             ("action.yml", f"author: {coded}\n", []),
             ("action.yml", f"author:\n  ? [{MAIL}]\n  : x\n", ["author.?"]),
@@ -629,6 +643,10 @@ class SupplierFieldsTest(unittest.TestCase):
         self.assertEqual(
             self.found("package.json", json.dumps({"maintainers": {MAIL: {"y": MAIL}}})),
             ["maintainers.*", "maintainers.*.y"],
+        )
+        self.assertEqual(
+            self.found("package.json", json.dumps({"author": {f"@{MAIL}": 1, "a\n": MAIL}})),
+            ["author.*", "author.a?"],
         )
         report = self.report("package.json", json.dumps({"maintainers": {OWN: 1}}))
         self.assertEqual([w.what for w in report.weakenings], ["address:maintainers.*"])

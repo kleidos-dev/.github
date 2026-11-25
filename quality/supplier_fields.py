@@ -152,7 +152,7 @@ HANDLE = re.compile(r"(?<![\w.%+-])@[\w.+-]+@[\w.-]+")
 LABEL = r"[\w-]{1,63}"
 NAME = r"[^\W_](?:[^\W_]|-){0,62}"
 INSIDE = r"\s?[\[({{<]\s?(?:{0})\s?[\])}}>]\s?"
-DOT = rf"(?: \. | {INSIDE.format(r'\.|dot')} | [\W_]{{1,3}}dot[\W_]{{1,3}} )"
+DOT = rf"(?: \. | {INSIDE.format(r'\.')} | [\W_]{{1,3}}dot[\W_]{{1,3}} )"
 ADDRESS = re.compile(
     rf"""(?: (?<=[\w!\#$%&*+.?^}}~-])@ | (?<=\w["'])@ | (?<=\w)\s{{0,3}}@\s{{0,3}} )
         (?: {LABEL}{DOT}\w | \[(?:IPv6:)?[0-9a-f:.]{{2,45}}\] )
@@ -294,12 +294,8 @@ def read_json(text: str) -> Any:
 
 
 def read_python(text: str) -> Any:
-    """Every string of a module."""
-    return [
-        node.value
-        for node in ast.walk(ast.parse(text))
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    ]
+    """Every constant of a module, its strings among them."""
+    return [node.value for node in ast.walk(ast.parse(text)) if isinstance(node, ast.Constant)]
 
 
 class OfXml:
