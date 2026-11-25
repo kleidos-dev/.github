@@ -663,9 +663,10 @@ reusable-lint.yml:
         contents: read
       why: 'a read token, no secret: third parties'' hooks run here'
       steps:
-      - why: the code under check; no credential is left for the steps after it
+      - why: the code under check with its whole history, which says what the thresholds were; no credential is left for the steps after it
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - why: the checks are the kit's at the commit of this very workflow; a copy of the workflow in another repository stops here
         name: The kit this workflow is part of
@@ -698,13 +699,14 @@ reusable-lint.yml:
         env:
           KIT: ${{ steps.kit.outputs.dir }}
         run: python -I -m pip install --require-hashes -r "${KIT}/quality/requirements-tools.txt"
-      - why: every policy check but the header lines, which have their own job; a hook the caller skips is judged; its failure fails the job
+      - why: every policy check but the header lines, which have their own job; a hook the caller skips is judged; the base the change is compared with is the event's own, never the tree's; its failure fails the job
         name: The kit's policy checks
         env:
           KIT: ${{ steps.kit.outputs.dir }}
           KIT_SHA: ${{ steps.kit.outputs.sha }}
           OWN_HOOKS: ${{ inputs.skip }},${{ inputs.deny-hooks }}
-        run: python "${KIT}/quality/policy.py" --without spdx-headers --lint-skip "${OWN_HOOKS}" --github --summary "${GITHUB_STEP_SUMMARY}" --kit-sha "${KIT_SHA}"
+          BASE: ${{ github.event.pull_request.base.sha || (!github.event.forced && github.event.before) || '' }}
+        run: python "${KIT}/quality/policy.py" --without spdx-headers --lint-skip "${OWN_HOOKS}" --github --summary "${GITHUB_STEP_SUMMARY}" --kit-sha "${KIT_SHA}" --base "${BASE}"
       - why: speed only; the key is the hook list, and no other job restores it
         name: Cache the hook environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

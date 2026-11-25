@@ -14,3 +14,13 @@
 # reason = "Why the rule is wrong for this code, with the sites read"
 # decided = "owner 2026-11-22"        # or "agent, reviewed in PR #<n>"
 # expires = 2027-05-22                # optional
+#
+# A coverage threshold that falls is said here too, in the change that lowers
+# it (docs/testing.md there, "What the kit holds"); the entry counts in that
+# change and in no other.
+#
+# [[lowered]]
+# threshold = "pyproject.toml fail_under"   # as the tests check names it
+# to = 99                                   # its new value, or "gone"
+# reason = "Why, with the code it was lost on"
+# decided = "owner 2026-11-25"              # or "agent, reviewed in PR #<n>"

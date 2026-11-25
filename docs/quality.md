@@ -69,7 +69,7 @@ The last job of the file is the repository's own and the one required check: nam
   - repo: https://github.com/kleidos-dev/.github
     rev: v3.0.0
     hooks:
-      - id: kleidos-kit          # every policy check: conformance, agent docs, Markdown, licensing lines
+      - id: kleidos-kit          # every policy check: conformance, agent docs, Markdown, licensing lines, tests
       - id: kleidos-commit-msg   # the commit-message rules
       - id: kleidos-mypy         # mypy, where there is Python
 ```
@@ -236,7 +236,14 @@ clang-format is not in the kit yet: meter and the firmware use different styles.
 
 Owner, 2026-11-24. Every repository aims at the maximum of tests: 100 % of line, branch, condition (MC/DC) and mutation is the target, with good practice for each language, and every exclusion is listed with its reason where the tool reads it. A change brings its tests; a guard brings the planted defect that proves it fires. The share a file has reached is held, so it only rises.
 
-The long standard, language by language, comes from a pilot in `kleidos-dev/cla` and will be `docs/testing.md` here; until then this section is the rule.
+The long standard, language by language, is [`testing.md`](testing.md), from a pilot in `kleidos-dev/cla`. It also says which of its rules the kit holds in every repository (the `tests` check of [`policy.py`](../quality/policy.py), below), which each repository holds by itself, and which nothing holds yet.
+
+| Rule | Enforced by | Why |
+| --- | --- | --- |
+| No test is marked to run alone (`it.only` and the like) | [`suite_rules.py`](../quality/suite_rules.py), no waiver | Every other test of its file stops running, and the suite passes. |
+| A test that is skipped, left to do or expected to fail says why, in the marker or in a comment `skip: <why>` on its line or right above | `suite_rules.py`, no waiver: the reason is written where the skip is | A skip with no reason is nobody's decision. |
+| coverage.py's threshold is in its configuration, never on a command line | `suite_rules.py`, no waiver | The command line wins over the place a person looks. |
+| A coverage threshold the tools read never falls or goes, against the base of the change, unless the change adds its `[[lowered]]` entry to `.github/quality/waivers.toml` ([`testing.md`, "What the kit holds"](testing.md#what-the-kit-holds)) | `suite_rules.py`, in the lint job against the pull request's base or what `main` was before the push, in the hook against where the branch left `origin/main` | The number is the pull request's own text. |
 
 The kit's own code is the first to meet it. [`quality/tests/workflow_contract.yaml`](../quality/tests/workflow_contract.yaml) states every job and step of every workflow with its reason, and the tests run each script with its tools replaced, so no line of a workflow changes without saying why. The `check` job measures line and branch coverage of every root ([`.coveragerc`](../.coveragerc), whose exclusions carry their reasons) and [`quality/coverage_floor.py`](../quality/coverage_floor.py) holds each file to the share it has reached: a file that is not listed is held to 100 %.
 
@@ -277,7 +284,7 @@ Every check a repository runs is a job of the kit, one workflow per concern, whi
 
 | Workflow | Job | Inputs | Caller permissions |
 | --- | --- | --- | --- |
-| [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) | Every policy check ([`policy.py`](../quality/policy.py), from the kit that is called), every pre-commit hook on every file (mypy, reuse and the header lines excepted: they have their own workflows), zizmor's online audits | `skip`, `deny-hooks` (the repository's own hook ids; a kit hook fails the check), `python-version` | `contents: read` |
+| [`reusable-lint.yml`](../.github/workflows/reusable-lint.yml) | Every policy check ([`policy.py`](../quality/policy.py), from the kit that is called), on the whole history, which says what the coverage thresholds were; every pre-commit hook on every file (mypy, reuse and the header lines excepted: they have their own workflows), zizmor's online audits | `skip`, `deny-hooks` (the repository's own hook ids; a kit hook fails the check), `python-version` | `contents: read` |
 | [`reusable-deny.yml`](../.github/workflows/reusable-deny.yml) | The repository's own hooks that read the deny-list, alone with it ([The entry workflows](#the-entry-workflows)) | `hooks` (required); the secret `deny` | `contents: read` |
 | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml) | `reuse lint`, then the header lines, on the whole history | | `contents: read` |
 | [`reusable-mypy.yml`](../.github/workflows/reusable-mypy.yml) | mypy with the repository's dependencies installed, through the kit's `mypy_groups.py`: one run per [mypy group](#mypy-groups), each folded in the log, an error annotation per failing group and a table of every group in the job summary (a bare `mypy` without groups) | `install`, `python-version-file`, `python-version` | `contents: read` |
@@ -309,7 +316,7 @@ A notice is a line of the [ecosystem report](ecosystem.md), not an issue: issues
    expires = 2027-05-22         # optional
    ```
 
-   `check_quality.py` fails on a weakening with no waiver, on a waiver with no `reason` or `decided`, on a waiver that matches nothing any more, and on an expired one. The lint job's summary lists every waiver in effect and counts the inline suppressions.
+   `check_quality.py` fails on a weakening with no waiver, on a waiver with no `reason` or `decided`, on a waiver that matches nothing any more, and on an expired one. A coverage threshold that falls is said in the same file, in a `[[lowered]]` entry that counts in the change that adds it ([Tests](#tests)). The lint job's summary lists every waiver in effect and counts the inline suppressions.
 3. **Some things cannot be waived:** a mypy suppression beyond missing types (owner: every error fixed, no baseline), a gitleaks global allowlist or `disabledRules`, an inline suppression without its code, an edited copy, the kit's reference, the gate, and any SonarCloud suppression (owner: an issue is fixed with a real change or left open).
 4. **Inline suppressions** carry their code and a reason: `# noqa: S603  <why>`, `# type: ignore[arg-type]  # <why>`, `# zizmor: ignore[<rule>]` with the reason on the line above, `// NOLINT(<check>): <why>`, `// eslint-disable-next-line <rule> -- <why>`. `RUF100` and mypy's `warn_unused_ignores` remove dead ones.
 5. **A weakening every repository needs moves into the kit**, in one pull request here, with its reason in the kit file (as `S603`, `S607` and `self-repository` are).

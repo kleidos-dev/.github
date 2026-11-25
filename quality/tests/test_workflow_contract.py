@@ -176,9 +176,9 @@ class VerdictTest(ScriptCase):
                 "reusable-lint.yml",
                 "The kit's policy checks",
                 "python",
-                {"OWN_HOOKS": "a,b", "KIT_SHA": "s", "GITHUB_STEP_SUMMARY": "S"},
+                {"OWN_HOOKS": "a,b", "KIT_SHA": "s", "GITHUB_STEP_SUMMARY": "S", "BASE": "b"},
                 f"python {policy} --without spdx-headers --lint-skip a,b --github --summary S"
-                " --kit-sha s",
+                " --kit-sha s --base b",
             ),
             (
                 "reusable-lint.yml",

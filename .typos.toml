@@ -7,3 +7,11 @@
 # >>> kleidos-quality typos (synced from kleidos-dev/.github quality/typos/block.toml; do not edit)
 locale = "en-us"
 # <<< kleidos-quality typos
+
+[default.extend-words]
+# axe, the accessibility engine (docs/testing.md).
+axe = "axe"
+
+[default.extend-identifiers]
+# What vitest and Jest call a group that does not run (quality/suite_rules.py).
+xdescribe = "xdescribe"

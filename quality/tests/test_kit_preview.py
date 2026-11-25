@@ -84,6 +84,12 @@ class PreviewTest(unittest.TestCase):
         self.assertEqual(found.held, "3")  # two header lines and mypy's coverage
         self.assertEqual(found.run, Counter({"spdx-headers": 2, "mypy": 1, "single": 1}))
 
+    def test_a_test_that_runs_alone_is_counted(self) -> None:
+        root = self.held()
+        fx.write(root, "pkg/a.test.mjs", fx.header(prefix="// ") + "it.only('x');\n")
+        fx.commit(root)
+        self.assertEqual(kp.examine(root, KIT).run, Counter({"tests only": 1}))
+
     def test_a_drift_that_says_behind_is_shown(self) -> None:
         root = self.held()
         with mock.patch.object(sync, "drift_status", return_value={"behind": "true"}):

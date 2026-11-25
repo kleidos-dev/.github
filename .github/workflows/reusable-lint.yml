@@ -46,8 +46,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The whole history: the tests check reads what the coverage thresholds
+      # were before the change, and a private repository's is not fetched later.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       # The kit that is running: this workflow's own repository and commit (a
       # ./ call inside the kit keeps both), so the checks and the workflow
@@ -90,9 +93,13 @@ jobs:
           KIT: ${{ steps.kit.outputs.dir }}
           KIT_SHA: ${{ steps.kit.outputs.sha }}
           OWN_HOOKS: ${{ inputs.skip }},${{ inputs.deny-hooks }}
+          # What the change is compared with: the base of a pull request, what
+          # main was before a push; nothing on a schedule, by hand, or after a
+          # history was written anew.
+          BASE: ${{ github.event.pull_request.base.sha || (!github.event.forced && github.event.before) || '' }}
         run: >-
           python "${KIT}/quality/policy.py" --without spdx-headers --lint-skip "${OWN_HOOKS}"
-          --github --summary "${GITHUB_STEP_SUMMARY}" --kit-sha "${KIT_SHA}"
+          --github --summary "${GITHUB_STEP_SUMMARY}" --kit-sha "${KIT_SHA}" --base "${BASE}"
       - name: Cache the hook environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

@@ -1,7 +1,7 @@
 {
   "$comment": "Written by kleidos-dev/.github quality/sync.py --write; never edit it or the files and blocks it lists: change the kit there and sync again (docs/quality.md).",
   "source": "https://github.com/kleidos-dev/.github",
-  "version": "3.1.2",
+  "version": "3.2.0",
   "commit": "self",
   "profiles": [
     "base",
@@ -86,7 +86,7 @@
       "id": "organization-rules",
       "path": "AGENTS.md",
       "source_path": "quality/agents/block.md",
-      "sha256": "ddbc7309bbd80a6c2bc4e2bb8f9e890f835aaef6476b454e005d7afccc37e11f"
+      "sha256": "654d62a11fc9e49d60713cf9f3e0b9818945be122e02847c4400d7926917adae"
     },
     {
       "id": "typos",
