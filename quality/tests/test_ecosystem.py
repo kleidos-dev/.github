@@ -1167,11 +1167,15 @@ class CommandTest(ReportCase):
         self.assertIn("cannot be read", err.getvalue())
 
     def test_land(self) -> None:
-        for argv, merge in (([], False), (["--merge"], True)):
+        for argv, merge, read in (
+            ([], False, ""),
+            (["--merge"], True, ""),
+            (["--merge", "--read", "abc"], True, "abc"),
+        ):
             with mock.patch.object(landing, "land", return_value=3) as land:
-                self.assertEqual(eco.main(["land", *argv, BOARDS]), 3)
-            self.assertEqual(land.call_args.args[1], [BOARDS])
-            self.assertEqual(land.call_args.kwargs, {"merge": merge})
+                self.assertEqual(eco.main(["land", *argv, BOARDS, f"{BOARDS}#7"]), 3)
+            self.assertEqual(land.call_args.args[1], [BOARDS, f"{BOARDS}#7"])
+            self.assertEqual(land.call_args.kwargs, {"merge": merge, "read": read})
 
     def test_the_kits_pins_are_asked_with_ghs_session(self) -> None:
         with mock.patch.object(fx.latest_releases, "outdated", return_value=["x"]):
