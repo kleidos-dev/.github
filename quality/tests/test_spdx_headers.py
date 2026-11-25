@@ -34,6 +34,25 @@ class CheckTextTest(unittest.TestCase):
         text = f"# {C} 2026 {H} <someone@example.org>\n# {L} MIT\n"
         self.assertIn("e-mail", " ".join(sh.check_text("a.py", text, "2026")))
 
+    def test_an_e_mail_of_a_contributor_is_refused(self) -> None:
+        tag = sh.CONTRIBUTOR_TAG
+        for line, found in (
+            (f"# {tag} Someone <someone@example.org>", 1),
+            (f"# {tag} someone\uff20example.org", 1),
+            (f"# {tag} Someone", 0),
+            (f"# {sh.IGNORE_START}\n# {tag} someone@example.org\n# {sh.IGNORE_END}", 0),
+            ("# Someone <someone@example.org>", 0),
+        ):
+            with self.subTest(line=line):
+                problems = sh.check_text("a.py", f"{fx.header()}{line}\n", "2026")
+                self.assertEqual(len(problems), found, problems)
+                self.assertTrue(all("a contributor's line" in p for p in problems))
+                self.assertFalse(any("someone" in p for p in problems))
+
+    def test_a_contributors_line_is_no_copyright_line(self) -> None:
+        text = f"# {sh.CONTRIBUTOR_TAG} 2026 {H}\n"
+        self.assertEqual(len(sh.check_text("a.py", text, "2026")), 2)
+
     def test_the_year_is_the_first_commit_year(self) -> None:
         found = sh.check_text("a.py", fx.header(year="2027"), "2026")
         self.assertIn("git first added the file in 2026", " ".join(found))
@@ -116,6 +135,11 @@ class FixTextTest(unittest.TestCase):
     def test_an_e_mail_and_a_wrong_year_are_repaired(self) -> None:
         text = f"# {C} 2024 {H} <mail@example.org>\n# {L} MIT\n"
         self.assertEqual(self.fixed("a.py", text), fx.header(year="2026"))
+
+    def test_a_contributor_keeps_the_name_only(self) -> None:
+        line = f"# {sh.CONTRIBUTOR_TAG} 2025 {H}"
+        text = fx.header(year="2026") + line
+        self.assertEqual(self.fixed("a.py", f"{text} <mail@example.org>\n"), f"{text}\n")
 
     def test_no_license_anywhere_is_left_for_a_person(self) -> None:
         _new, why = sh.fix_text("a.py", "x = 1\n", "2026", None)

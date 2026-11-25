@@ -42,6 +42,7 @@ import policy  # noqa: E402  found through the path set above
 import run_form  # noqa: E402  found through the path set above
 import spdx_headers  # noqa: E402  found through the path set above
 import suite_rules  # noqa: E402  found through the path set above
+import supplier_fields  # noqa: E402  found through the path set above
 import sync  # noqa: E402  found through the path set above
 
 __all__ = [
@@ -79,6 +80,7 @@ __all__ = [
     "own_files",
     "spdx_headers",
     "suite_rules",
+    "supplier_fields",
     "sync",
     "write",
 ]

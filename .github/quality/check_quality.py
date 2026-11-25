@@ -22,6 +22,8 @@ from that file, and checks, from the repository's root:
                (ruff, mypy, gitleaks, OSV, Dependabot, CI conventions,
                markdownlint, tsconfig, ESLint, clang-tidy, inline
                suppressions) unless .github/quality/waivers.toml records why
+  suppliers    (run form) no e-mail address in the fields that say who a
+               thing comes from (supplier_fields.py)
   run form     what run_form.py lists: the record, no kit code, the entry
                workflows at the branch, the "✅ Check" gate, the hooks
   pins         (held form; in the run form a pin that is behind is a note)
@@ -54,6 +56,7 @@ import argparse
 import datetime as dt
 import fnmatch
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -156,6 +159,7 @@ WAIVABLE_TOOLS = (
     "pins",
     "typos",
     "actionlint",
+    "supplier",
 )
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -3473,7 +3477,7 @@ def run(
     if "actions" in profiles:
         if kit is not None and central and source.get("commit") == "self":
             # The kit's home runs its own entry workflows, by ./ path.
-            run_form_module(repo).check_workflows(
+            kit_module(repo, "run_form").check_workflows(
                 repo, sorted(profiles), kit, report, self_ref=True
             )
         else:
@@ -3481,6 +3485,8 @@ def run(
         check_ci(repo, report)
     check_dependabot(repo, report, central)
     check_pins(repo, report, online=kit is not None)
+    if central:
+        kit_module(repo, "supplier_fields").check(repo, report)
     check_shared(repo, profiles, kit, report, today)
     report.notes.insert(
         0,
@@ -3503,21 +3509,19 @@ def own_kit() -> Kit:
     return DirKit(Path(__file__).resolve().parents[1])
 
 
-def run_form_module(repo: Repo) -> Any:
-    """run_form.py, beside this file (in the kit's home also from its quality/ folder)."""
+def kit_module(repo: Repo, name: str) -> Any:
+    """A module beside this file (in the kit's home also from its quality/ folder)."""
     sys.modules.setdefault("check_quality", sys.modules[__name__])
     if repo.is_central():
         sys.path.append(str(repo.root / "quality"))
-    import run_form
-
-    return run_form
+    return importlib.import_module(name)
 
 
 def run_called(
     repo: Repo, record: dict[str, Any], kit: Kit, today: dt.date, report: Report
 ) -> Report:
     """Check a repository of the run form: it calls the kit by name and holds no kit code."""
-    run_form = run_form_module(repo)
+    run_form = kit_module(repo, "run_form")
     report.behind_is_note = True
     source = run_form.load(repo, record, report)
     profiles = set(source["profiles"])
@@ -3528,6 +3532,7 @@ def run_called(
         check_ci(repo, report, kit_ref=run_form.branch_of(kit.version()))
     check_dependabot(repo, report, central=False, run=True)
     check_pins(repo, report)
+    kit_module(repo, "supplier_fields").check(repo, report)
     check_shared(repo, profiles, kit, report, today)
     report.notes.insert(
         0,

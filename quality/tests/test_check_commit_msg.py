@@ -448,7 +448,8 @@ class RenderTest(unittest.TestCase):
         self.assertIn("`subject-imperative`", body)
         self.assertIn("git rebase -i", body)
         self.assertIn("git push --force-with-lease", body)
-        self.assertIn("only `main` is protected", body)
+        self.assertIn("on the branch of your own pull request; any other force push only", body)
+        self.assertIn("only when the owner orders that act", body)
 
     def test_warnings_stay_out_of_the_table(self) -> None:
         res = result_with(subject="Add " + "x" * 60)

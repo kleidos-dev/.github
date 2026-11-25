@@ -13,6 +13,7 @@ The shared rules and analysis-tool configuration of every Kleidos repository. Re
 | [`check_quality.py`](check_quality.py) | The kit check: conformance of a repository's own configurations, pins, waivers; `--plant-mac` proves the MAC rules. |
 | [`run_form.py`](run_form.py) | The kit check of a repository that calls the kit by name: the record, the workflows, the gate, the hooks. |
 | [`spdx_headers.py`](spdx_headers.py) | The licensing header rule and the owner's statement: check, and `--write` to add or repair the lines. |
+| [`supplier_fields.py`](supplier_fields.py) | No e-mail address in the fields that say who a thing comes from: the one list of the files and fields, and the one address a waiver may allow. |
 | [`md_nowrap.py`](md_nowrap.py) | Markdown prose is never hard-wrapped. |
 | [`agent_docs.py`](agent_docs.py) | The agent-docs guard: `AGENTS.md` and `CLAUDE.md` keep [`docs/agent-docs.md`](../docs/agent-docs.md). |
 | [`suite_rules.py`](suite_rules.py), with [`js_text.py`](js_text.py), what is code in a JavaScript or TypeScript file | The tests check: no test runs alone, a skip says why, no coverage threshold falls unsaid ([`docs/testing.md`](../docs/testing.md)). |

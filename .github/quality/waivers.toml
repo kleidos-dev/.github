@@ -8,7 +8,7 @@
 # reason, on an entry that matches nothing any more, and on an expired one.
 #
 # [[waiver]]
-# tool = "ruff"                       # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins, typos, actionlint
+# tool = "ruff"                       # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins, typos, actionlint, supplier
 # what = "ignore:E501"                # the exact weakening, as check_quality.py names it
 # where = "pyproject.toml"            # optional: the file it is in, when the same weakening is in two
 # reason = "Why the rule is wrong for this code, with the sites read"

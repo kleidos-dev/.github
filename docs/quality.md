@@ -187,6 +187,7 @@ files = ["youtube/music-styles/keys/test-cue"]
 | Known vulnerabilities fail the build | [`reusable-osv.yml`](../.github/workflows/reusable-osv.yml) (OSV-Scanner over every manifest and lockfile, also weekly) | Advisory-only scanning was ignored. An accepted one goes in `osv-scanner.toml` with a `reason` and an `ignoreUntil` at most 90 days ahead (`check_quality.py`). |
 | Dependabot covers every manifest, each update with a cooldown | `check_quality.py` | A directory without its ecosystem never gets a security update; a week's cooldown gives a compromised or yanked release time to be noticed. |
 | Licensing: `reuse lint`, the header lines, and the owner's statement with no e-mail | [`reusable-reuse.yml`](../.github/workflows/reusable-reuse.yml), hooks `reuse` and `kleidos-kit`, `check_quality.py` (a `.license` sidecar is a weakening, `tool = "reuse"`) | See [Licensing headers](#licensing-headers). |
+| No e-mail address in a supplier, author or maintainer field | `check_quality.py` ([`supplier_fields.py`](../quality/supplier_fields.py)); `mail@kleidos.dev` is a weakening (`tool = "supplier"`, `what = "address:<field>"`), any other address has no waiver | Owner, 2026-11-25. See [Supplier fields](#supplier-fields). |
 | Markdown prose is never hard-wrapped | hook `kleidos-kit` and the lint job ([`quality/md_nowrap.py`](../quality/md_nowrap.py)) | Owner, 2026-11-16: one line per paragraph and per list item. |
 | Agent instruction files keep the standard: `AGENTS.md` and `CLAUDE.md` at the root, `CLAUDE.md` importing `AGENTS.md` first, `CLAUDE.local.md` ignored, the size limits, every named path and link real, every skill and subagent named, the organization rules linked | hook `kleidos-kit` and the lint job ([`quality/agent_docs.py`](../quality/agent_docs.py)) | Every agent reads `AGENTS.md`; a path that moved or a rule restated by hand misleads the next one. See [`agent-docs.md`](agent-docs.md). |
 | Markdown tables render: MD055, MD056, MD058 only | hook `markdownlint-cli2`, [`quality/markdownlint/base.jsonc`](../quality/markdownlint/base.jsonc) | Broken tables are the findings that matter; the rest of markdownlint's defaults measured as noise. |
@@ -262,7 +263,7 @@ SPDX-License-Identifier: <the repository's license for the file>
 
 - `<year>` is the year of the file's first commit, as `git log --diff-filter=A --format=%ad --date=format:%Y -- <file>` gives it (read in UTC), and the current year for a file not committed yet. The check also accepts the year before: the public repositories merge by squash, so a file added in a pull request written in December and merged in January lands on `main` with a January commit, and its header, written in December, must not turn `main` red. A pull request that crosses the new year needs nothing else; the writer always sets the first-commit year.
 - At least one copyright line names José M. Requena Plens. A third-party file is stated in `REUSE.toml` with `precedence = "override"` instead.
-- **Year and name only** (owner, 2026-11-24): no e-mail address, in a file, in `REUSE.toml` or in a license text. The owner's line of a `LICENSE` or of a text under `LICENSES/` is `Copyright (c) <year> José M. Requena Plens`, with `All rights reserved.` after it where that is the license; a third party's line is never touched. A statement anywhere in the tree that puts an e-mail beside the owner's name is found too, a `mailto:` link included. A header may add in parentheses which part it covers, `(Spanish translation)`. In a repository that still holds kit 2.x copies the license texts are a note until it switches.
+- **Year and name only** (owner, 2026-11-24): no e-mail address, in a file, in `REUSE.toml` or in a license text; a `SPDX-FileContributor` line beside the two holds a name only as well. The owner's line of a `LICENSE` or of a text under `LICENSES/` is `Copyright (c) <year> José M. Requena Plens`, with `All rights reserved.` after it where that is the license; a third party's line is never touched. A statement anywhere in the tree that puts an e-mail beside the owner's name is found too, a `mailto:` link included. A header may add in parentheses which part it covers, `(Spanish translation)`. In a repository that still holds kit 2.x copies the license texts are a note until it switches.
 - The license stays the one each repository already declares (MIT, GPL-3.0-or-later, ...).
 - A file that cannot carry a comment (images, JSON, binaries, lockfiles, generated data) gets both lines through a `REUSE.toml` annotation (`SPDX-FileCopyrightText` and `SPDX-License-Identifier`), never a `.license` sidecar unless `REUSE.toml` cannot express it. So does a file `REUSE.toml` covers with `precedence = "override"`: third-party text, the kit's managed-block sources, and the pull request template, whose text GitHub copies into every pull request.
 - The lines sit in a comment at the top of the file: in Markdown and HTML an HTML comment at the top (after any front matter, XML declaration or doctype); in CSS and linker scripts a block comment; in an Astro component `//` lines at the top of its front matter (an HTML comment in its template would reach every page that renders it; the writer opens a front matter where there is none); elsewhere line comments, after a shebang or an encoding line. Lines further down, or inside a docstring, do not count.
@@ -277,6 +278,28 @@ python3 quality/spdx_headers.py --repo <repository> --write            # every f
 python3 quality/spdx_headers.py --repo <repository> --write 'src/**'   # some
 ```
  A template or generator that emits files (a skill's file template, a script that writes a `REUSE.toml` annotation) writes both lines.
+
+### Supplier fields
+
+Metadata that says who a thing comes from holds a name and no e-mail address, as a copyright does (owner, 2026-11-25). The one address that may stand there is `mail@kleidos.dev`, and only where the tool that reads the field needs an address: it is a weakening, and its waiver's reason names that tool. Any other address is refused, with no waiver.
+
+```toml
+[[waiver]]
+tool = "supplier"
+what = "address:project.authors.email"   # as check_quality.py names it
+where = "pyproject.toml"
+reason = "Which tool refuses the field without an address, and how it says so"
+decided = "owner 2026-11-25"
+```
+
+- The files and their fields are one list, `METADATA` of [`supplier_fields.py`](../quality/supplier_fields.py): `REUSE.toml` (`SPDX-PackageSupplier`, `SPDX-PackageOriginator`, `SPDX-FileContributor`), `package.json`, `composer.json` and their like, `pyproject.toml` and `Cargo.toml`, `CITATION.cff`, `codemeta.json` and `.zenodo.json`, ESP-IDF's and PlatformIO's component manifests, the plugin manifests of `.claude-plugin/`, `action.yml`, `manifest.json`, the software bills of materials (SPDX, CycloneDX), the older package formats (`setup.cfg`, `debian/control`, ...) and, at the root and in `.github/`, the lists of people (`AUTHORS`, `CODEOWNERS`, `.mailmap`, ...). A new kind of metadata is a row there. A `SPDX-FileContributor` line of a file's header is held by the [header check](#licensing-headers).
+- A field holds everything below it, and nothing else of the file counts, but a text with a `mailto:` link, which is read wherever it is: a `description` that names an address otherwise is not a supplier. A file whose format has no fields in the list (`setup.cfg`, `AUTHORS`) is searched whole, `setup.py` by its strings; so is one that cannot be read as its format says. YAML is read with its aliases, merges and `!!binary` texts.
+- An address is searched for in the text as a person reads it: with no character that does not show, with HTML entities, percent-encoding, `\x40` escapes and compatibility forms (a fullwidth `@`, an ideographic full stop) decoded. It is found in capitals, in a `mailto:` link, with spaces around the `@`, with a quoted name or an address literal (`[192.0.2.1]`), with the marks in brackets or in words (`user [at] host [.] tld`, `user[@]host.tld`, `user at host dot tld`, `user_at_host_dot_tld`), and with a plain `at` inside brackets, `(user at host.tld)`. `mail@kleidos.dev` is the allowed one only when it is written as it is.
+- Not an address: the user of a URL (`https`, `ssh`, `git+ssh`, ...; a `mailto://` is no such URL), a clone address (`git@host:path`), a version (`name@1.2.3-rc.1`), an image (`logo@2x.png`), and, in a file searched whole, a handle of the fediverse (`@user@host`). In a list of people in Markdown and below a folder of tests or fixtures, nor is one at a domain reserved for examples (`example.org`, `.invalid`, `.test`).
+- Of a software bill of materials the document's own people are read (`metadata`, `creationInfo`, the packages it says it describes, or every one where it does not say), not those of the packages it lists, which are other people's.
+- A file `REUSE.toml` states is a third party's is not ours to correct: an annotation of its own, not the catch-all, whose copyright names neither the owner nor Kleidos. `REUSE.toml` itself is never a third party's. A nested `REUSE.toml` or a header inside the file says nothing here: the root's `REUSE.toml` states it.
+- A key that holds an address is printed as `*`: a log is read by anybody.
+- What the rule does not read, so a reviewer does: a comment beside a field, a name with no domain (`user@host` outside angle brackets), a plain `user at host.tld` with no brackets around it, an address in pieces that are put together when the file is run, spelled backwards or in another language's words, a compressed file, and the metadata no row names (`pom.xml`, `Dockerfile` labels, `.npmrc`, `PKG-INFO`, a skill's front matter, SPDX as RDF). A document and the contact of a page are no metadata. A repository that still holds kit 2.x copies is not read.
 
 ## Reusable workflows
 
@@ -308,7 +331,7 @@ A notice is a line of the [ecosystem report](ecosystem.md), not an issue: issues
 
    ```toml
    [[waiver]]
-   tool = "ruff"                # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins, typos, actionlint
+   tool = "ruff"                # ruff, eslint, tsconfig, clang-tidy, markdownlint, ci, dependabot, pre-commit, reuse, pins, typos, actionlint, supplier
    what = "ignore:E501"         # the weakening, as check_quality.py names it
    where = "pyproject.toml"     # optional: the file, when the same weakening is in two
    reason = "Why the rule is wrong for this code, with the sites read"
@@ -347,6 +370,8 @@ Every pull request of a repository in the run form, the owner's and the agents' 
 1. `gh pr diff <n> --name-only`. If a path starts with `.github/`, or is `.pre-commit-config.yaml`, read that part of the diff line by line before anything else: `✅ Check` is the pull request's own workflow there and is not proof. `tools/ecosystem.py land` refuses such a pull request, whoever opened it.
 2. `✅ Check` succeeded on the head that is merged, from GitHub Actions (App 15368), and so did every other job of the run.
 3. Squash, with the head's SHA (`gh pr merge <n> --squash --match-head-commit <sha>`), so nothing pushed after the reading is merged.
+
+A force push is `git push --force-with-lease` on the branch of one's own pull request; anything else (plain `--force`, `main`, `v3` and the other kit branches, a tag, anybody else's branch) only when the owner orders that act (owner, 2026-11-25). A rebase or a reworded commit so needs no new pull request.
 
 The required checks are a ruleset of their own on `main`, with an empty bypass list, so nobody merges past a red one; the rest of `main`'s rules are another, which an organization admin may bypass, and a required check there would be bypassed with it. A squash of the whole history before a repository goes public needs the first one disabled for that push, and enabled again right after.
 

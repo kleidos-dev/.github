@@ -307,7 +307,9 @@ class AgentDocsTest(unittest.TestCase):
         self.assert_finding("block", "AGENTS.md: [block] holds no organization-rules block")
 
     def test_an_edited_block_is_found(self) -> None:
-        self.agents("Rules.\n", block=BLOCK.replace("never a force push", "rarely a force push"))
+        edited = BLOCK.replace("Never `--no-verify`", "Rarely `--no-verify`")
+        self.assertNotEqual(edited, BLOCK)
+        self.agents("Rules.\n", block=edited)
         self.assert_finding("block", "the organization-rules block differs from the kit's")
 
     def test_a_hand_written_section_beside_the_block_is_found(self) -> None:
