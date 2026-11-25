@@ -277,6 +277,8 @@ class ThresholdsTest(unittest.TestCase):
                 {"lines": 95, "functions": 90},
             ),
             ("vitest.config.ts", "thresholds: { lines: 100", {"lines": 100}),
+            ("vite.config.ts", "thresholds: { a: { b: 1 }, c: 2 }, n: 3", {"b": 1, "c": 2}),
+            ("vite.config.ts", "thresholds: { a: { b: 1 }, c: 22 }, n: 3", {"b": 1, "c": 22}),
             ("vitest.config.ts", "thresholds: limits", {}),
         ):
             with self.subTest(rel=rel, text=text):
