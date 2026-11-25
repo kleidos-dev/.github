@@ -214,7 +214,7 @@ class LocalGit(fast_forward.Git):
         assert slug == SLUG, slug
         self.folder = folder
         self.hook("clone")
-        flags = [f for f in self.CLONE if f != "--no-tags"] if self.tags else self.CLONE
+        flags = [f for f in self.CLONE_FLAGS if f != "--no-tags"] if self.tags else self.CLONE_FLAGS
         self._run(["git", "clone", *flags, str(self.hub.bare), str(folder)])
         for name, value in (
             ("user.name", "The owner"),

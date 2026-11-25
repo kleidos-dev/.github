@@ -108,11 +108,11 @@ class Git:
     # No tags: git reads "origin/main" as a tag of that name before it reads it as the clone's
     # main, and a push reads even a SHA as a tag's name first. Where a name is used here, it is
     # the whole one.
-    CLONE = ("-q", "--no-tags")
+    CLONE_FLAGS = ("-q", "--no-tags")
 
     def clone(self, slug: str, folder: Path) -> None:
         """A fresh clone, of every branch and the commits whole."""
-        flags = (*self.CLONE, "--filter=blob:none")
+        flags = (*self.CLONE_FLAGS, "--filter=blob:none")
         self._run(["gh", "repo", "clone", slug, str(folder), "--", *flags])
 
     def run(self, folder: Path, *args: str) -> str:
