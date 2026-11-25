@@ -4,7 +4,9 @@
 # The quality kit's first entry workflow (docs/quality.md, "How a repository
 # runs the kit"): what needs no build and no dependency, in minutes. Lint
 # (every policy check and every hook), the hooks that read the deny-list, the
-# licensing, the secrets scan, and on a pull request the commit-message gate. Everything else waits for it.
+# licensing, the secrets scan, and the commit check: the messages of a pull
+# request's commits, and whose the commits are that it or a push adds.
+# Everything else waits for it.
 #
 #   quick:
 #     name: "⚡ Quick"
@@ -77,7 +79,7 @@ jobs:
 
   commits:
     name: "✍️ Commits"
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     uses: ./.github/workflows/reusable-commit-check.yml
     permissions:
       contents: read

@@ -71,7 +71,9 @@ class ManifestTest(unittest.TestCase):
 class OldPythonTest(unittest.TestCase):
     def test_every_file_of_the_hooks_reads_on_the_oldest(self) -> None:
         files = sorted(HOOKS.glob("*.py"))
-        self.assertEqual([f.name for f in files], ["check_commit_msg.py", "launch.py"])
+        self.assertEqual(
+            [f.name for f in files], ["check_commit_msg.py", "commit_identity.py", "launch.py"]
+        )
         for path in files:
             ast.parse(path.read_text(encoding="utf-8"), str(path), feature_version=OLDEST)
 

@@ -459,8 +459,54 @@ class CommitTest(ScriptCase):
     def test_the_last_step_fails_the_job(self) -> None:
         title = "Fail on a rule the commits break"
         step = self.step("reusable-commit-check.yml", title)
-        self.assertEqual(step["if"], "steps.check.outputs.status != '0'")
+        self.assertIn("steps.check.outputs.status != '0'", step["if"])
         self.assertEqual(self.run_step("reusable-commit-check.yml", title, STATUS="1").status, 1)
+
+    def whose(self, repository: str = "o/r", judge: str = "", kit: str = "") -> Ran:
+        """The identity step, with a python3 that says which checker it was given."""
+        return self.run_step(
+            "reusable-commit-check.yml",
+            "Check whose commits they are",
+            JUDGE_SHA=judge or self.base,
+            GITHUB_REPOSITORY=repository,
+            KIT=kit or str(fx.CENTRAL),
+        )
+
+    def test_the_kits_own_identity_checker_judges_elsewhere(self) -> None:
+        rel = "hooks/commit_identity.py"
+        fx.write(self.cwd, rel, "raise SystemExit(0)\n")
+        self.head("Plant a checker")
+        for status in (0, 1, 2):
+            self.fake("python3", status)
+            ran = self.whose(judge=fx.git(self.cwd, "rev-parse", "HEAD").strip())
+            self.assertEqual(ran.calls, [f"python3 {fx.CENTRAL}/{rel}"])
+            self.assertEqual(ran.status, status)
+
+    def test_the_identity_checker_of_the_base_judges_in_the_kits_home(self) -> None:
+        home, rel = "kleidos-dev/.github", "hooks/commit_identity.py"
+        self.fake("python3", 0, body='cat "$1"')
+        # A base that has none yet: the change that brings it.
+        fx.write(self.cwd, "hooks/check_commit_msg.py", "base\n")
+        self.base = self.head("Add the hooks")
+        fx.write(self.cwd, rel, "the pull request's\n")
+        self.head("Bring it")
+        ran = self.whose(home, kit=str(self.cwd))
+        self.assertIn("the pull request's", ran.said)
+        # From then on it is the base's, and what it reads beside it.
+        fx.write(self.cwd, rel, "the base's\n")
+        fx.write(self.cwd, "hooks/identity.json", "{}\n")
+        self.base = self.head("Have it")
+        fx.write(self.cwd, rel, "planted\n")
+        fx.write(self.cwd, "hooks/identity.json", "planted\n")
+        self.head("Plant one")
+        ran = self.whose(home, kit=str(self.cwd))
+        self.assertIn("the base's", ran.said)
+        self.assertNotIn("planted", ran.said)
+        self.assertEqual(ran.calls, [f"python3 {self.tmp}/judge/{rel}"])
+        judged = (self.tmp / "judge/hooks/identity.json").read_text(encoding="utf-8")
+        self.assertEqual(judged, "{}\n")
+        # A base that cannot be read is no pass.
+        self.assertNotEqual(self.whose(home, judge="e" * 40, kit=str(self.cwd)).status, 0)
 
     def test_the_comment_is_the_kits(self) -> None:
         self.fake("python3")

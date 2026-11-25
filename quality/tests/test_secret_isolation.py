@@ -493,11 +493,11 @@ class ConditionTest(unittest.TestCase):
                 given = context(inputs={"deny-hooks": hooks, "skip": ""})
                 self.assertIs(ex.runs(condition, given), wanted)
 
-    def test_the_commits_job_runs_on_every_pull_request_and_only_there(self) -> None:
+    def test_the_commits_job_runs_on_what_adds_commits_and_only_there(self) -> None:
         condition = self.quick["jobs"]["commits"]["if"]
         for event, wanted in (
             ("pull_request", True),
-            ("push", False),
+            ("push", True),
             ("schedule", False),
             ("workflow_dispatch", False),
             ("pull_request_target", False),
@@ -505,6 +505,62 @@ class ConditionTest(unittest.TestCase):
         ):
             with self.subTest(event=event):
                 self.assertIs(ex.runs(condition, context(github={"event_name": event})), wanted)
+
+    def test_the_messages_are_checked_on_a_pull_request_and_what_it_found_fails(self) -> None:
+        steps = self.commit_steps()
+        for title in (
+            "Check the pull request's commits",
+            "Keep the result for the comment workflow",
+            "Fail on a rule the commits break",
+        ):
+            for event, status, wanted in (
+                ("pull_request", "1", True),
+                ("pull_request", "2", True),
+                ("pull_request", "0", not title.startswith("Fail")),
+                ("push", "", False),
+                ("push", "1", False),
+            ):
+                with self.subTest(title=title, event=event, status=status):
+                    given = context(
+                        github={"event_name": event},
+                        steps={"check": {"outputs": {"status": status}}},
+                    )
+                    self.assertIs(ex.runs(steps[title]["if"], given), wanted)
+
+    def test_the_identity_is_checked_whatever_the_messages_hold(self) -> None:
+        self.assertNotIn("if", self.commit_steps()["Check whose commits they are"])
+
+    def test_only_commits_that_are_judged_have_the_token(self) -> None:
+        """A fork's pull request gives its run none, whoever opened it."""
+        env = self.commit_steps()["Check whose commits they are"]["env"]
+        here, fork = {"full_name": "o/r"}, {"full_name": "x/r"}
+        for event, repo, wanted in (
+            ("push", None, "t"),
+            ("pull_request", here, "t"),
+            ("pull_request", fork, ""),
+            ("pull_request", {"full_name": "o/r2"}, ""),
+            ("pull_request", None, ""),
+            ("pull_request_target", fork, ""),
+            ("schedule", None, ""),
+        ):
+            with self.subTest(event=event, repo=repo):
+                pull = {"head": {"repo": repo}, "base": {"sha": "b"}}
+                github = {
+                    "event_name": event,
+                    "repository": "o/r",
+                    "token": "t",
+                    "sha": "s",
+                    "event": {"pull_request": pull} if event.startswith("pull") else {},
+                }
+                given = context(github=github)
+                self.assertEqual(ex.evaluate(env["GITHUB_TOKEN"], given), wanted)
+                judge = "b" if event.startswith("pull") else "s"
+                self.assertEqual(ex.evaluate(env["JUDGE_SHA"], given), judge)
+
+    def commit_steps(self) -> dict[str, Any]:
+        text = (WORKFLOWS / "reusable-commit-check.yml").read_text(encoding="utf-8")
+        steps = yaml.safe_load(text)["jobs"]["commit-messages"]["steps"]
+        return {step["name"]: step for step in steps if "name" in step}
 
     def test_the_listed_step_conditions(self) -> None:
         """Each condition a step of a job with something to lose may run on, run."""

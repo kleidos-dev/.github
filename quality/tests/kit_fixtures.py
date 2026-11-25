@@ -25,9 +25,11 @@ for folder in (CENTRAL / "tools", CENTRAL / "hooks", QUALITY):
 import agent_docs  # noqa: E402  found through the path set above
 import check_commit_msg  # noqa: E402  found through the path set above
 import check_quality  # noqa: E402  found through the path set above
+import commit_identity  # noqa: E402  found through the path set above
 import coverage_floor  # noqa: E402  found through the path set above
 import deny_hooks  # noqa: E402  found through the path set above
 import ecosystem  # noqa: E402  found through the path set above
+import fast_forward  # noqa: E402  found through the path set above
 import fetch_tool  # noqa: E402  found through the path set above
 import js_text  # noqa: E402  found through the path set above
 import kit_preview  # noqa: E402  found through the path set above
@@ -57,11 +59,13 @@ __all__ = [
     "check_commit_msg",
     "check_quality",
     "commit",
+    "commit_identity",
     "called",
     "consumer",
     "coverage_floor",
     "deny_hooks",
     "ecosystem",
+    "fast_forward",
     "fetch_tool",
     "git",
     "header",

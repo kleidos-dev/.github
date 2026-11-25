@@ -358,11 +358,11 @@ quick.yml:
       why: 'always: the whole history, every run'
     commits:
       name: ✍️ Commits
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' || github.event_name == 'push'
       uses: ./.github/workflows/reusable-commit-check.yml
       permissions:
         contents: read
-      why: a push has no pull request to check; every pull request has
+      why: what adds commits, a pull request and a push; a schedule and a run by hand add none
 reusable-commit-check-comment.yml:
   name: Commit check comment
   'on':
@@ -462,6 +462,7 @@ reusable-commit-check.yml:
       - why: every commit of the pull request, with the kit's checker, in the kit's home with the base branch's; only the two bots are excused
         name: Check the pull request's commits
         id: check
+        if: github.event_name == 'pull_request'
         env:
           KIT: ${{ steps.kit.outputs.dir }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -495,15 +496,33 @@ reusable-commit-check.yml:
           echo "status=$status" >> "$GITHUB_OUTPUT"
       - why: data for the comment, kept a week; none when nothing was checked
         name: Keep the result for the comment workflow
+        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: commit-check
           path: ${{ runner.temp }}/commit-check/result.json
           if-no-files-found: ignore
           retention-days: 7
-      - why: the check's own status fails the job, after the result was kept
+      - why: whose the added commits are, as GitHub says, with the kit's checker, in the kit's home with the base branch's; no token where the commits are not judged, a fork's above all
+        name: Check whose commits they are
+        env:
+          KIT: ${{ steps.kit.outputs.dir }}
+          JUDGE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          GITHUB_TOKEN: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && github.token || '' }}
+        run: |
+          set -euo pipefail
+          judge="$KIT"
+          if [ "$GITHUB_REPOSITORY" = kleidos-dev/.github ]; then
+            # The base branch's checker, once it has one (3.4.0 brings it).
+            judge="$RUNNER_TEMP/judge"
+            mkdir -p "$judge"
+            git archive "$JUDGE_SHA" hooks | tar -x -C "$judge"
+            [ -f "$judge/hooks/commit_identity.py" ] || judge="$KIT"
+          fi
+          python3 "$judge/hooks/commit_identity.py"
+      - why: the message check's own status fails the job, after the result was kept; a push has no message to check
         name: Fail on a rule the commits break
-        if: steps.check.outputs.status != '0'
+        if: github.event_name == 'pull_request' && steps.check.outputs.status != '0'
         env:
           STATUS: ${{ steps.check.outputs.status }}
         run: |
