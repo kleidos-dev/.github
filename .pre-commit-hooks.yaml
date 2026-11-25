@@ -16,7 +16,7 @@
 # missing. Every hook names its stages: pre-commit runs a hook that names
 # none at every installed hook type, commit-msg included.
 - id: kleidos-kit
-  name: quality kit (conformance, agent docs, Markdown, licensing lines)
+  name: quality kit (conformance, agent docs, Markdown, licensing lines, tests)
   description: Every policy check of the quality kit, on the whole repository.
   entry: hooks/launch.py policy
   language: script

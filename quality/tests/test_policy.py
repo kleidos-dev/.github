@@ -63,7 +63,7 @@ class PolicyTest(unittest.TestCase):
     def test_a_clean_repository_is_clean(self) -> None:
         status, said = self.run_policy()
         self.assertEqual(status, 0, said)
-        self.assertIn("clean: kit, agent-docs, md-nowrap, spdx-headers (kit v3.", said)
+        self.assertIn("clean: kit, agent-docs, md-nowrap, spdx-headers, tests (kit v3.", said)
         self.assertNotIn("the hooks here are at", said)
         self.assertEqual(self.run_policy("a-file-pre-commit-names.py")[0], 0)
 
@@ -93,6 +93,7 @@ class PolicyTest(unittest.TestCase):
             ("GEMINI.md", fx.md_header() + "x\n", "agent-docs"),
             ("wrapped.md", fx.md_header() + "One\nline.\n", "md-nowrap"),
             ("bare.py", "x = 1\n", "spdx-headers"),
+            ("pkg/alone.test.ts", fx.header(prefix="// ") + "it.only('x');\n", "tests"),
         ):
             with self.subTest(check=check), self.planted(rel, text):
                 fx.git(self.root, "add", "-N", rel)
@@ -188,9 +189,20 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(status, 0, said)
         self.assertIn("waived: pre-commit reuse:files:x", said)
 
+    def test_the_thresholds_are_compared_with_the_base(self) -> None:
+        status, said = self.run_policy("--only", "tests")
+        self.assertEqual(status, 0, said)
+        self.assertIn("note: no base to compare the coverage thresholds with", said)
+        head = fx.git(self.root, "rev-parse", "HEAD").strip()
+        status, said = self.run_policy("--only", "tests", "--base", head)
+        self.assertEqual((status, "note:" in said), (0, False), said)
+        status, said = self.run_policy("--only", "tests", "--base", "d" * 40)
+        self.assertEqual(status, 2)
+        self.assertIn("is not in this clone", said)
+
     def test_outside_a_work_tree_it_cannot_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            for check in ("kit", "agent-docs"):
+            for check in ("kit", "agent-docs", "tests"):
                 with contextlib.redirect_stderr(io.StringIO()) as err:
                     self.assertEqual(policy.main(["--repo", tmp, "--only", check]), 2)
                 self.assertIn(f"policy {check}:", err.getvalue())

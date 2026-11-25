@@ -34,6 +34,7 @@ import check_quality as cq  # noqa: E402  the kit's module, as above
 import own_files  # noqa: E402  the kit's module, as above
 import run_form  # noqa: E402  the kit's module, as above
 import spdx_headers  # noqa: E402  the kit's module, as above
+import suite_rules  # noqa: E402  the kit's module, as above
 import sync  # noqa: E402  the kit's module, as above
 
 # A copy that cannot be refreshed, and why.
@@ -68,6 +69,7 @@ def policy_problems(repo: Path, kit: cq.Kit) -> Counter[str]:
     out: Counter[str] = Counter(p.rule for p in cq.run(repo, kit=kit).problems)
     out.update(f.check for f in agent_docs.check(agent_docs.Repo(repo)) if not f.warning)
     out["spdx-headers"] += len(spdx_headers.check_repo(repo)[0])
+    out.update(f"tests {p.rule}" for p in suite_rules.check(cq.Repo(repo))[0])
     return +out
 
 

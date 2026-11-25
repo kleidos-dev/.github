@@ -33,6 +33,7 @@ This repository holds the kleidos-dev organization's profile, its community defa
 | [`docs/discussion-categories.md`](docs/discussion-categories.md) | The Discussions categories and the pinned welcome post. |
 | [`docs/sonarcloud.md`](docs/sonarcloud.md) | What is set by hand in the SonarQube Cloud organization and its projects, and how to add a project. |
 | [`docs/quality.md`](docs/quality.md) | The quality kit: the rules every kleidos-dev repository meets, why, how a repository runs the kit and overrides a rule, and how the kit is released. |
+| [`docs/testing.md`](docs/testing.md) | The testing standard of every kleidos-dev repository, language by language, and which of its rules the kit holds. |
 | [`docs/ecosystem.md`](docs/ecosystem.md) | The report of what is behind or broken across the repositories, the preview of a kit change, and the tools beside it. |
 | [`docs/agent-docs.md`](docs/agent-docs.md) | The standard for every repository's `AGENTS.md` and `CLAUDE.md`, the organization rules they share and the guard that checks them. |
 | [`docs/quality-firmware-adoption.md`](docs/quality-firmware-adoption.md) | The plan for bringing the firmware repository onto the kit. |

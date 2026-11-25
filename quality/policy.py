@@ -12,6 +12,8 @@ program. The repository holds none of it (docs/quality.md, "The hooks").
   agent-docs    agent_docs.py: AGENTS.md and CLAUDE.md
   md-nowrap     md_nowrap.py: Markdown prose is never hard-wrapped
   spdx-headers  spdx_headers.py: both licensing lines, the owner's statement
+  tests         suite_rules.py: no test runs alone, a skip says why, no coverage
+                threshold falls unsaid since --base (else since main)
 
 On a failure it prints the version of the kit that ran and the revision of
 the kit's hook entry it found: the CI runs the branch and the hooks a
@@ -21,6 +23,7 @@ which one complained.
 Usage:
     policy.py [--repo DIR] [--only CHECK ...] [--without CHECK ...]
               [--lint-skip IDS] [--github] [--summary FILE] [--kit-sha SHA]
+              [--base COMMIT]
 
 Exit status: 0 clean, 1 problems, 2 the checks cannot run.
 
@@ -42,6 +45,7 @@ import check_quality as cq
 import md_nowrap
 import run_form
 import spdx_headers
+import suite_rules
 
 KIT = Path(__file__).resolve().parents[1]
 
@@ -55,6 +59,7 @@ class Options:
     github: bool = False
     summary: Path | None = None
     kit_sha: str = ""
+    base: str = ""
 
 
 def kit_check(opts: Options) -> list[str]:
@@ -121,11 +126,20 @@ def spdx_check(opts: Options) -> list[str]:
     return found
 
 
+def tests_check(opts: Options) -> list[str]:
+    """suite_rules.py: what a change may not do to the tests without saying so."""
+    found, notes = suite_rules.check(cq.Repo(opts.repo), opts.base)
+    for note in notes:
+        print(f"note: {note}")
+    return [str(p) for p in found]
+
+
 CHECKS: dict[str, Callable[[Options], list[str]]] = {
     "kit": kit_check,
     "agent-docs": agent_docs_check,
     "md-nowrap": md_nowrap_check,
     "spdx-headers": spdx_check,
+    "tests": tests_check,
 }
 
 
@@ -152,9 +166,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--github", action="store_true", help="also print GitHub annotations")
     ap.add_argument("--summary", type=Path, help="append the kit check's report here")
     ap.add_argument("--kit-sha", default="", help="the commit of the kit, where git cannot say")
+    ap.add_argument("--base", default="", help="the commit this change is compared with")
     ap.add_argument("files", nargs="*", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
-    opts = Options(args.repo, args.lint_skip, args.github, args.summary, args.kit_sha)
+    opts = Options(args.repo, args.lint_skip, args.github, args.summary, args.kit_sha, args.base)
     chosen = [c for c in (args.only or CHECKS) if c not in args.without]
     total = 0
     for name in chosen:

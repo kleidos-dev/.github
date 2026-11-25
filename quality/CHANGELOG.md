@@ -7,6 +7,17 @@ SPDX-License-Identifier: MIT
 
 One entry per release; each says what can turn a green repository red. The rules, and how a repository takes a release, are in [`docs/quality.md`](../docs/quality.md).
 
+## 3.2.0 (2026-11-25)
+
+The testing standard of the organization, [`docs/testing.md`](../docs/testing.md) (owner, 2026-11-24), from the pilot in `kleidos-dev/cla`, and the part of it that every repository already passes, as the fifth policy check, `tests` ([`suite_rules.py`](suite_rules.py)). MINOR, by [`docs/quality.md`, "Versions"](../docs/quality.md#versions): the impact preview finds no problem of this check in any repository of the list, as `main` stands or after the mechanical switch, and none of the thresholds it reads ever fell along the first parents of any `main`. What can turn red is a later change that does what the rules are for.
+
+- A test marked to run alone (`it.only`, `describe.only` and their chains, `fit`, `fdescribe`, an `only` option that is not off) is refused in JavaScript and TypeScript, also where the name is written as a string.
+- A test that is skipped, left to do or expected to fail says why, in two words at least: in the marker's own place, or in a comment `skip: <why>` on its line, or in the lines right above that hold nothing but a comment. Python is read as Python (unittest, pytest, whatever name they were imported by, a star import too); JavaScript and TypeScript as text, with comments, strings, templates and regular expressions taken out (vitest, `node:test`), and a file that cannot be told apart for certain is judged as it is written.
+- coverage.py's threshold on a command line (`--cov-fail-under`, `coverage report --fail-under` and its abbreviations) is refused in a workflow, an action under `.github/actions/`, a `package.json` and pytest's options: it wins over the configuration.
+- A coverage threshold (`fail_under`, vitest's `thresholds`, Node's `--test-coverage-*`) that falls or goes, against the base of the change, is a problem, unless the change adds its `[[lowered]]` entry to `.github/quality/waivers.toml`. What is compared is what the tool would use, in the order it looks for its configuration, each glob and each command apart; a value that is not a plain number is not held, and one that becomes so is a fall.
+- The lint job fetches the whole history and passes the event's own base to `policy.py --base`; a base that is not in the clone ends the job with status 2, never green. With none (a schedule, a run by hand, a history written anew) the change is compared with where it left `origin/main`.
+- `tools/ecosystem.py preview` counts the check, as `tests only`, `tests skip` and `tests threshold`.
+
 ## 3.1.2 (2026-11-25)
 
 kleidos-dev/social and kleidos-dev/posts are deleted (owner, 2026-11-24): their content lives in brand's `social/` and videos' `posts/`. PATCH, by [`docs/quality.md`, "Versions"](../docs/quality.md#versions): nothing here changes what a repository runs or can add a finding in one; only the organization's own list and the kit's tests change.
