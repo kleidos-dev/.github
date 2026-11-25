@@ -219,7 +219,7 @@ JS_SKIP = re.compile(
 JS_CALL_REASON = re.compile(r"\b(?:t|ctx|context|testContext)\s*\.\s*(?:skip|todo)\s*\(")
 JS_OPTION_REASON = re.compile(r"[{,]\s*(?:skip|todo|fails|expectFailure)\s*:")
 JS_OFF = re.compile(r"(?:false|undefined|null|boolean|string|number)\b|\d")
-JS_STRING = re.compile(r"""(["'`])((?:\\.|(?!\1).)*)\1""")
+JS_STRING = re.compile(r"""(["'`])((?:\\.|(?!\1)[^\\\n])*+)\1""")
 REGEX_AFTER = re.compile(
     r"(?:^|[(,=:\[!&|?{};+\-*%~^<>\n]|\b(?:return|typeof|case|in|of|yield|await))\s*$"
 )

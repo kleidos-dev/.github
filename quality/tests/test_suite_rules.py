@@ -182,6 +182,7 @@ class JavaScriptTest(unittest.TestCase):
             "t.skip()",
             "t.skip('')",
             "t.todo('later')",
+            "t.skip('never closed on its line" + "\\\\a" * 60 + ")",
             "context.skip(why)",
             "test('x', { skip: true }, f)",
             "test('x', { todo: 'later' }, f)",
@@ -198,6 +199,7 @@ class JavaScriptTest(unittest.TestCase):
             "// skip: the runtime has no clock\nit.skip('x', f);",
             "/*\n * skip: the runtime has no clock\n */\nit.skip('x', f);",
             "t.skip('no docker here')",
+            "t.skip('it\\'s never here')",
             "test('x', { skip: 'no docker here' }, f)",
             "test('x', { todo: `the second half` }, f)",
         ):
