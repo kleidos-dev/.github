@@ -493,11 +493,11 @@ class ConditionTest(unittest.TestCase):
                 given = context(inputs={"deny-hooks": hooks, "skip": ""})
                 self.assertIs(ex.runs(condition, given), wanted)
 
-    def test_the_commits_job_runs_on_every_pull_request_and_only_there(self) -> None:
+    def test_the_commits_job_runs_on_what_adds_commits_and_only_there(self) -> None:
         condition = self.quick["jobs"]["commits"]["if"]
         for event, wanted in (
             ("pull_request", True),
-            ("push", False),
+            ("push", True),
             ("schedule", False),
             ("workflow_dispatch", False),
             ("pull_request_target", False),
@@ -505,6 +505,72 @@ class ConditionTest(unittest.TestCase):
         ):
             with self.subTest(event=event):
                 self.assertIs(ex.runs(condition, context(github={"event_name": event})), wanted)
+
+    def test_the_messages_are_checked_on_a_pull_request_and_what_it_found_fails(self) -> None:
+        steps = self.commit_steps()
+        for title in (
+            "Check the pull request's commits",
+            "Keep the result for the comment workflow",
+            "Fail on a rule the commits break",
+        ):
+            for event, status, wanted in (
+                ("pull_request", "1", True),
+                ("pull_request", "2", True),
+                ("pull_request", "0", not title.startswith("Fail")),
+                ("push", "", False),
+                ("push", "1", False),
+            ):
+                with self.subTest(title=title, event=event, status=status):
+                    given = context(
+                        github={"event_name": event},
+                        steps={"check": {"outputs": {"status": status}}},
+                    )
+                    self.assertIs(ex.runs(steps[title]["if"], given), wanted)
+
+    def test_the_identity_is_checked_whatever_the_messages_hold(self) -> None:
+        self.assertNotIn("if", self.commit_steps()["Check whose commits they are"])
+
+    def test_whose_the_change_is(self) -> None:
+        """What the identity step is told, wherever the branch is: the owner's commits are judged
+        in a fork too, with the read token of the job."""
+        step = self.commit_steps()["Check whose commits they are"]
+        here, fork = {"full_name": "o/r"}, {"full_name": "x/r"}
+        for event, repo, home in (
+            ("push", None, "o/r"),
+            ("pull_request", here, "o/r"),
+            ("pull_request", fork, "x/r"),
+            ("pull_request", None, None),
+        ):
+            with self.subTest(event=event, repo=repo):
+                pull = {"head": {"repo": repo}, "base": {"sha": "b"}}
+                github = {
+                    "event_name": event,
+                    "repository": "o/r",
+                    "token": "t",
+                    "sha": "s",
+                    "event": {"pull_request": pull} if event == "pull_request" else {},
+                }
+                given = context(github=github)
+                judge = "b" if event == "pull_request" else "s"
+                wanted = {"GITHUB_TOKEN": "t", "HEAD_REPO": home, "JUDGE_SHA": judge}
+                for name, value in wanted.items():
+                    found = ex.evaluate(step["env"][name], given)
+                    self.assertEqual(found or None, value, name)
+        self.assertEqual(set(step["env"]), {*wanted, "KIT"})
+
+    def test_the_job_with_the_token_can_only_read_and_runs_the_kit(self) -> None:
+        text = (WORKFLOWS / "reusable-commit-check.yml").read_text(encoding="utf-8")
+        job = yaml.safe_load(text)["jobs"]["commit-messages"]
+        self.assertEqual(job["permissions"], {"contents": "read"})
+        uses = [str(step["uses"]).partition("@")[0] for step in job["steps"] if "uses" in step]
+        self.assertEqual(uses, ["actions/checkout", "actions/upload-artifact"])
+        named = [step.get("name") for step in job["steps"] if "github.token" in json.dumps(step)]
+        self.assertEqual(named, ["Check whose commits they are"])
+
+    def commit_steps(self) -> dict[str, Any]:
+        text = (WORKFLOWS / "reusable-commit-check.yml").read_text(encoding="utf-8")
+        steps = yaml.safe_load(text)["jobs"]["commit-messages"]["steps"]
+        return {step["name"]: step for step in steps if "name" in step}
 
     def test_the_listed_step_conditions(self) -> None:
         """Each condition a step of a job with something to lose may run on, run."""

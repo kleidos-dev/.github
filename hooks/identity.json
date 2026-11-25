@@ -1,0 +1,21 @@
+{
+  "schema": "kleidos.commit-identity/1",
+  "owner": {
+    "login": "jmrplens",
+    "email": "jmrplens@kleidos.dev",
+    "keys": ["0A993B268654DBBA52B7E8D3FCF653391E2C91FC"]
+  },
+  "since": "2026-11-26T00:00:00Z",
+  "exempt": [
+    {
+      "repository": "kleidos-dev/cla",
+      "ref": "refs/heads/signatures",
+      "reason": "The CLA bot writes it, and it is the evidence of who signed: never rewritten."
+    },
+    {
+      "repository": "kleidos-dev/meter",
+      "ref": "refs/heads/main",
+      "reason": "Work in flight there still squash-merges; the entry goes when it ends."
+    }
+  ]
+}
