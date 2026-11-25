@@ -106,19 +106,16 @@ PY_HINT = re.compile(r"skip|xfail|expectedFailure", re.IGNORECASE)
 
 
 def imported_names(tree: ast.Module) -> dict[str, str]:
-    """What each imported name stands for, of the modules the markers come from."""
+    """What each imported name stands for."""
     out: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 top = alias.name.partition(".")[0]
-                if top in ("unittest", "pytest"):
-                    out[alias.asname or top] = alias.name if alias.asname else top
+                out[alias.asname or top] = alias.name if alias.asname else top
         elif isinstance(node, ast.ImportFrom) and not node.level:
-            module = node.module or ""
-            if module.partition(".")[0] in ("unittest", "pytest"):
-                for alias in node.names:
-                    out[alias.asname or alias.name] = f"{module}.{alias.name}"
+            for alias in node.names:
+                out[alias.asname or alias.name] = f"{node.module}.{alias.name}"
     return out
 
 
@@ -133,7 +130,7 @@ def dotted(node: ast.expr, names: dict[str, str]) -> str:
     if not isinstance(node, ast.Name) or node.id not in names:
         return ""
     name = ".".join([names[node.id], *reversed(parts)])
-    return name.replace("unittest.case.", "unittest.", 1)
+    return name.replace("unittest.case.", "unittest.")
 
 
 def says_why(call: ast.Call, position: int | None) -> bool:
@@ -156,8 +153,8 @@ def bare_markers(tree: ast.Module, names: dict[str, str]) -> Iterator[ast.expr]:
     called = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            yield from (d for d in node.decorator_list if not isinstance(d, ast.Call))
-        elif isinstance(node, ast.Raise) and node.exc and not isinstance(node.exc, ast.Call):
+            yield from node.decorator_list
+        elif isinstance(node, ast.Raise) and node.exc:
             yield node.exc
         elif (
             isinstance(node, ast.Attribute)
@@ -257,9 +254,7 @@ class JsText:
         return self.text.count("\n", 0, at) + 1
 
     def _blank(self, end: int) -> None:
-        for i in range(self._at, end):
-            if self._out[i] != "\n":
-                self._out[i] = " "
+        self._out[self._at : end] = " " * (end - self._at)
         self._at = end
 
     def _step(self) -> bool:
@@ -526,7 +521,7 @@ def threshold_moves(repo: cq.Repo, base: str) -> tuple[list[Problem], list[str]]
     def before(rel: str) -> str:
         return git(repo, "show", f"{base}:{rel}") or ""
 
-    known = lowered_entries(before(cq.WAIVERS)) if cq.WAIVERS in names else []
+    known = lowered_entries(before(cq.WAIVERS))
     now = lowered_entries(read(repo, cq.WAIVERS)) if repo.exists(cq.WAIVERS) else []
     entries = [e for e in now if e not in known]
     problems: list[Problem] = []

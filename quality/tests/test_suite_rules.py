@@ -53,6 +53,8 @@ class PythonSkipTest(unittest.TestCase):
             "pytestmark = pytest.mark.skip\n",
             "x = pytest.param(1, marks=pytest.mark.xfail)\n",
             '@unittest.skip("x")  # skip:\ndef f(): ...\n',
+            "@unittest.expectedFailure\n# skip: a reason for later\ndef f(): ...\n",
+            "# skip: a reason for x\nx = 1\n# no more\n@unittest.expectedFailure\ndef f(): ...\n",
             '# skip: too far above it\n\n@unittest.skip("x")\ndef f(): ...\n',
         ):
             with self.subTest(body):
@@ -68,6 +70,7 @@ class PythonSkipTest(unittest.TestCase):
             'self.skipTest(f"{name} is not installed")\n',
             "pytest.skip(message, allow_module_level=True)\n",
             "pytest.skip(*why)\n",
+            "@unittest.skipIf(*why)\ndef f(): ...\n",
             "pytest.skip(**why)\n",
             'pytest.skip(msg="no power tree")\n',
             'raise pytest.skip.Exception("no power tree")\n',
@@ -109,6 +112,8 @@ class PythonSkipTest(unittest.TestCase):
             ("from pytest import mark\n@mark.skip\ndef f(): ...\n", 1),
             ("from .unittest import skip\n@skip\ndef f(): ...\n", 0),
             ("from other import skip\nimport other\n@skip\ndef f(): ...\n", 0),
+            ("import unittest.mock as m\nm.skip('x')\n", 0),
+            ("import pytest.mark\n@pytest.mark.skip\ndef f(): ...\n", 1),
             ("from . import skip\n@skip\ndef f(): ...\n", 0),
             ("def skip(f): return f\n@skip\ndef f(): ...\n", 0),
         ):
@@ -137,7 +142,9 @@ class JavaScriptTest(unittest.TestCase):
             "const s = `${it.only('x', f)}`;",
             "const s = `${{ a: `b` }} ${fit('x', f)}`;",
             "const s = `${ [{ a: 1 }, it.only('x', f)] }`;",
-            "const s = `${ [{ a: { b: 1 } }, it.only('x', f)] } it.only`;",
+            "const s = `${ [{ a: { b: 1 } }, it.only('x', f)] }\nit.only`;",
+            "/* a */it.only('x', f)",
+            "x = /\nit.only('x', f)",
             "// it.skip('x')\nit.only('x', f)",
             "const r = /[/'\"`]/; it.only('x', f)",
             "const half = a / 2; it.only('x', f); const b = c / 2;",
@@ -146,6 +153,10 @@ class JavaScriptTest(unittest.TestCase):
             # A file it cannot read to its end is judged as it is written.
             "/* never closed\nit.only('x', f)",
             "`never closed\nit.only('x', f)",
+            "const s = `it.only('x', f)`;\n`never closed",
+            "const s = `it.only('x', f)`;\n`${ never closed",
+            "const s = `it.only('x', f)`;\n`",
+            "const s = `it.only('x', f)`;\n/* never closed",
             "`${ never closed\nit.only('x', f)",
             "const n = x /= 2; it.only('x', f)",
         ):
@@ -158,6 +169,7 @@ class JavaScriptTest(unittest.TestCase):
             "// it.only('x')\n/* describe.only('x')\n it.skip('y') */",
             "const s = 'it.only(1)' + \"it.skip(1)\" + `it.todo(${x}) it.only`;",
             "const r = /it.only(x)/;",
+            "/**/ const s = 'it.only(1)';",
             "const r = '\\'it.only';",
             "readonly(x); const only = 1; limit.only(x); profit('x')",
             "f({ only: ['a'], skip: 10, todo: false, fails: undefined });",
@@ -180,6 +192,7 @@ class JavaScriptTest(unittest.TestCase):
             "xit('x', f)",
             "xdescribe('x', f)",
             "t.skip()",
+            "t.skip(undefined)",
             "t.skip('')",
             "t.todo('later')",
             "t.skip('never closed on its line" + "\\\\a" * 60 + ")",
@@ -208,6 +221,7 @@ class JavaScriptTest(unittest.TestCase):
 
     def test_the_line_is_the_markers(self) -> None:
         self.assertEqual(sr.js_marks("a\n\nit.only('x')\nxit('y')\n"), ([3], [4]))
+        self.assertEqual(sr.js_marks("\nit\n  .only('x')"), ([3], []))
 
     def test_which_files_hold_tests(self) -> None:
         for rel, text, want in (
@@ -259,7 +273,7 @@ class ThresholdsTest(unittest.TestCase):
             (
                 "worker/vitest.config.ts",
                 "// thresholds: { lines: 1 }\nexport default { coverage: { thresholds: {\n"
-                "  lines: 100, 'src/**': { functions: 90, lines: 95 }, perFile: true } }, n: 3 };",
+                "  lines: 100, 'src/**': { functions: 90, lines: 95 }, a: true }, m: 2 }, n: 3 };",
                 {"lines": 95, "functions": 90},
             ),
             ("vitest.config.ts", "thresholds: { lines: 100", {"lines": 100}),
@@ -290,12 +304,14 @@ class ThresholdsTest(unittest.TestCase):
             {"threshold": "b"},
             {"to": 98},
             {"to": "gone"},
+            {"to": "soon"},
             {"reason": "why"},
             {"decided": " "},
         ):
             with self.subTest(wrong):
                 self.assertFalse(sr.accepts(good | wrong, "a", 99.0))
         self.assertFalse(sr.accepts(good, "a", None))
+        self.assertFalse(sr.accepts(good | {"to": "soon"}, "a", None))
         for key in good:
             with self.subTest(missing=key):
                 self.assertFalse(sr.accepts({k: v for k, v in good.items() if k != key}, "a", 99.0))
@@ -404,8 +420,11 @@ class RepositoryTest(unittest.TestCase):
             (".github/workflows/a.yml", "run: pytest --cov-fail-under=0\n", 1),
             (".github/workflows/a.yml", "run: python -m coverage report --fail-under 0\n", 1),
             (".github/workflows/a.yml", "run: |\n  coverage report \\\n    --fail-under=0\n", 1),
+            (".github/workflows/a.yml", "run: >-\n  coverage report\n  --fail-under=0\n", 1),
             (".github/workflows/a.yml", "run: |\n  # pytest --cov-fail-under=0\n", 0),
             (".github/workflows/a.yml", "run: coverage report && pylint --fail-under=9\n", 0),
+            ("package.json", '{"//--cov-fail-under": "its place is the configuration"}', 0),
+            ("a/pyproject.toml", "a = 1  # pytest --cov-fail-under=1\n", 0),
             ("package.json", '{"scripts": {"t": "pytest --cov-fail-under=1"}}', 1),
             ("a/pyproject.toml", '[tool.pytest]\naddopts = ["--cov-fail-under=1"]\n', 1),
             ("pytest.ini", "[pytest]\naddopts = --cov-fail-under=1\n", 1),
