@@ -156,7 +156,7 @@ DOT = rf"(?: \. | {INSIDE.format(r'\.|dot')} | [\W_]{{1,3}}dot[\W_]{{1,3}} )"
 ADDRESS = re.compile(
     rf"""(?: (?<=[\w!\#$%&*+.?^}}~-])@ | (?<=\w["'])@ | (?<=\w)\s{{0,3}}@\s{{0,3}} )
         (?: {LABEL}{DOT}\w | \[(?:IPv6:)?[0-9a-f:.]{{2,45}}\] )
-    | (?<=\w) (?: {INSIDE.format("at")} {LABEL}{DOT}\w
+    | (?<=\w) (?: {INSIDE.format("at|@")} {LABEL}{DOT}\w
       | [\W_]{{1,3}}at[\W_]{{1,3}} (?!(?:an?|th(?:e|is|at|ese|ose))\b)
         (?:{NAME}\.){{0,4}} {NAME} [\W_]{{1,3}}dot[\W_]{{1,3}} [^\W\d_]{{2}} )
     | [\[(<{{]\s? [\w.+-]{{1,64}} \s{{1,3}}at\s{{1,3}} (?:{LABEL}\.){{1,5}} [^\W\d_]{{2,24}}
@@ -216,8 +216,6 @@ def addresses(value: str, *, whole: bool = False, examples: bool = False) -> tup
     allowed = len(own.findall(text))
     if len(re.findall(re.escape(ALLOWED), value, re.IGNORECASE | re.ASCII)) >= allowed:
         text = own.sub(";", text)
-    else:
-        allowed = 0
     for pattern in (NO_ADDRESS, *([HANDLE] * whole), *([RESERVED] * examples)):
         text = pattern.sub(" ; ", text)
     return allowed > 0, ADDRESS.search(text) is not None
@@ -486,7 +484,7 @@ def name_of(path: tuple[str, ...]) -> str:
 def fields_of(row: Metadata, rel: str, text: str) -> Iterator[tuple[str, tuple[bool, bool]]]:
     """The fields of a file that hold an address: the one allowed, another."""
     folders = {part.casefold() for part in PurePosixPath(rel).parts[:-1]}
-    examples = bool(folders & EXAMPLES) or (not row.fields and rel.casefold().endswith(".md"))
+    examples = bool(folders & EXAMPLES) or rel.casefold().endswith(".md")
     values = read(row, rel, text)
     whole = values is None or not row.fields
     for path, value in [((), text)] if values is None else values:

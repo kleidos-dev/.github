@@ -360,7 +360,7 @@ class SupplierFieldsTest(unittest.TestCase):
             ("owner@exa\u0301mple.org", True),
             ("owner&#64;example.org", True),
             ("owner&commat;example.org", True),
-            ("owner&amp;amp;#64;example.org", True),
+            ("owner&amp;amp;amp;amp;amp;amp;#64;example.org", True),
             ("mailto:owner%40example.org", True),
             ("mailto:owner%252525252540example.org", True),
             ("owner\\\\x40example.org", True),
@@ -375,6 +375,8 @@ class SupplierFieldsTest(unittest.TestCase):
             ("owner@example(.)org", True),
             ("owner@example (dot) org", True),
             ("owner(at)example(dot)org", True),
+            ("owner[@]example.org", True),
+            ("owner (@) example.org", True),
             ("owner<at>example.org", True),
             ("owner <at> example <dot> org", True),
             ("owner_at_example_dot_org", True),
@@ -478,7 +480,14 @@ class SupplierFieldsTest(unittest.TestCase):
             ("setup.py", f"setup(  # {MAIL}\n", True),
             ("setup.cfg", f"# {MAIL}\n", True),
             ("tests/fixtures/package.json", f'{{"author": "{MAIL}"}}', False),
-            ("x/__tests__/package.json", f'{{"author": "{MAIL}"}}', False),
+            *(
+                (f"x/{folder}/y/package.json", f'{{"author": "{MAIL}"}}', False)
+                for folder in sorted({"Tests", *sf.EXAMPLES})
+            ),
+            ("CONTRIBUTORS.MD", f"{MAIL}\n", False),
+            ("AUTHORS", "a@b\n.c\n", False),
+            ("AUTHORS", "a@b\r.c\n", False),
+            ("AUTHORS", "a@b\t.c\n", False),
             ("tests/fixtures/package.json", f'{{"author": "{REAL}"}}', True),
             ("tests.d/package.json", f'{{"author": "{MAIL}"}}', True),
         ):
@@ -566,6 +575,7 @@ class SupplierFieldsTest(unittest.TestCase):
                 ["metadata.supplier.mail"],
             ),
             ("bom.xml", xml.format("<metadata>"), ["the file"]),
+            ("bom.xml", f"<bom><components><author>{MAIL}", ["the file"]),
             ("bom.xml", f"<!DOCTYPE bom>{xml.format('')}", ["the file"]),
             (
                 "bom.xml",
@@ -592,6 +602,12 @@ class SupplierFieldsTest(unittest.TestCase):
             ("idf_component.yml", f"x: &a\n  maintainers: [{MAIL}]\n<<: *a\n", ["maintainers"]),
             ("action.yml", f"x: &a {MAIL}\nauthor: *a\n", ["author"]),
             ("action.yml", f"author: !!binary {coded}\n", ["author"]),
+            (
+                "action.yml",
+                f"author: !!binary {base64.b64encode(MAIL.encode() + b' \\xff').decode()}\n",
+                ["author"],
+            ),
+            ("action.yml", f"author:\n  <<: {MAIL}\n", ["author.<<"]),
             ("action.yml", "author: !!binary a\n", []),
             ("action.yml", "author: !!binary '*'\n", []),
             ("action.yml", f"author: {coded}\n", []),
@@ -673,6 +689,12 @@ class SupplierFieldsTest(unittest.TestCase):
         cycle = f"author: &a\n  <<: *a\n  x: {MAIL}\n"
         self.assertEqual(self.found("action.yml", cycle), ["the file"])
 
+    def test_the_folders_of_examples(self) -> None:
+        self.assertEqual(
+            sf.EXAMPLES,
+            {"test", "tests", "__tests__", "fixtures", "__fixtures__", "testdata"},
+        )
+
     # ------------------------------------------------------------ the readers
 
     def test_a_file_that_cannot_be_read_is_searched_whole(self) -> None:
@@ -682,6 +704,8 @@ class SupplierFieldsTest(unittest.TestCase):
             ("pyproject.toml", f'x = "{MAIL}"\nx = 1\n'),
             ("CITATION.cff", f"a: 1\n---\nb: {MAIL}\n"),
             ("setup.py", f"x = {'-' * 100_000}1  # {MAIL}\n"),
+            ("pyproject.toml", f"# {MAIL}\nx = {'[' * 100_000}"),
+            ("action.yml", f"# {MAIL}\n{'[' * 20_000}"),
             ("setup.py", f"x = '\0'  # {MAIL}\n"),
             ("CITATION.cff", f"\tauthors: {MAIL}\n"),
             ("action.yml", f"a: &a\n  - *a\n  - {MAIL}\n"),
