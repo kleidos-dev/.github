@@ -67,7 +67,7 @@ The last job of the file is the repository's own and the one required check: nam
 
 ```yaml
   - repo: https://github.com/kleidos-dev/.github
-    rev: v3.0.0
+    rev: v3.4.0
     hooks:
       - id: kleidos-kit          # every policy check: conformance, agent docs, Markdown, licensing lines, tests
       - id: kleidos-commit-msg   # the commit-message rules
